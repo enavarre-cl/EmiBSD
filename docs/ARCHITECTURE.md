@@ -160,7 +160,7 @@ the default and `cargo test` just works.
 | `ffs2` | `option FFS2` | FFS2 (UFS2 dinodes, the 64 KB super-block) in ffs; default |
 | `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests, the TSC under TCG and the `uptime went backwards` check |
 | `inet6` | `option INET6` | IPv6: the `#ifdef INET6` sites outside `sys/netinet6` and `inet6domain` in `domains[]`; default, as in GENERIC. `sys/netinet6` itself (and the IPv6 tables and usrreqs it names, `route6_cache`, `tcp6_usrreqs`, ...) always compiles, like a library nothing reaches without the option, so the tree builds both ways |
-| `multiprocessor` | `option MULTIPROCESSOR` | off by default, so the uniprocessor kernel stays the plain build; `just build` and `just clippy` also build it, and since M11e every `just smoke` recipe boots it with `-smp 4` except `smoke-up` (the user's decision of 2026-10-03). M11a: `MAXCPUS` 255/256, the kernel lock and the spinning mutex (`kern_lock.c`), the Limine MP request and the application processors' start (see "Deviations"); `just smoke-mp` boots it with `-smp 4`. M11d: `NET_TASKQ` 8 softnet queues, `softnet_percpu` keeps one per CPU; `just smoke-net-mp` runs both VMs of the two-VM smokes on it |
+| `multiprocessor` | `option MULTIPROCESSOR` | off by default, so the uniprocessor kernel stays the plain build; `just build` and `just clippy` also build it, and since M11e every `just smoke` recipe boots it except `smoke-up` (the user's decision of 2026-10-03), since 2026-10-07 with `-smp 2` but for the `smp4` group ("Parallel smokes"). M11a: `MAXCPUS` 255/256, the kernel lock and the spinning mutex (`kern_lock.c`), the Limine MP request and the application processors' start (see "Deviations"); `just smoke-mp` boots it with `-smp 4`. M11d: `NET_TASKQ` 8 softnet queues, `softnet_percpu` keeps one per CPU; `just smoke-net-mp` runs both VMs of the two-VM smokes on it |
 | `ntfs` | `option NTFS` | the read-only NTFS file system (`sys/ntfs`) and its `vfsconflist[]` entry; default, but compiled only where the architecture's GENERIC has it (amd64): see below |
 | `fuse` | `option FUSE` | FUSE (`sys/miscfs/fuse`), its `vfsconflist[]` entry, `cdevsw[]` 92 (`/dev/fuse0`) and `fuseattach` in `pdevinit[]`; default, as in GENERIC |
 
@@ -1838,6 +1838,36 @@ user's plan). The shape is one build phase, then one run phase:
 
 `JOBS=N just smoke` (or `just jobs=N smoke`, or `JOBS=N just ci`) picks another N; `JOBS=1`
 runs the recipes one after the other, still each in its own directory.
+
+How many processors the VMs get (the user's decision of 2026-10-07, replacing the `-smp 4`
+of every recipe decided on 2026-10-03 for M11):
+
+- Every recipe boots the MULTIPROCESSOR kernel with the justfile's `smp`, `-smp 2` by
+  default. `ncpu` comes from `EMIBSD_NCPU` (2 or 4; anything else stops `just` with an
+  error) and is exported, because `smoke-all` runs each recipe as a new `just --no-deps`
+  process: an environment variable reaches it, a `just ncpu=4` override on the command line
+  alone would not (the export carries it). Expectations that name the count follow `ncpu`:
+  `aps` (the application processors, also the last CPU's number) in `smoke-efiboot`,
+  `smoke-acpi` and `smoke-ddbmp`, whose `machine ddbcpu` walk and `cpuinfo` lines depend on
+  it. The install recipes (`smoke-install-*`) follow `smp` too.
+- The `smp4` group stays on `-smp 4` whatever `ncpu` says, to stress MP: `smoke-mp`
+  (mpstress, the kthread ping-pong, the vio multiqueue boot), `smoke-vmx` and `smoke-net-mp`
+  (multi-queue and softnet networking; the latter's `-smp 8` boot stays) and
+  `smoke-softraid` (the disk smoke under load). `diff-openbsd` also keeps four processors,
+  the configuration its expected differences were recorded with. `smoke-up` stays the one
+  uniprocessor boot.
+- `just ci-full` runs `EMIBSD_NCPU=4 just ci`: every recipe on four processors, as before
+  2026-10-07. Then, still on four, the installer end to end on both archs (the user's
+  decision of 2026-10-07): `smoke-install-<arch>` and `smoke-install-boot-<arch>` for amd64,
+  arm64 and arm64 on ACPI, which make the install media from the tree (so `just comp` must
+  have run), so every milestone close regenerates and checks the installer. Mandatory before
+  a milestone is marked met; its result goes in the closing commit.
+- Why two is enough by default: every MP bug found until then needs only two CPUs (one
+  CPU sleeping in vio_ctrl_submit while the interrupt lands on another; one SMR reader and
+  one freer in art, rtable, bpf and pfsync; soreceive's sender and receiver; the consfile tty
+  race; QEMU's lost `sev` on arm64 with any MTTCG of two or more vCPUs; vmx's intr_barrier on
+  an AP that is not running yet, which intrmap reaches with `-smp 2` too). Fewer CPUs make
+  them rarer, not impossible, hence `ci-full` before every milestone close.
 
 ### diff-openbsd
 

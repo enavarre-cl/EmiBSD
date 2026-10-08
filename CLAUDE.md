@@ -58,6 +58,7 @@ Two mapping rules:
 | `just clippy` / `just fmt` | clippy for amd64, arm64 and host with `-D warnings` / format check |
 | `just check-ports` | validate `ports.toml` |
 | `just ci` | all of the above; must be green before a commit |
+| `just ci-full` | `ci` with every smoke on `-smp 4` (not 2), then the installer end to end on both archs (`smoke-install-*`, needs `just comp`); must be green before a milestone is met |
 
 Never call `qemu-system-*`, `cargo build --target ...` or `rustup` by hand; use `just`.
 Tool installation lives in `docs/SETUP.md` and needs the user's explicit go-ahead.

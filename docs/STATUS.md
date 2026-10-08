@@ -4,8 +4,8 @@ Milestone: **M14 done** (installable); M15 (code and test layout) next, then M16
 drivers), M17 (real hardware, vmm). Updated: 2026-10-08.
 
 Done:
-- M7a..M13: uvm, network, file systems, SMP (`-smp 4` in every smoke), devices, diff-openbsd;
-  NVMe/AHCI roots, ACPI on amd64, PSCI, RTC, em/re/vmx, the frame buffer console.
+- M7a..M13: uvm, network, file systems, SMP (smokes on `-smp 2`, `-smp 4` in `ci-full`),
+  devices, diff-openbsd; NVMe/AHCI roots, ACPI on amd64, PSCI, RTC, em/re/vmx, the frame buffer console.
 - M14: our efiboot and the kernel's boot(8) entry on both archs; bsd.rd, signed base and comp
   sets, install.sub with autoinstall; the installed disk boots to `login:` and runs
   `cc hello.c && ./a.out` (amd64, arm64, arm64 on ACPI); clang/lld, ld.so and shared libc;

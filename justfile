@@ -15,10 +15,23 @@ arm64 := "aarch64-unknown-none-softfloat"
 # `qemu`: an uptime reading behind the previous one).
 reject := "--reject 'uptime went backwards'"
 
-# Since M11e every smoke and smoke2 run boots the MULTIPROCESSOR kernel on four processors (the
-# user's decision of 2026-10-03: MP is the configuration that matters, as GENERIC.MP is in
-# OpenBSD). `smoke-up` keeps one minimal uniprocessor boot per arch.
-smp := "--smp 4"
+# Since M11e every smoke and smoke2 run boots the MULTIPROCESSOR kernel (MP is the configuration
+# that matters, as GENERIC.MP is in OpenBSD). Since 2026-10-07 (the user's decision, replacing
+# the four processors of 2026-10-03) they boot it on `ncpu` processors, two by default: every
+# MP bug found so far needs only two CPUs. `EMIBSD_NCPU=4` (or `just ncpu=4 <recipe>`; it is
+# exported, so the recipes `smoke-all` runs see it too) puts every `{{smp}}` recipe on four;
+# `ci-full` does that for the whole `ci`, before a milestone is met. Expectations that name
+# the count follow `ncpu`: `aps`, the application processors, is also the last CPU's number.
+# `smp4` is the fixed group that stays on four to stress MP whatever `ncpu` says: `smoke-mp`
+# (mpstress, the kthread ping-pong), the multi-queue network smokes (`smoke-vmx`,
+# `smoke-net-mp`) and `smoke-softraid` (the disk smoke under load); their expectations keep
+# their literal counts. `smoke-up` keeps one minimal uniprocessor boot per arch.
+ncpu := env("EMIBSD_NCPU", "2")
+export EMIBSD_NCPU := ncpu
+smp := if ncpu == "2" { "--smp 2" } else if ncpu == "4" { "--smp 4" } else { \
+    error("EMIBSD_NCPU (ncpu) must be 2 or 4, not '" + ncpu + "'") }
+smp4 := "--smp 4"
+aps := if ncpu == "4" { "3" } else { "1" }
 
 default:
     @just --list
@@ -802,22 +815,22 @@ tcp_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n
 tcp_expect := "--b-expect 'internet stream tcp' --b-expect '192.168.77.2:7009' --b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --b-expect 'tcp-esp-7' --a-expect 'tcp-sent-8'"
 
 # M11d: the network on the softnet task queues of the MULTIPROCESSOR kernel. Both VMs of
-# `smoke-link` boot the MP kernel with `-smp 4`. softnet_init makes NET_TASKQ (8) softnet queues
-# and softnet_percpu keeps one per CPU, min(8, ncpus) = 4 (net/if.c), so ps(1) `-k` (the
-# kern.proc sysctl) lists softnet0..softnet3 (`softnets-4`), each on the CPU it last ran on;
-# each interface's work goes to the queue of its index (net_tq), so vio1, wg0 and lo0 are
-# served by different threads. Then the representative subset of the two-VM smokes: a ping
+# `smoke-link` boot the MP kernel with `-smp 4` (`smp4`, whatever `ncpu` says). softnet_init makes
+# NET_TASKQ (8) softnet queues and softnet_percpu keeps one per CPU, min(8, ncpus) = 4 (net/if.c),
+# so ps(1) `-k` (the kern.proc sysctl) lists softnet0..softnet3 (`softnets-4`), each on the CPU it
+# last ran on; each interface's work goes to the queue of its index (net_tq), so vio1, wg0 and lo0
+# are served by different threads. Then the representative subset of the two-VM smokes: a ping
 # across the link (`smoke-link`), a ping through wg0 (`smoke-wg`) and a TCP line with nc(1)
-# directly and through wg0 (`smoke-tcp`). A then creates lo3..lo5 (the interface index map
-# grows past its first 8 slots; the old map is freed by smr_call) and destroys lo3
-# (if_idxmap_remove's smr_barrier). The transcripts are printed. Last, one VM per arch
-# boots with `-smp 8` and keeps all eight softnets (`softnets-8`). Part of `smoke`.
+# directly and through wg0 (`smoke-tcp`). A then creates lo3..lo5 (the interface index map grows
+# past its first 8 slots; the old map is freed by smr_call) and destroys lo3 (if_idxmap_remove's
+# smr_barrier). The transcripts are printed. Last, one VM per arch boots with `-smp 8` and keeps
+# all eight softnets (`softnets-8`). Part of `smoke`.
 smoke-net-mp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-net-mp: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke2 {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 300 --show-transcripts \
+    cargo xtask smoke2 {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 300 --show-transcripts \
         {{divert_both}} {{netmp_a}} {{netmp_b}} {{netmp_expect}}
-    cargo xtask smoke2 {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 300 --show-transcripts \
+    cargo xtask smoke2 {{reject}} {{smp4}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 300 --show-transcripts \
         {{divert_both}} {{netmp_a}} {{netmp_b}} {{netmp_expect}}
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --smp 8 --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
@@ -857,7 +870,7 @@ netmp_expect := "--both-expect 'bsd: 4 processors' --both-expect softnets-4 " + 
     "--b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --a-expect 'if-destroyed-6' --a-expect 'tcp-sent-8'"
 
 # M11e: a network stress between the two VMs of `smoke-link`, both on the MULTIPROCESSOR
-# kernel with four processors: each VM runs a tcpbench(1) server in the background and a
+# kernel (`{{smp}}`): each VM runs a tcpbench(1) server in the background and a
 # client of the other's with four connections for 15 seconds (retried every second until the
 # other server is up), so TCP runs both ways over eight connections at once. Each client
 # prints the per-second `Conn:   4 Mbps:` lines and the summary; the echoed markers follow.
@@ -1039,17 +1052,17 @@ ufsopts_dirhash_mfs := disk_login + " " + \
 smoke-softraid: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-softraid: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --disks 4 --disk-set softraid --disk-fresh {{softraid_make}}
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --disks 4 --disk-set softraid {{softraid_check}}
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --disks 3 --disk-set softraid {{softraid_degraded}}
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} {{smp4}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --disks 4 --disk-set softraid --disk-fresh {{softraid_make}}
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} {{smp4}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --disks 4 --disk-set softraid {{softraid_check}}
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} {{smp4}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --disks 3 --disk-set softraid {{softraid_degraded}}
 
 # `smoke-softraid`'s three boots. `sr_pass` writes the passphrase file (the ramdisk root is
@@ -1498,20 +1511,20 @@ smoke-re: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
         --expect "vendor 0x10ec product 0x8139 rev 0x20: RTL8139C+ (0x7480), irq, address 52:54:00:12:34:56"
 
 # M13: vmx(4) on QEMU's VMware VMXNET3 (`--nic vmxnet3`, PCI 15ad:07b0, revision 1), in vio0's
-# place on the user network. QEMU reports the interrupt type AUTO and offers 25 MSI-X vectors,
-# so vmx0 takes vector 0 for the device's events and, through intrmap(9), one vector per
-# queue on the CPU the map picks: 4 queues with `-smp 4` (min(24 spare vectors, 8, ncpus),
-# a power of two). The kernel's self-test gives vmx0 10.0.2.15/24 (after the application
-# processors boot, so intr_barrier can reach the queues' CPUs); logged in, ifconfig(8) shows
-# an active link and ping(8) gets the gateway's reply, which QEMU (one receive queue)
-# delivers on queue 0, and vmstat(8) counts queue 0's vector. Both archs: MSI-X through the
-# local APICs on amd64, through the GICv2m frames (`ampintcmsi`) on arm64. Part of `smoke`.
+# place on the user network. QEMU reports the interrupt type AUTO and offers 25 MSI-X vectors, so
+# vmx0 takes vector 0 for the device's events and, through intrmap(9), one vector per queue on the
+# CPU the map picks: 4 queues on `smp4`'s four CPUs (min(24 spare vectors, 8, ncpus), a power of
+# two). The kernel's self-test gives vmx0 10.0.2.15/24 (after the application processors boot, so
+# intr_barrier can reach the queues' CPUs); logged in, ifconfig(8) shows an active link and
+# ping(8) gets the gateway's reply, which QEMU (one receive queue) delivers on queue 0, and
+# vmstat(8) counts queue 0's vector. Both archs: MSI-X through the local APICs on amd64, through
+# the GICv2m frames (`ampintcmsi`) on arm64. Part of `smoke`.
 smoke-vmx: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-vmx: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --nic vmxnet3 {{vmx_session}} {{em_ping}}
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} {{smp4}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --nic vmxnet3 {{vmx_session}} {{em_ping}}
 
 # `smoke-vmx`'s login and commands and the expectations both archs share.
@@ -1532,31 +1545,29 @@ re_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' -
     "--expect 're0: flags=' --expect 'media: Ethernet autoselect (100baseTX full-duplex)' " + \
     "--expect 'status: active' --expect 'inet 10.0.2.15 netmask 0xffffff00'"
 
-# M14: OpenBSD's efiboot boots the disk instead of Limine. `cargo xtask efiboot-disk` writes
-# the boot image as OpenBSD installs one (tools/xtask/src/efiboot.rs): an MBR with the
-# OpenBSD partition (its disklabel, DUID EFIBOOT0, `a` an ffs made by OpenBSD's makefs
-# holding the root `just userland` stages for the ramdisk, with /bsd, the MP smoke kernel,
-# /etc/boot.conf, /etc/random.seed, and an fstab whose root is /dev/sd1a) and the EFI system
-# partition holding BOOTX64.EFI. EDK2 starts efiboot from the ESP; it prints its banner,
-# probes the console, the memory and the disks (efiboot's own names, in EFI block I/O order:
-# the boot disk is hd0, with its label; OVMF connects no other disk), runs boot.conf (`set
-# timeout 0`, an echo) and prompts. The smoke lists the ffs (`ls /`, `ls /etc`), prints the
-# memory map (`machine memory`) and the disks, and boots: loadfile reads the kernel's
-# segments and symbols through ufs and cread (`...]=0x<size>`), run_loadfile moves it to its
-# physical address and enters locore0.S's 32-bit `start` at 0x1000000 (M14 track A2), which
-# builds the bootstrap page tables and calls the boot glue's bootarg entry: the kernel takes
-# its memory map, console, DUID and EFI tables from boot(8)'s bootarg list, starts the three
-# application processors itself (mptramp.S, INIT/SIPI, from the MADT), finds its root by the
-# DUID (sd1a: the boot image is on q35's AHCI port after the virtio disk), runs rc to login,
-# and the root login sees 4 CPUs and / on the disk. arm64 (M14 track A3): the same disk with
-# BOOTAA64.EFI; EDK2 AArch64 on `virt,acpi=off` hands efiboot its device tree (the C's first
-# choice; efiacpi builds one from the ACPI tables only without it), efiboot loads /bsd into
-# its 64 MB block and enters locore0.S's _start with the tree (x2): the kernel builds its
-# bootstrap tables, takes /chosen's bootargs, DUID, UEFI memory map and system table
-# (getbootinfo), starts the three other processors by PSCI CPU_ON (cpu_hatch_secondary)
-# and finds its root by the DUID (sd1a: the boot image is the virtio disk after the blank
-# one). `machine dtb` is arm64's machine command (it has no `machine memory`). Part of
-# `smoke`.
+# M14: OpenBSD's efiboot boots the disk instead of Limine. `cargo xtask efiboot-disk` writes the
+# boot image as OpenBSD installs one (tools/xtask/src/efiboot.rs): an MBR with the OpenBSD
+# partition (its disklabel, DUID EFIBOOT0, `a` an ffs made by OpenBSD's makefs holding the root
+# `just userland` stages for the ramdisk, with /bsd, the MP smoke kernel, /etc/boot.conf,
+# /etc/random.seed, and an fstab whose root is /dev/sd1a) and the EFI system partition holding
+# BOOTX64.EFI. EDK2 starts efiboot from the ESP; it prints its banner, probes the console, the
+# memory and the disks (efiboot's own names, in EFI block I/O order: the boot disk is hd0, with
+# its label; OVMF connects no other disk), runs boot.conf (`set timeout 0`, an echo) and prompts.
+# The smoke lists the ffs (`ls /`, `ls /etc`), prints the memory map (`machine memory`) and the
+# disks, and boots: loadfile reads the kernel's segments and symbols through ufs and cread
+# (`...]=0x<size>`), run_loadfile moves it to its physical address and enters locore0.S's 32-bit
+# `start` at 0x1000000 (M14 track A2), which builds the bootstrap page tables and calls the boot
+# glue's bootarg entry: the kernel takes its memory map, console, DUID and EFI tables from
+# boot(8)'s bootarg list, starts the application processors itself (mptramp.S, INIT/SIPI, from the
+# MADT), finds its root by the DUID (sd1a: the boot image is on q35's AHCI port after the virtio
+# disk), runs rc to login, and the root login sees `ncpu` CPUs and / on the disk. arm64 (M14 track
+# A3): the same disk with BOOTAA64.EFI; EDK2 AArch64 on `virt,acpi=off` hands efiboot its device
+# tree (the C's first choice; efiacpi builds one from the ACPI tables only without it), efiboot
+# loads /bsd into its 64 MB block and enters locore0.S's _start with the tree (x2): the kernel
+# builds its bootstrap tables, takes /chosen's bootargs, DUID, UEFI memory map and system table
+# (getbootinfo), starts the other processors by PSCI CPU_ON (cpu_hatch_secondary) and finds its
+# root by the DUID (sd1a: the boot image is the virtio disk after the blank one). `machine dtb` is
+# arm64's machine command (it has no `machine memory`). Part of `smoke`.
 smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") efiboot-amd64 efiboot-arm64
     @test -x target/userland/amd64/host/bin/makefs -a -f target/userland/amd64/ramdisk-root/etc/fstab || \
         { echo "smoke-efiboot: no makefs or staged root; run just userland first"; exit 1; }
@@ -1577,13 +1588,13 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fe
         --expect "BlkSiz" \
         --expect "booting hd0a:/bsd: " --expect "]=0x" --expect "entry point at 0x1000000" \
         --expect "bsd: booted on amd64 by boot(8) efiboot" --expect "bsd: boot(8) bootarg protocol, " \
-        --expect "bsd: 4 processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
+        --expect "bsd: {{ncpu}} processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
         --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
         --expect "cpu1 at mainbus0: apid 1 (application processor)" \
-        --expect "cpu3 at mainbus0: apid 3 (application processor)" \
-        --expect "x86_ipi_selftest: X86_IPI_NOP taken by 3 cpus, tlb shootdowns acknowledged" \
+        --expect "cpu{{aps}} at mainbus0: apid {{aps}} (application processor)" \
+        --expect "x86_ipi_selftest: X86_IPI_NOP taken by {{aps}} cpus, tlb shootdowns acknowledged" \
         --expect "root on sd1a (454649424f4f5430.a) swap on sd1b dump on sd1b" \
-        --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu=4" \
+        --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu={{ncpu}}" \
         --expect "/dev/sd1a on / type ffs (local)"
     @test -x target/userland/arm64/host/bin/makefs -a -f target/userland/arm64/ramdisk-root/etc/fstab || \
         { echo "smoke-efiboot: no arm64 makefs or staged root; run just userland first"; exit 1; }
@@ -1598,23 +1609,23 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fe
         --expect ">> EmiBSD/arm64 BOOTAA64 1.26" --expect "efiboot: boot.conf read" --expect "boot> " \
         --expect "-r-xr-xr-x 0,0" --expect "booting sd0a:/bsd: " --expect "]=0x" \
         --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "bsd: boot(8) bootarg protocol, " \
-        --expect "bsd: 4 processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
-        --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" --expect "cpu3 at mainbus0 mpidr 3: ARM Cortex-A72" \
-        --expect "cpu: 3 of 3 application processors running" \
+        --expect "bsd: {{ncpu}} processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
+        --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" --expect "cpu{{aps}} at mainbus0 mpidr {{aps}}: ARM Cortex-A72" \
+        --expect "cpu: {{aps}} of {{aps}} application processors running" \
         --expect "root on sd1a (454649424f4f5430.a) swap on sd1b dump on sd1b" \
-        --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu=4" \
+        --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu={{ncpu}}" \
         --expect "/dev/sd1a on / type ffs (local)"
 
 # M14: arm64 on ACPI (sys/arch/arm64/arm64/acpi_machdep.c, dev/acpi/acpimcfg.c,
-# arch/arm64/dev/acpipci.c and acpiiort.c, dev/acpi/pluart_acpi.c). QEMU `virt,acpi=on`
-# (`--acpi`, hwopts.rs) with the efiboot disk and the NIC as PCI virtio functions: EDK2 hands
-# efiboot the ACPI tables and no device tree, so efiboot's efiacpi builds the tree from them
-# (the GIC, the timer, PSCI, the CPUs and an `openbsd,acpi-5.0` node naming the RSDP), and the
-# kernel attaches acpi0 there: acpimcfg maps the ECAM window, acpipci0 the PCI host bridge
-# (`_CRS` windows, MSI through the GICv2m frame), pluart0 at acpi0 becomes the console by the
-# SPCR, and the root is found on the PCI disk by its DUID. The root login sees 4 CPUs and
-# pings the host through vio0 (virtio-net-pci, MSI-X). arm64 only: amd64 boots on ACPI in
-# every smoke already. Part of `smoke`.
+# arch/arm64/dev/acpipci.c and acpiiort.c, dev/acpi/pluart_acpi.c). QEMU `virt,acpi=on` (`--acpi`,
+# hwopts.rs) with the efiboot disk and the NIC as PCI virtio functions: EDK2 hands efiboot the
+# ACPI tables and no device tree, so efiboot's efiacpi builds the tree from them (the GIC, the
+# timer, PSCI, the CPUs and an `openbsd,acpi-5.0` node naming the RSDP), and the kernel attaches
+# acpi0 there: acpimcfg maps the ECAM window, acpipci0 the PCI host bridge (`_CRS` windows, MSI
+# through the GICv2m frame), pluart0 at acpi0 becomes the console by the SPCR, and the root is
+# found on the PCI disk by its DUID. The root login sees `ncpu` CPUs and pings the host through
+# vio0 (virtio-net-pci, MSI-X). arm64 only: amd64 boots on ACPI in every smoke already. Part of
+# `smoke`.
 smoke-acpi: (build-arm64 "--features qemu,multiprocessor") efiboot-arm64
     @test -x target/userland/arm64/host/bin/makefs -a -f target/userland/arm64/ramdisk-root/etc/fstab || \
         { echo "smoke-acpi: no arm64 makefs or staged root; run just userland first"; exit 1; }
@@ -1627,8 +1638,8 @@ smoke-acpi: (build-arm64 "--features qemu,multiprocessor") efiboot-arm64
         --send-after '/ type ffs' --send 'ping -c 1 10.0.2.2\n' \
         --expect ">> EmiBSD/arm64 BOOTAA64 1.26" --expect "efiboot: boot.conf read" \
         --expect "booting sd0a:/bsd: " --expect "FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT" \
-        --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "bsd: 4 processors, boot processor hwid 0x0" \
-        --expect "mainbus0 at root: ACPI" --expect "ampintc0 at mainbus0 nirq 288, ncpu 4" \
+        --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "bsd: {{ncpu}} processors, boot processor hwid 0x0" \
+        --expect "mainbus0 at root: ACPI" --expect "ampintc0 at mainbus0 nirq 288, ncpu {{ncpu}}" \
         --expect "ampintcmsi0 at ampintc0: nspi 64" --expect "agtimer0 at mainbus0: 62500 kHz" \
         --expect "acpi0 at mainbus0: ACPI 6.3" --expect "acpi0: tables DSDT FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT" \
         --expect "acpimcfg0 at acpi0" --expect "acpimcfg0: addr 0x4010000000, bus 0-255" \
@@ -1639,9 +1650,9 @@ smoke-acpi: (build-arm64 "--features qemu,multiprocessor") efiboot-arm64
         --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
         --expect "vio0 at virtio1: 1 queue, address 52:54:00:12:34:56" --expect "virtio1: msix per-VQ" \
         --expect "root on sd0a (454649424f4f5430.a) swap on sd0b dump on sd0b" \
-        --expect "cpu: 3 of 3 application processors running" \
+        --expect "cpu: {{aps}} of {{aps}} application processors running" \
         --expect "selftest: ping 10.0.2.2: echo reply received" \
-        --expect "rc: multi-user" --expect "(tty00)" --expect "login:" --expect "hw.ncpu=4" \
+        --expect "rc: multi-user" --expect "(tty00)" --expect "login:" --expect "hw.ncpu={{ncpu}}" \
         --expect "/dev/sd0a on / type ffs (local)" \
         --expect "1 packets transmitted, 1 packets received, 0.0% packet loss"
 
@@ -1775,7 +1786,7 @@ ntfs_steps := disk_login + " " + \
     "--expect '/dev/vnd0c on /mnt type ntfs (local, read-only)' --expect 'm10d-ntfs-42' " + \
     "--expect 'lines 500 m10d-ntfs-big-line-0499' --expect 'ntfs-done-42'"
 
-# M11a: the MULTIPROCESSOR kernel on four processors (`-smp 4`), per arch: every CPU attaches
+# M11a: the MULTIPROCESSOR kernel on four processors (`smp4`), per arch: every CPU attaches
 # and runs (`selftest: 4 cpus running`, the IPI and TLB shootdown check of each machine), the
 # default boot's init stand-in passes on it, `selftest=kthread` ping-pongs across two CPUs and
 # `selftest=mpstress` hammers the pools (with their per-CPU caches) and uvm_pmemrange from a
@@ -1795,7 +1806,7 @@ ntfs_steps := disk_login + " " + \
 # which the driver establishes itself (`virtio0: msix`, not virtio_pci's `msix per-VQ`),
 # and the frame still comes back through the queue's interrupt. Part of `smoke`.
 smoke-mp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
+    cargo xtask smoke {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
         --expect "bsd: 4 processors" --expect "acpimadt0 at acpi0 addr 0xfee00000: PC-AT compat" \
         --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
         --expect "ioapic0 at mainbus0: apid 0 pa 0xfec00000, version 20, 24 pins" \
@@ -1807,16 +1818,16 @@ smoke-mp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
         --expect "selftest: clockintr on 4 cpus ok, uptime monotonic on each" \
         --expect "init: time ok" --expect "init: uptime monotonic ok" \
         --expect "init exited with status 0 (signal 0)"
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
+    cargo xtask smoke {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
         --cmdline "selftest=kthread" --expect "selftest: kthread ping-pong ok" --expect ", across cpu"
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
+    cargo xtask smoke {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
         --cmdline "selftest=mpstress" --expect "selftest: mpstress pool ok (4 cpus" \
         --expect "selftest: mpstress pmemrange ok (4 cpus" --expect "selftest: mpstress uvm ok (4 cpus"
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
+    cargo xtask smoke {{reject}} {{smp4}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
         --vio-mq --cmdline "selftest=vio" --reject "virtio0: msix per-VQ" \
         --expect "vio0 at virtio0: 1 queue, address 52:54:00:12:34:56" --expect "virtio0: msix" \
         --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
+    cargo xtask smoke {{reject}} {{smp4}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
         --expect "bsd: 4 processors" --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" \
         --expect "cpu3 at mainbus0 mpidr 3: ARM Cortex-A72" \
         --expect "cpu: 3 of 3 application processors running, tlb shootdown seen by 3, ipi nop seen by 3" \
@@ -1824,22 +1835,23 @@ smoke-mp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
         --expect "selftest: clockintr on 4 cpus ok, uptime monotonic on each" \
         --expect "init: time ok" --expect "init: uptime monotonic ok" \
         --expect "init exited with status 0 (signal 0)"
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
+    cargo xtask smoke {{reject}} {{smp4}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
         --cmdline "selftest=kthread" --expect "selftest: kthread ping-pong ok" --expect ", across cpu"
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
+    cargo xtask smoke {{reject}} {{smp4}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
         --cmdline "selftest=mpstress" --expect "selftest: mpstress pool ok (4 cpus" \
         --expect "selftest: mpstress pmemrange ok (4 cpus" --expect "selftest: mpstress uvm ok (4 cpus"
 
-# M11c: ddb(4) on the MULTIPROCESSOR kernel with four processors (`-smp 4`), per arch, from the
-# ffs ramdisk booted `-ds`. `-d` stops at `ddb{0}> ` before the application processors exist
-# and, after the empty line the `-d` smokes type first (arm64's early PL011), `continue` goes
-# on; in the single-user shell `sysctl ddb.console=1` and
+# M11c: ddb(4) on the MULTIPROCESSOR kernel with `ncpu` processors (`{{smp}}`), per arch, from
+# the ffs ramdisk booted `-ds`. `-d` stops at `ddb{0}> ` before the application processors
+# exist and, after the empty line the `-d` smokes type first (arm64's early PL011), `continue`
+# goes on; in the single-user shell `sysctl ddb.console=1` and
 # `sysctl ddb.trigger=1` enter ddb with every CPU running, the OpenBSD way. The CPU that runs
-# sysctl(8) varies, so `machine ddbcpu 2` then `machine ddbcpu 1` always ends in a switch to
-# CPU 1, where `machine cpuinfo` shows the other three stopped. After `continue` a second
-# trigger, `ddbcpu 3`, `ddbcpu 0` and `cpuinfo` show CPU 1 stopped again (it resumed and took
-# the new IPI), and after the second `continue` the shell answers. Needs `just userland`.
-# Part of `smoke`.
+# sysctl(8) varies, so `machine ddbcpu V` (`ddbmp_via1`: 2 on four CPUs, 0 on two; a CPU
+# asked to switch to itself says `Invalid cpu` and stays) then `machine ddbcpu 1` always ends
+# in a switch to CPU 1, where `machine cpuinfo` shows the others stopped. After `continue` a
+# second trigger, `ddbcpu <last>` (3 or 1), `ddbcpu 0` and `cpuinfo` show CPU 1 stopped again
+# (it resumed and took the new IPI), and after the second `continue` the shell answers. Needs
+# `just userland`. Part of `smoke`.
 smoke-ddbmp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-ddbmp: no ramdisk image; run just userland first"; exit 1; }
@@ -1849,19 +1861,19 @@ smoke-ddbmp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'sysctl ddb.console=1\n' \
         --send-after "ddb.console: 0 -> 1" --send 'sysctl ddb.trigger=1\n' \
-        --send-after "ddb{" --send 'machine ddbcpu 2\n' \
-        --send-after "ddb{2}> " --send 'machine ddbcpu 1\n' \
+        --send-after "ddb{" --send 'machine ddbcpu {{ddbmp_via1}}\n' \
+        --send-after "{{ddbmp_via1_prompt}}" --send 'machine ddbcpu 1\n' \
         --send-after "ddb{1}> " --send 'machine cpuinfo\n' \
         --send-after "ddb{1}> " --send 'continue\n' \
         --send-after "# " --send 'sysctl ddb.trigger=1\n' \
-        --send-after "ddb{" --send 'machine ddbcpu 3\n' \
-        --send-after "ddb{3}> " --send 'machine ddbcpu 0\n' \
+        --send-after "ddb{" --send 'machine ddbcpu {{aps}}\n' \
+        --send-after "{{ddbmp_last_prompt}}" --send 'machine ddbcpu 0\n' \
         --send-after "ddb{0}> " --send 'machine cpuinfo\n' \
         --send-after "ddb{0}> " --send 'continue\n' \
         --send-after "# " --send 'echo cpus-$((2+2))-resumed\n' \
-        --expect "bsd: 4 processors" --expect "Stopped at" \
-        --expect "    0: stopped" --expect "*   1: ddb" --expect "    2: stopped" \
-        --expect "    3: stopped" --expect "*   0: ddb" --expect "    1: stopped" \
+        --expect "bsd: {{ncpu}} processors" --expect "Stopped at" \
+        --expect "    0: stopped" --expect "*   1: ddb" {{ddbmp_others}} \
+        --expect "*   0: ddb" --expect "    1: stopped" \
         --expect "cpus-4-resumed"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-ds" \
         --expect-ramdisk --until-seen \
@@ -1869,20 +1881,27 @@ smoke-ddbmp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'sysctl ddb.console=1\n' \
         --send-after "ddb.console: 0 -> 1" --send 'sysctl ddb.trigger=1\n' \
-        --send-after "ddb{" --send 'machine ddbcpu 2\n' \
-        --send-after "ddb{2}> " --send 'machine ddbcpu 1\n' \
+        --send-after "ddb{" --send 'machine ddbcpu {{ddbmp_via1}}\n' \
+        --send-after "{{ddbmp_via1_prompt}}" --send 'machine ddbcpu 1\n' \
         --send-after "ddb{1}> " --send 'machine cpuinfo\n' \
         --send-after "ddb{1}> " --send 'continue\n' \
         --send-after "# " --send 'sysctl ddb.trigger=1\n' \
-        --send-after "ddb{" --send 'machine ddbcpu 3\n' \
-        --send-after "ddb{3}> " --send 'machine ddbcpu 0\n' \
+        --send-after "ddb{" --send 'machine ddbcpu {{aps}}\n' \
+        --send-after "{{ddbmp_last_prompt}}" --send 'machine ddbcpu 0\n' \
         --send-after "ddb{0}> " --send 'machine cpuinfo\n' \
         --send-after "ddb{0}> " --send 'continue\n' \
         --send-after "# " --send 'echo cpus-$((2+2))-resumed\n' \
-        --expect "bsd: 4 processors" --expect "Stopped at" \
-        --expect "    0: stopped" --expect "*   1: ddb" --expect "    2: stopped" \
-        --expect "    3: stopped" --expect "*   0: ddb" --expect "    1: stopped" \
+        --expect "bsd: {{ncpu}} processors" --expect "Stopped at" \
+        --expect "    0: stopped" --expect "*   1: ddb" {{ddbmp_others}} \
+        --expect "*   0: ddb" --expect "    1: stopped" \
         --expect "cpus-4-resumed"
+
+# `smoke-ddbmp`'s CPU-count dependent parts: the CPU the first trigger goes through on its way
+# to CPU 1, and the lines CPU 1's `machine cpuinfo` shows for CPUs 2 and 3 on four processors.
+ddbmp_via1 := if ncpu == "4" { "2" } else { "0" }
+ddbmp_via1_prompt := "ddb{" + ddbmp_via1 + "}> "
+ddbmp_last_prompt := "ddb{" + aps + "}> "
+ddbmp_others := if ncpu == "4" { "--expect '    2: stopped' --expect '    3: stopped'" } else { "" }
 
 # The uniprocessor kernels of `smoke-up`: built without MULTIPROCESSOR and kept as
 # `target/<arch>/debug/bsd.up`. The MP kernel is rebuilt last, so `target/<arch>/debug/bsd`
@@ -2128,7 +2147,7 @@ userland:
 diff-openbsd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
     @test -f target/userland/amd64/root/usr/bin/difftest -a -f target/userland/arm64/root/usr/bin/difftest || \
         { echo "diff-openbsd: no difftest in target/userland; run just userland first"; exit 1; }
-    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/diff-openbsd} cargo xtask diff-openbsd {{smp}}
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/diff-openbsd} cargo xtask diff-openbsd {{smp4}}
 
 # --- the comp set (M14) --------------------------------------------------------------
 
@@ -2309,3 +2328,15 @@ smoke-install-boot-arm64-acpi:
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install-acpi} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install-boot {{smp}} --arch arm64 --acpi
 
 ci: fmt clippy test build smoke check-ports check-syscalls
+
+# `ci` with every `{{smp}}` recipe on four processors (`EMIBSD_NCPU=4`), not only the `smp4`
+# group: four CPUs make the MP races likelier. Then the installer end to end on both archs, also
+# on four processors (the user's decision of 2026-10-07): the install media made afresh from the
+# tree, `smoke-install-<arch>` and `smoke-install-boot-<arch>` for amd64, arm64 and arm64 on
+# ACPI, so every milestone close regenerates and checks the installer. Needs `just userland` and
+# `just comp`. Mandatory before a milestone is marked met; its result goes in the milestone's
+# closing commit (.claude/rules/testing.md). `just jobs=N ci-full` passes N on.
+ci-full:
+    EMIBSD_NCPU=4 {{quote(just_executable())}} jobs={{jobs}} ci
+    EMIBSD_NCPU=4 {{quote(just_executable())}} smoke-install-amd64 smoke-install-boot-amd64 \
+        smoke-install-arm64 smoke-install-boot-arm64 smoke-install-arm64-acpi smoke-install-boot-arm64-acpi

@@ -13,10 +13,27 @@ Four tiers. Every change lands with the tier it belongs to.
 3. **QEMU smoke tests**: `just smoke`. Boot both archs headless, assert serial lines and the exit
    code (amd64 `isa-debug-exit`, arm64 semihosting). Every change to boot, console, traps or
    scheduling adds or updates an expectation in `tools/xtask`.
-   Since M11 (the user's decision of 2026-10-03) every smoke and smoke2 run boots the
-   `multiprocessor` kernel with `-smp 4` (the justfile's `smp` variable, recipes built with
-   `--features qemu,multiprocessor`); `smoke-up` is the one uniprocessor boot per arch, kept
-   to catch a dependency on MP. New smokes follow suit: MP, `{{smp}}`, both archs.
+   Every smoke and smoke2 run boots the `multiprocessor` kernel (recipes built with
+   `--features qemu,multiprocessor`). Since the user's decision of 2026-10-07 (replacing the
+   `-smp 4` everywhere of 2026-10-03) the CPU count is the justfile's `smp` variable,
+   `-smp 2` by default (`ncpu`, from `EMIBSD_NCPU`, 2 or 4): every MP bug found so far needs
+   only two CPUs. An expectation that names the count (`bsd: N processors`, `hw.ncpu=`,
+   `cpuN at mainbus0`, `N of N application processors`, ...) follows `ncpu` through the
+   justfile's derived variables (`aps`), so the recipe passes on 2 and on 4. A fixed group
+   stays on `-smp 4` (`smp4`) to stress MP whatever `ncpu` says, with literal 4-CPU
+   expectations: `smoke-mp` (mpstress, the kthread ping-pong), the multi-queue network
+   smokes (`smoke-vmx`, `smoke-net-mp`, whose `-smp 8` boot stays as is) and
+   `smoke-softraid` (the disk smoke under load). `smoke-up` is the one uniprocessor boot per
+   arch, kept to catch a dependency on MP. New smokes follow suit: MP, `{{smp}}`, both archs;
+   `{{smp4}}` only by the user's decision.
+   `just ci-full` is `ci` with every `{{smp}}` recipe on four CPUs (`EMIBSD_NCPU=4`), then
+   the installer end to end on both archs, also on four CPUs (the user's decision of
+   2026-10-07): `smoke-install-amd64`, `smoke-install-arm64` (with `smoke-install-arm64-acpi`)
+   and `smoke-install-boot-amd64`, `-arm64`, `-arm64-acpi`, which make the install media
+   afresh from the tree, install to a fresh disk and boot the installed system; so it needs
+   `just userland` and `just comp`. Two CPUs make the races rarer and nothing else checks the
+   installer, so `ci-full` is mandatory before a milestone is marked met, and its result (rc
+   and wall time) goes in the milestone's closing commit.
    `just smoke` runs the recipes of the justfile's `smokes` list in parallel, `JOBS` at a time
    (default 4; `cargo xtask smoke-all`, docs/ARCHITECTURE.md "Parallel smokes"). So a smoke
    recipe: is added to `smokes`; builds nothing in its body (what it boots is built by its
