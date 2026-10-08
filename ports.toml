@@ -11263,8 +11263,19 @@ notes = "M16: agintc(4) GICv3 with its LPI/ITS path; criterion: every arm64 smok
 [[file]]
 c = "sys/dev/ofw/ofw_misc.c"
 rust = "sys/dev/ofw/ofw_misc.rs"
-status = "todo"
-notes = "M16: the iommu and regmap halves smmu_fdt needs; the rest stays for the boards that use it"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "64372ef6592ff9d69c7183a4427baf74a33d54f3"
+deps = ["sys/dev/ofw/ofw_misc.h", "sys/dev/ofw/fdt.c"]
+notes = "M16f: register maps (regmap_register, regmap_bycompatible/bynode/byphandle, regmap_read_4/write_4; malloc'd regmaps leaked, never freed as in C) and the IOMMU half (iommu_devices, iommu_device_register (unsafe: the element is in no list), iommu_device_do_map, iommu_device_lookup_idx/lookup/lookup_pci returning Option<(phandle, cells)> instead of 0/1 and out parameters, with the property walks as pure iommus_lookup/iommu_map_lookup (host tests: widths, truncation, unknown phandle, rid ranges, iommu-map-mask), iommu_device_map_idx/map, iommu_device_mirror_idx (id_mirror an Option: smmu_fdt registers none and the C would call NULL), iommu_device_map_pci, iommu_device_do_reserve, iommu_reserve_region_pci); at most two IOMMU cells copied (the C's KASSERT bound). Left for the boards that use them (nothing calls them on QEMU virt): the interface, PHY, I2C, SFP, PWM, NVMEM, device port/endpoint/DAI, MII, mailbox and hwlock frameworks"
+
+[[file]]
+c = "sys/dev/ofw/ofw_misc.h"
+rust = "sys/dev/ofw/ofw_misc.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "05162078c81459dfcb016f535d2f9d5131ae4c39"
+notes = "M16f: struct regmap (opaque in the header, defined in the .c) and struct iommu_device (id_map/id_reserve fn pointers taking the cells as a slice, id_mirror an Option, id_phandle a Cell set at register), in ofw_misc.rs with the .c (same name and directory); the other frameworks' types wait with their functions"
 
 [[file]]
 c = "sys/arch/arm64/dev/smmu.c"
