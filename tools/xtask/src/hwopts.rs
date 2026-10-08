@@ -82,6 +82,17 @@
 //!   `ret`, ...) is typed with the monitor's `sendkey` on the guest's keyboard (with `--usb`,
 //!   the `usb-kbd` on `qemu-xhci`), one every [`SENDKEY_GAP`] ([`parse_sendkeys`],
 //!   [`poll_sendkey`]). The run fails if a LINE never came.
+//! - `--iommu intel|amd` (`qemu`, `smoke`, M16e, amd64): a DMA remapping unit on `q35`,
+//!   QEMU's `intel-iommu` (VT-d, with an ACPI `DMAR` table) or `amd-iommu` (AMD-Vi, an `IVRS`
+//!   table and the unit's own PCI function) with `dma-remap=on` (without it QEMU's AMD-Vi
+//!   lets every device's DMA through untranslated, so the I/O virtual addresses the guest
+//!   programs land on the wrong memory), added right after `-M q35` ahead of every PCI
+//!   device. acpidmar(4) then gives each PCI device a domain, so the guest programs I/O virtual
+//!   addresses: the virtio devices (vio0, the virtio-blk disks) get `disable-legacy=on,
+//!   iommu_platform=on` ([`virtio_pci_props`]), so that they are modern-only and translate
+//!   their DMA through the IOMMU (virtio_pci negotiates `VIRTIO_F_ACCESS_PLATFORM`); without
+//!   it QEMU's virtio devices bypass the IOMMU. Emulated devices (AHCI, NVMe, ...) always
+//!   go through it. Refused on arm64 (`virt`'s IOMMU is the SMMUv3, M16f).
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -248,6 +259,13 @@ static GRID_LINE: Mutex<Option<String>> = Mutex::new(None);
 /// `--vio-mq`: vio0's virtio-net offers multiqueue (`mq=on`, set once by `main`).
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
+/// The IOMMUs `--iommu` takes, and QEMU's device for each.
+const IOMMU_MODELS: &[(&str, &str)] =
+    &[("intel", "intel-iommu"), ("amd", "amd-iommu,dma-remap=on")];
+
+/// `--iommu MODEL`: the QEMU device of the DMA remapping unit (amd64, set once by `main`).
+static IOMMU: OnceLock<&'static str> = OnceLock::new();
+
 /// The models `--nic` takes: QEMU's emulated Intel PRO/1000 controllers, which em(4) drives,
 /// its Realtek 8139C+, which re(4) drives, and its VMware VMXNET3, which vmx(4) drives.
 const NIC_MODELS: &[&str] = &["e1000", "e1000e", "igb", "rtl8139", "vmxnet3"];
@@ -261,8 +279,18 @@ static NIC: OnceLock<String> = OnceLock::new();
 static ACPI: OnceLock<()> = OnceLock::new();
 
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`, `--acpi`).
+/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`, `--acpi`,
+/// `--iommu`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
+    if let Some(model) = opt_path(args, "--iommu")? {
+        let Some(&(_, dev)) = IOMMU_MODELS.iter().find(|(m, _)| *m == model) else {
+            return Err(format!("--iommu {model}: expected intel or amd").into());
+        };
+        if args.windows(2).any(|w| w == ["--arch", "arm64"]) {
+            return Err("--iommu: amd64 only (q35)".into());
+        }
+        let _ = IOMMU.set(dev);
+    }
     if let Some(model) = opt_path(args, "--nic")? {
         if !NIC_MODELS.contains(&model) {
             return Err(format!("--nic {model}: expected one of {}", NIC_MODELS.join(", ")).into());
@@ -344,6 +372,27 @@ pub(crate) fn vio0_props() -> &'static str {
     if VIO_MQ.get().is_some() { ",mq=on" } else { "" }
 }
 
+/// The QEMU arguments of the `--iommu` unit (none without one); on `q35`, before every PCI
+/// device.
+pub(crate) fn iommu_args() -> Vec<String> {
+    iommu_args_for(IOMMU.get().copied())
+}
+
+/// [`iommu_args`] for the device `dev`.
+fn iommu_args_for(dev: Option<&str>) -> Vec<String> {
+    dev.map_or_else(Vec::new, |d| vec!["-device".to_string(), d.to_string()])
+}
+
+/// The extra properties of amd64's `virtio-*-pci` devices: with `--iommu`, modern-only and
+/// behind the IOMMU (`disable-legacy=on,iommu_platform=on`).
+pub(crate) fn virtio_pci_props() -> &'static str {
+    if IOMMU.get().is_some() {
+        ",disable-legacy=on,iommu_platform=on"
+    } else {
+        ""
+    }
+}
+
 /// The `-device` argument of the NIC on QEMU's user network (netdev `n0`, `props` its MAC
 /// when there is one): vio0, a `virtio-net-pci` on amd64 (with `--vio-mq`'s properties) and a
 /// `virtio-net-device` on arm64, or the `--nic` model.
@@ -355,7 +404,11 @@ pub(crate) fn user_nic(arch: Arch, props: &str) -> String {
 fn user_nic_arg(nic: Option<&str>, arch: Arch, props: &str) -> String {
     match (nic, arch) {
         (Some(model), _) => format!("{model},netdev=n0{props}"),
-        (None, Arch::Amd64) => format!("virtio-net-pci,netdev=n0{props}{}", vio0_props()),
+        (None, Arch::Amd64) => format!(
+            "virtio-net-pci,netdev=n0{props}{}{}",
+            vio0_props(),
+            virtio_pci_props()
+        ),
         (None, Arch::Arm64) if acpi() => format!("virtio-net-pci,netdev=n0{props}"),
         (None, Arch::Arm64) => format!("virtio-net-device,netdev=n0{props}"),
     }
@@ -1436,6 +1489,20 @@ mod tests {
         assert!(set(Path::new("/r"), &["--nic", "ne2k_pci"]).is_err());
         assert!(set(Path::new("/r"), &["--nic"]).is_err());
         assert!(set(Path::new("/r"), &["--nic", "e1000", "--vio-mq"]).is_err());
+    }
+
+    #[test]
+    fn iommu_is_a_q35_device() {
+        assert_eq!(iommu_args_for(None), Vec::<String>::new());
+        assert_eq!(iommu_args_for(Some("amd-iommu")), ["-device", "amd-iommu"]);
+        assert!(set(Path::new("/r"), &["--iommu", "via"]).is_err());
+        assert!(set(Path::new("/r"), &["--iommu"]).is_err());
+        assert!(set(Path::new("/r"), &["--arch", "arm64", "--iommu", "intel"]).is_err());
+        assert!(
+            IOMMU_MODELS
+                .iter()
+                .any(|&(m, d)| m == "intel" && d == "intel-iommu")
+        );
     }
 
     #[test]

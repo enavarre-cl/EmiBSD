@@ -601,6 +601,8 @@ pub(crate) fn qemu_command(
     match arch {
         Arch::Amd64 => {
             cmd.args(["-M", "q35", "-cpu", "qemu64"]);
+            // M16e (hwopts.rs): `--iommu`, before every PCI device.
+            cmd.args(crate::hwopts::iommu_args());
             cmd.arg("-drive").arg(format!(
                 "if=none,format=raw,file={},id=hd0",
                 image.display()
@@ -613,7 +615,11 @@ pub(crate) fn qemu_command(
                 cmd.args(["-netdev", &v.netdev()]);
                 cmd.args([
                     "-device",
-                    &format!("virtio-net-pci,netdev=n1,mac={}", v.link_mac),
+                    &format!(
+                        "virtio-net-pci,netdev=n1,mac={}{}",
+                        v.link_mac,
+                        crate::hwopts::virtio_pci_props()
+                    ),
                 ]);
             }
             // M13 (hwopts.rs): NVMe and the other PCI storage, before the virtio-blk disks.
@@ -623,7 +629,13 @@ pub(crate) fn qemu_command(
                     "if=none,format=raw,file={},id=sd{k}",
                     disk.display()
                 ));
-                cmd.args(["-device", &format!("virtio-blk-pci,drive=sd{k}")]);
+                cmd.args([
+                    "-device",
+                    &format!(
+                        "virtio-blk-pci,drive=sd{k}{}",
+                        crate::hwopts::virtio_pci_props()
+                    ),
+                ]);
             }
         }
         Arch::Arm64 => {
