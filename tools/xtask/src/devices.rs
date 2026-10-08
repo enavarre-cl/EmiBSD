@@ -1,6 +1,6 @@
 /* <CODE> */
 //! M12's QEMU devices: USB through `qemu-xhci` and audio through Intel HDA or AC97, and M16b's
-//! USB pointers and smart card reader.
+//! USB pointers, smart card reader and USB audio.
 //!
 //! `smoke` and `qemu` take, besides the flags every boot has:
 //! - `--usb`: a `qemu-xhci` controller with a `usb-storage` stick and a `usb-kbd` on its
@@ -16,9 +16,11 @@
 //!   brings the controller, with the stick and the `usb-kbd` only if `--usb` is also given. The
 //!   pointers register with the guest in this order (`mouse_set N` in the monitor picks the
 //!   one `mouse_move` and `mouse_button` drive; `--monitor-after`, hwopts.rs).
-//! - `--audio hda` or `--audio ac97`: QEMU's `wav` audio backend writes what the guest plays
-//!   to `<image>.wav` (removed first), through `intel-hda` + `hda-output` (`azalia(4)`) or
-//!   `AC97` (`auich(4)`).
+//! - `--audio hda`, `--audio ac97` or `--audio usb`: QEMU's `wav` audio backend writes what
+//!   the guest plays to `<image>.wav` (removed first), through `intel-hda` + `hda-output`
+//!   (`azalia(4)`), `AC97` (`auich(4)`) or (M16b) a `usb-audio` speaker on the `qemu-xhci`
+//!   bus (`uaudio(4)`; the controller comes with it, the stick and the `usb-kbd` only with
+//!   `--usb`).
 //! - `--speakers` (with `--audio`): QEMU's `coreaudio` backend instead of `wav`, so what the
 //!   guest plays comes out of the Mac's speakers; nothing is recorded, so it excludes
 //!   `--expect-tone` (`just play-audio`, by ear, outside `smoke`).
@@ -69,6 +71,8 @@ pub(crate) enum Audio {
     Hda,
     /// `AC97`: `auich(4)`.
     Ac97,
+    /// `usb-audio` on the `qemu-xhci` bus: `uaudio(4)`.
+    Usb,
 }
 
 /// The M12 devices of this run (set once by `main`, read when QEMU's command line is made).
@@ -84,7 +88,7 @@ pub(crate) struct Devices {
     pub usb_wacom: bool,
     /// `--usb-ccid`.
     pub usb_ccid: bool,
-    /// `--audio hda|ac97`.
+    /// `--audio hda|ac97|usb`.
     pub audio: Option<Audio>,
     /// `--expect-tone`.
     pub expect_tone: bool,
@@ -94,7 +98,7 @@ pub(crate) struct Devices {
 
 static DEVICES: OnceLock<Devices> = OnceLock::new();
 
-/// Parses `--usb`, `--usb-mouse`, `--usb-tablet`, `--usb-wacom-tablet`, `--usb-ccid`, `--audio <hda|ac97>`, `--speakers` and `--expect-tone` and records them
+/// Parses `--usb`, `--usb-mouse`, `--usb-tablet`, `--usb-wacom-tablet`, `--usb-ccid`, `--audio <hda|ac97|usb>`, `--speakers` and `--expect-tone` and records them
 /// for the run.
 pub(crate) fn set_from_args(args: &[&str]) -> Result<()> {
     let _ = DEVICES.set(parse(args)?);
@@ -108,7 +112,10 @@ fn parse(args: &[&str]) -> Result<Devices> {
         Some(i) => match args.get(i + 1).copied() {
             Some("hda") => Some(Audio::Hda),
             Some("ac97") => Some(Audio::Ac97),
-            other => return Err(format!("--audio {other:?}: expected `hda` or `ac97`").into()),
+            Some("usb") => Some(Audio::Usb),
+            other => {
+                return Err(format!("--audio {other:?}: expected `hda`, `ac97` or `usb`").into());
+            }
         },
     };
     let expect_tone = args.contains(&"--expect-tone");
@@ -153,7 +160,8 @@ pub(crate) fn wav_path(image: &Path) -> PathBuf {
 pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
     let d = devices();
     let mut args = Vec::new();
-    let extras = d.usb_mouse || d.usb_tablet || d.usb_wacom || d.usb_ccid;
+    let extras =
+        d.usb_mouse || d.usb_tablet || d.usb_wacom || d.usb_ccid || d.audio == Some(Audio::Usb);
     if d.usb || extras {
         args.extend(["-device".to_string(), "qemu-xhci,id=xhci".to_string()]);
     }
@@ -201,6 +209,9 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
                 .map(String::from),
             ),
             Audio::Ac97 => args.extend(["-device", "AC97,audiodev=snd0"].map(String::from)),
+            Audio::Usb => {
+                args.extend(["-device", "usb-audio,bus=xhci.0,audiodev=snd0"].map(String::from))
+            }
         }
     }
     Ok(args)
@@ -413,6 +424,8 @@ mod tests {
         assert!(d.speakers && !d.expect_tone);
         assert_eq!(d.audio, Some(Audio::Hda));
         assert!(!parse(&["--audio", "ac97"]).unwrap().speakers);
+        assert_eq!(parse(&["--audio", "usb"]).unwrap().audio, Some(Audio::Usb));
+        assert!(parse(&["--audio", "sb"]).is_err());
         assert!(parse(&["--speakers"]).is_err());
         assert!(parse(&["--audio", "hda", "--speakers", "--expect-tone"]).is_err());
     }
