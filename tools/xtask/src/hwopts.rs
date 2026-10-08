@@ -46,6 +46,15 @@
 //!   (the firmware numbers their buses). The images are in the run directory, 64 MiB of
 //!   zeroes made afresh each run ([`PPB_DISK_BYTES`]). They go after `--pci-serial`
 //!   ([`add_devices`]), so no other PCI slot moves.
+//! - `--ipmi` (`qemu`, `smoke`, M16e, `smoke-ipmi`, amd64 only): a baseboard management
+//!   controller for ipmi(4): QEMU's simulated BMC (`ipmi-bmc-sim`) behind a KCS system
+//!   interface on q35's ISA bus (`isa-ipmi-kcs`, I/O ports 0xca2-0xca3). QEMU describes it to
+//!   the guest in its DSDT (an `IPI0001` device with `_IFT` 1, `_SRV` 0x200 and the I/O
+//!   ports in `_CRS`) and in SMBIOS (type 38). The BMC's SDR repository is the file
+//!   `ipmi-sdr.bin` in the run directory, written each run ([`IPMI_SDRS`]): one compact
+//!   sensor record, a temperature sensor named `QEMU Temp`, which the simulator also makes a
+//!   sensor of (scanning on, reading 0), so ipmi(4) exports it as `hw.sensors.ipmi0.temp0`.
+//!   ISA devices take no PCI slot, so nothing on the bus moves.
 //! - `--reboot` (`qemu`, `smoke`, M13): QEMU runs without `-no-reboot`, so a guest reset
 //!   restarts the machine (EDK2, Limine and the kernel again; the EDK2 variable store is the
 //!   run's copy) instead of ending QEMU with status 0. `smoke-power` boots, runs `reboot`
@@ -218,6 +227,42 @@ pub(crate) const PPB_DISK_BYTES: u64 = 64 << 20;
 /// `--pci-bridges`: the run directory its two disks go in (set once by `main`).
 static PCI_BRIDGES: OnceLock<PathBuf> = OnceLock::new();
 
+/// `--ipmi`: the run directory the BMC's SDR file goes in (set once by `main`).
+static IPMI: OnceLock<PathBuf> = OnceLock::new();
+
+/// `--ipmi`'s SDR repository: one IPMI 2.0 compact sensor record (type 2, 32 bytes and the
+/// name). QEMU's `ipmi-bmc-sim` renumbers the records it loads and makes a sensor of every
+/// compact one, indexed by its sensor number.
+pub(crate) const IPMI_SDRS: &[u8] = &[
+    0x00, 0x00, // record ID (QEMU assigns its own)
+    0x51, // SDR version 1.5
+    0x02, // record type: compact sensor
+    36,   // bytes after this header
+    0x20, // sensor owner: the BMC
+    0x00, // owner LUN
+    0x02, // sensor number
+    0x07, // entity: system board
+    0x01, // entity instance
+    0x40, // sensor initialization: scanning on
+    0x00, // sensor capabilities
+    0x01, // sensor type: temperature
+    0x01, // event/reading type: threshold
+    0x00, 0x00, // assertion event mask
+    0x00, 0x00, // deassertion event mask
+    0x00, 0x00, // discrete reading mask
+    0x00, // units 1: unsigned
+    0x01, // units 2: degrees C
+    0x00, // units 3
+    0x01, // record sharing: one sensor
+    0x00, // instance modifier
+    0x00, // positive hysteresis
+    0x00, // negative hysteresis
+    0x00, 0x00, 0x00, // reserved
+    0x00, // OEM
+    0xc9, // ID string: 8-bit ASCII, 9 bytes
+    b'Q', b'E', b'M', b'U', b' ', b'T', b'e', b'm', b'p',
+];
+
 /// `--pci-serial FILE` (in the run directory) for every VM this run starts (set once by `main`).
 static PCI_SERIAL: OnceLock<PathBuf> = OnceLock::new();
 
@@ -274,8 +319,8 @@ static NIC: OnceLock<String> = OnceLock::new();
 static ACPI: OnceLock<()> = OnceLock::new();
 
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--pci-serial`, `--expect-pci-serial`, `--pci-bridges`, `--reboot`, `--vio-mq`, `--nic`,
-/// `--acpi`).
+/// `--pci-serial`, `--expect-pci-serial`, `--pci-bridges`, `--ipmi`, `--reboot`, `--vio-mq`,
+/// `--nic`, `--acpi`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(model) = opt_path(args, "--nic")? {
         if !NIC_MODELS.contains(&model) {
@@ -291,6 +336,9 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     }
     if args.contains(&"--pci-bridges") {
         let _ = PCI_BRIDGES.set(boot::run_dir(root));
+    }
+    if args.contains(&"--ipmi") {
+        let _ = IPMI.set(boot::run_dir(root));
     }
     if args.contains(&"--acpi") {
         let _ = ACPI.set(());
@@ -676,7 +724,27 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
         }
         cmd.args(pci_bridges_args(&rp, &br));
     }
+    if let Some(dir) = IPMI.get() {
+        if arch != Arch::Amd64 {
+            return Err("--ipmi: amd64 only (QEMU's isa-ipmi-kcs needs an ISA bus)".into());
+        }
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let sdr = dir.join("ipmi-sdr.bin");
+        fs::write(&sdr, IPMI_SDRS).map_err(|e| format!("{}: {e}", sdr.display()))?;
+        cmd.args(ipmi_args(&sdr));
+    }
     Ok(())
+}
+
+/// The QEMU arguments of `--ipmi`: the simulated BMC with the SDR file `sdr`, behind a KCS
+/// interface on the ISA bus.
+fn ipmi_args(sdr: &Path) -> Vec<String> {
+    vec![
+        "-device".into(),
+        format!("ipmi-bmc-sim,id=bmc0,sdrfile={}", sdr.display()),
+        "-device".into(),
+        "isa-ipmi-kcs,bmc=bmc0".into(),
+    ]
 }
 
 /// Makes `image` afresh: `bytes` of zeroes (a sparse file).
@@ -1356,6 +1424,16 @@ mod tests {
         assert_eq!(a[7], "pci-bridge,id=ppbbr,chassis_nr=2");
         assert_eq!(a[9], "if=none,format=raw,file=/run/ppb-br.img,id=ppbbr0");
         assert_eq!(a[11], "virtio-blk-pci,drive=ppbbr0,bus=ppbbr,addr=1");
+    }
+
+    #[test]
+    fn ipmi_is_a_simulated_bmc_on_kcs() {
+        let a = ipmi_args(Path::new("/run/ipmi-sdr.bin"));
+        assert_eq!(a[1], "ipmi-bmc-sim,id=bmc0,sdrfile=/run/ipmi-sdr.bin");
+        assert_eq!(a[3], "isa-ipmi-kcs,bmc=bmc0");
+        // The record's length byte counts what follows the 5-byte header.
+        assert_eq!(usize::from(IPMI_SDRS[4]) + 5, IPMI_SDRS.len());
+        assert_eq!(IPMI_SDRS[31] & 0x1f, 9);
     }
 
     #[test]
