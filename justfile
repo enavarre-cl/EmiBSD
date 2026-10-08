@@ -2371,23 +2371,25 @@ smoke-dmar: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --expect 'nvme0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4'
 
 # M16e: the iic(4) bus and its scan, amd64 only (arm64's GENERIC has no SMBus controller). Two
-# runs. On q35, ichiic(4) attaches to the ICH9 SMBus (00:1f.3; EDK2 leaves its host controller
-# disabled, as UEFI firmware does, so the attach enables it, ichiic.rs "Deviations") with its
-# interrupt on I/O APIC pin 16, and iic0 below it. On `--machine pc` (hwopts.rs; i440fx, the
-# boot image on an ich9-ahci), piixpm(4) attaches to the PIIX4 power management function
-# (00:01.3), interrupt 9 (the SCI), and iic0 below it. The scan runs on both: it gets an
-# acknowledgement from the eight SPD EEPROMs QEMU puts on each SMBus (0x50 to 0x57), but QEMU's
-# are blank (register 2, the memory type, reads 0), so iic_probe_eeprom names none and, as in
-# OpenBSD, nothing is printed for them; nothing else answers. A timeout or a failed abort of a
-# transfer would print a line (`exec: op`, `abort failed`) and fails the run. Part of `smoke`.
+# runs. On q35, ichiic(4) matches the ICH9 SMBus (00:1f.3), whose host controller EDK2 leaves
+# disabled (a BIOS enables it): the attach prints `SMBus disabled` and stops, as the C does and
+# as OpenBSD 8.0 does on the same machine (`cargo xtask diff-openbsd probe`: 'ichiic0 at pci0
+# dev 31 function 3 "Intel 82801I SMBus" rev 0x02: SMBus disabled'), so no iic0 there. On
+# `--machine pc` (hwopts.rs; i440fx, the boot image on an ich9-ahci), piixpm(4) attaches to the
+# PIIX4 power management function (00:01.3), interrupt 9 (the SCI), and iic0 below it, whose
+# scan gets an acknowledgement from the eight SPD EEPROMs QEMU puts on the SMBus (0x50 to
+# 0x57); QEMU's are blank (register 2, the memory type, reads 0), so iic_probe_eeprom names
+# none and, as in OpenBSD, nothing is printed for them; nothing else answers. A timeout or a
+# failed abort of a transfer would print a line (`exec: op`, `abort failed`) and fails the run.
+# Part of `smoke`.
 smoke-iic: (build-amd64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs || \
         { echo "smoke-iic: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         {{disk_login}} --send-after '# ' --send 'echo iic-$((40+2))\n' \
-        --reject 'SMBus disabled' --reject 'abort failed' --reject ': exec: op' \
-        --expect 'ichiic0 at pci0 dev 31 function 3 vendor 0x8086 product 0x2930 rev 0x02: apic 0 int 16' \
-        --expect 'iic0 at ichiic0' --expect 'iic-42'
+        --reject 'iic0 at ichiic0' \
+        --expect 'ichiic0 at pci0 dev 31 function 3 vendor 0x8086 product 0x2930 rev 0x02: SMBus disabled' \
+        --expect 'iic-42'
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --machine pc --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         {{disk_login}} --send-after '# ' --send 'echo iic-$((40+2))\n' \
         --reject 'SMBus disabled' --reject 'abort failed' --reject ': exec: op' \
