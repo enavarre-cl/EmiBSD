@@ -288,6 +288,22 @@ impl<T> ListEntry<T> {
             le_prev: Cell::new(ptr::null()),
         }
     }
+
+    /// `elm->field.le_prev != NULL`: the element is in a list. Meaningful only for code that
+    /// clears the link after every removal ([`clear_prev`](Self::clear_prev)), as uhci(4)
+    /// does with its active xfers (`uhci_active_intr_list`).
+    pub fn is_linked(&self) -> bool {
+        !self.le_prev.get().is_null()
+    }
+
+    /// `elm->field.le_prev = NULL` after a `LIST_REMOVE`.
+    ///
+    /// # Safety
+    ///
+    /// The element is in no list (it was just removed from its list).
+    pub unsafe fn clear_prev(&self) {
+        self.le_prev.set(ptr::null());
+    }
 }
 
 impl<T> Default for ListEntry<T> {
@@ -1626,6 +1642,26 @@ mod tests {
             ListHead::<Li>::remove(&n[0]);
         }
         assert!(h.is_empty());
+    }
+
+    #[test]
+    fn list_is_linked() {
+        let n = nodes::<2>();
+        let h = ListHead::<Li>::new();
+        assert!(!n[0].li.is_linked());
+        // SAFETY: the nodes outlive the head; each operation's precondition holds.
+        unsafe {
+            h.insert_head(&n[0]);
+            h.insert_head(&n[1]);
+        }
+        assert!(n[0].li.is_linked() && n[1].li.is_linked());
+        // SAFETY: `n[0]` is linked; after the removal it is in no list.
+        unsafe {
+            ListHead::<Li>::remove(&n[0]);
+            n[0].li.clear_prev();
+        }
+        assert!(!n[0].li.is_linked());
+        assert_eq!(ids(h.iter()), [2]);
     }
 
     #[test]

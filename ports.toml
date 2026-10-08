@@ -10750,28 +10750,32 @@ notes = "M16b: match, attach (BAR 0, the ATI SB600/SB700 and VIA VT6202 quirks w
 [[file]]
 c = "sys/dev/usb/uhcireg.h"
 rust = "sys/dev/usb/uhcireg.rs"
-status = "todo"
-notes = "M16: uhci registers and descriptors"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+notes = "M16b: uhci registers and descriptors; ported, not attached yet"
 
 [[file]]
 c = "sys/dev/usb/uhcivar.h"
 rust = "sys/dev/usb/uhcivar.rs"
-status = "todo"
-notes = "M16: uhci_softc"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+notes = "M16b: uhci_softc, soft TD/QH, uhci_xfer, virtual frames; ported, not attached yet"
 
 [[file]]
 c = "sys/dev/usb/uhci.c"
 rust = "sys/dev/usb/uhci.rs"
-status = "todo"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/dev/usb/uhcireg.h", "sys/dev/usb/uhcivar.h", "sys/dev/usb/usb.c"]
-notes = "M16: uhci(4); criterion: QEMU's piix3-usb-uhci / ich9-usb-uhci1 with the usb-storage stick mounted, both archs"
+notes = "M16b: uhci(4) ported, not attached yet; criterion: QEMU's piix3-usb-uhci / ich9-usb-uhci1 with the usb-storage stick mounted, both archs"
 
 [[file]]
 c = "sys/dev/pci/uhci_pci.c"
 rust = "sys/dev/pci/uhci_pci.rs"
-status = "todo"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/dev/usb/uhci.c"]
-notes = "M16: uhci at pci"
+notes = "M16b: uhci at pci ported, not attached yet"
 
 [[file]]
 c = "sys/dev/usb/ohcireg.h"
