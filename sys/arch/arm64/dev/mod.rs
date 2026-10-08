@@ -5,10 +5,12 @@
 //! the ARM generic timer (M5); M12 adds `simplebus` (the device tree's `simple-bus`, also
 //! the GIC's children) and `pci_machdep` (`arch/arm64/dev/pci_machdep.c`).
 //! M14 adds arm64 ACPI's `acpiiort` (the IORT) and `acpipci` (the ACPI PCI host bridges).
-//! `agintc` (GICv3) and the rest attach with their milestones.
+//! M16f adds `agintc`, the GICv3 interrupt controller with its ITS (`agintcmsi`). The rest
+//! attach with their milestones.
 
 pub mod acpiiort;
 pub mod acpipci;
+pub mod agintc;
 pub mod agtimer;
 pub mod ampintc;
 pub mod efi_machdep;

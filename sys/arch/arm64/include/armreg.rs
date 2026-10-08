@@ -42,7 +42,8 @@
 //! `ESR_ELx` exception classes and syndrome bits the kernel trap handler reads, the `PSR`
 //! bits and the `MDSCR_EL1` debug bits. M11a (`cpu.c`) adds the cache registers (`CCSIDR`,
 //! `CLIDR`, `CSSELR`, `CTR_IL1P`), every `ID_AA64*` field, `SCTLR_EL1`, `TCR_A1` and
-//! `DBG_MDSCR_TDCC`. The GIC system registers come with the drivers that use them.
+//! `DBG_MDSCR_TDCC`. The GIC system registers come with the drivers that use them: M16f
+//! (`agintc.c`) adds the GICv3 CPU interface's `ICC_*_EL1` fields.
 //!
 //! ## Deviations
 //! - `READ_SPECIALREG`/`WRITE_SPECIALREG` are `macro_rules!` taking the register name as a
@@ -228,6 +229,56 @@ pub const fn tcr_t1sz(x: u64) -> u64 {
 pub const CNTHCTL_EL1PCEN: u64 = 1 << 1;
 /// `CNTHCTL_EL1PCTEN`: EL0/EL1 may read the physical counter.
 pub const CNTHCTL_EL1PCTEN: u64 = 1 << 0;
+
+/* ICC_CTLR_EL1 */
+
+/// `ICC_CTLR_EL1_EOIMODE`: EOI only drops the priority; a write to `ICC_DIR_EL1` deactivates.
+pub const ICC_CTLR_EL1_EOIMODE: u64 = 1 << 1;
+/// `ICC_CTLR_EL1_PRIBITS_SHIFT`.
+pub const ICC_CTLR_EL1_PRIBITS_SHIFT: u64 = 8;
+/// `ICC_CTLR_EL1_PRIBITS_MASK`: the number of priority bits implemented, minus one.
+pub const ICC_CTLR_EL1_PRIBITS_MASK: u64 = 0x7 << 8;
+/// `ICC_CTLR_EL1_PRIBITS(reg)`.
+pub const fn icc_ctlr_el1_pribits(reg: u64) -> u64 {
+    (reg & ICC_CTLR_EL1_PRIBITS_MASK) >> ICC_CTLR_EL1_PRIBITS_SHIFT
+}
+
+/* ICC_IAR1_EL1 */
+
+/// `ICC_IAR1_EL1_SPUR`: the spurious interrupt ID.
+pub const ICC_IAR1_EL1_SPUR: u64 = 0x03ff;
+
+/* ICC_IGRPEN0_EL1 */
+
+/// `ICC_IGRPEN0_EL1_EN`.
+pub const ICC_IGRPEN0_EL1_EN: u64 = 1 << 0;
+
+/* ICC_PMR_EL1 */
+
+/// `ICC_PMR_EL1_PRIO_MASK`.
+pub const ICC_PMR_EL1_PRIO_MASK: u64 = 0xFF;
+
+/* ICC_SGI1R_EL1 */
+
+/// `ICC_SGI1R_EL1_TL_MASK`: the target list, one bit per affinity-0 value.
+pub const ICC_SGI1R_EL1_TL_MASK: u64 = 0xffff;
+/// `ICC_SGI1R_EL1_AFF1_SHIFT`.
+pub const ICC_SGI1R_EL1_AFF1_SHIFT: u64 = 16;
+/// `ICC_SGI1R_EL1_SGIID_SHIFT`.
+pub const ICC_SGI1R_EL1_SGIID_SHIFT: u64 = 24;
+/// `ICC_SGI1R_EL1_AFF2_SHIFT`.
+pub const ICC_SGI1R_EL1_AFF2_SHIFT: u64 = 32;
+/// `ICC_SGI1R_EL1_AFF3_SHIFT`.
+pub const ICC_SGI1R_EL1_AFF3_SHIFT: u64 = 48;
+/// `ICC_SGI1R_EL1_SGIID_MASK`.
+pub const ICC_SGI1R_EL1_SGIID_MASK: u64 = 0xf;
+/// `ICC_SGI1R_EL1_IRM`: to every processor but the sender.
+pub const ICC_SGI1R_EL1_IRM: u64 = 0x1 << 40;
+
+/* ICC_SRE_EL1 */
+
+/// `ICC_SRE_EL1_SRE`: the system register interface at EL1.
+pub const ICC_SRE_EL1_SRE: u64 = 1 << 0;
 
 /* ICC_SRE_EL2 (locore.S's drop_to_el1) */
 
@@ -1452,6 +1503,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn icc_ctlr_pribits() {
+        // Five priority bits: PRIbits reads 4.
+        assert_eq!(icc_ctlr_el1_pribits(0x0000_0400), 4);
+        assert_eq!(icc_ctlr_el1_pribits(!ICC_CTLR_EL1_PRIBITS_MASK), 0);
+    }
+
+    #[test]
     fn exception_class_extraction() {
         assert_eq!(esr_elx_exception(0x9600_0045), EXCP_DATA_ABORT);
         assert_eq!(esr_elx_exception(0xf200_0000), EXCP_BRK);
@@ -1477,6 +1535,20 @@ mod tests {
             ("PSR_D", PSR_D as i64),
             ("PSR_SS", PSR_SS as i64),
             ("DBG_MDSCR_KDE", DBG_MDSCR_KDE as i64),
+            ("ICC_CTLR_EL1_EOIMODE", ICC_CTLR_EL1_EOIMODE as i64),
+            (
+                "ICC_CTLR_EL1_PRIBITS_SHIFT",
+                ICC_CTLR_EL1_PRIBITS_SHIFT as i64,
+            ),
+            ("ICC_IAR1_EL1_SPUR", ICC_IAR1_EL1_SPUR as i64),
+            ("ICC_SGI1R_EL1_TL_MASK", ICC_SGI1R_EL1_TL_MASK as i64),
+            ("ICC_SGI1R_EL1_AFF1_SHIFT", ICC_SGI1R_EL1_AFF1_SHIFT as i64),
+            (
+                "ICC_SGI1R_EL1_SGIID_SHIFT",
+                ICC_SGI1R_EL1_SGIID_SHIFT as i64,
+            ),
+            ("ICC_SGI1R_EL1_AFF2_SHIFT", ICC_SGI1R_EL1_AFF2_SHIFT as i64),
+            ("ICC_SGI1R_EL1_AFF3_SHIFT", ICC_SGI1R_EL1_AFF3_SHIFT as i64),
         ];
         let defs = crate::reftest::defines("sys/arch/arm64/include/armreg.h");
         for (name, value) in want {
