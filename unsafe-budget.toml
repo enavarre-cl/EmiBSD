@@ -138,7 +138,7 @@ total = 84
 
 [[subsystem]]
 name = "lib/libz"
-total = 2
+total = 0
 
 [[subsystem]]
 name = "machine"

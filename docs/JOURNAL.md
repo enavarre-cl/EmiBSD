@@ -14,19 +14,41 @@ continues in LZ and this journal records the native system.
 
 ## N0 Bootstrap
 
-Boundary: _(the `docs: N0 met` commit)_. Range `lz-origin..<hash>`.
+Boundary: the `docs: N0 met` commit. Range `lz-origin..` that commit (f5985f1d055a onwards).
 
-- Went well: _(filled at the close)_
-- Failed: _(filled at the close)_
-- Idioms: _(filled at the close)_
+- Went well: the governance, `lineage.toml` 1:1 from `ports.toml` and `cargo xtask lz` held
+  up: every check that failed did so on its own tooling, never on the kernel. The first
+  `just ci` in this tree passed all 67 smokes on its first run. The author's ISC block reached
+  1200 files through LZ 44edb2c with the lz-sync machinery the milestone built, and 1017 of the
+  1028 inherited modules matched LZ byte for byte with the native script as well.
+- Failed: three tooling bugs from the RCS-ident drop (3a7e877), found by the first runs: `lz
+  check` kept the blank line an ident left (15 false "differs from LZ"), `gen-syscalls` still
+  wrote the ident line, and ten modules of licence-less C files carried an empty LICENSES zone
+  without `license = "none"`. Stopping a `just ci` mid-build corrupted cargo's incremental cache
+  (undefined `anon.*` symbols at link); `cargo clean -p bsd` per target fixed it. Running
+  `just comp`, a subagent and the smokes at once took the load to 50 on 11 cores. The author's
+  block was first planned "after" the notices, then "first"; and the push the user needed at
+  once waited on a `just ci`: an explicit push order is now pushed at once.
+- Idioms: none settled (N1 settles the first).
 - Rules: the governance rewrite (`CLAUDE.md`, `.claude/rules/`), decisions 16 to 20
   (`docs/PHASE2.md`); the authorship rule of 2026-10-09 (the author's ISC block first in every
   `.rs`), first planned as a milestone N0b, then absorbed from LZ 44edb2c and pushed at once at
   the user's request; the milestone was dropped once it was in.
 - LZ sync: `f5985f1d055a..44edb2c8323e`, 2 commits (the logo, the author's block): cherry-pick
   1, cherry-pick-conflicts 1, reimplemented 0.
-- Numbers: _(from the tools at the close: `cargo xtask unsafe-report`, `lz status`, the smoke
-  count of `just ci`, the `diff-openbsd` summary per arch, `just bench` when it exists)_
+- Numbers (at `lz-origin` unless said):
+  - `cargo xtask unsafe-report`: kernel 8198 blocks, 1041 fn, 768 impl, 27 trait, 323 other,
+    total 10357; tests 816 more. After libz's redesign (N1, already in): 10355.
+  - `cargo xtask lz status`: 1028 modules, all inherited, 35 extras, 0 dropped (`git ls-files`
+    of `sys/` and `tools/`: 1200 `.rs`); at this commit 1011 inherited, 4 adapted, 13 redesigned.
+  - `just ci`: 67 smokes on both archs, host tests 2605 passed, 0 failed, 229 ignored, 1150 s.
+  - `just ci-full`: green, 1655 s: the 67 smokes on `-smp 4`, the installer end to end on amd64,
+    arm64 and arm64 ACPI (install 141, 153 and 228 s, each then booted).
+  - `just diff-openbsd`: amd64 and arm64, 102 steps each, 99 equal, 3 expected (fifofs, the
+    `kern.ostype` branding, core dumps), 0 unexpected.
+  - `just comp`: both archs, the second (resumed) run 465 s.
+  - LZ sync: 2 commits absorbed (see Rules); `lz drift --strict` 0 open.
+  - Commits: `git log --oneline f5985f1d055a..` this commit.
 
 Effort: _(user)_
 

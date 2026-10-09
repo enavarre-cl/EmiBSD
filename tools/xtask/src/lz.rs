@@ -285,7 +285,7 @@ fn git_raw(repo: &Path, args: &[&str]) -> Result<String> {
 ///
 /// Dropping an ident line at the top of a file, or one between two blank lines, leaves a
 /// leading blank line or two blank lines in a row, which rustfmt removes; the commit that
-/// dropped the lines (`6b5304c`) removed them too. So the blank line that follows a dropped
+/// dropped the lines (`3a7e877`) removed them too. So the blank line that follows a dropped
 /// ident goes with it when the text kept so far is empty or ends in a blank line. No other
 /// blank line is touched.
 pub(crate) fn strip_ident_lines(src: &str) -> String {
