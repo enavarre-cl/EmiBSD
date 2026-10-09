@@ -35,6 +35,12 @@ reference/PINNED.md. The names of OpenBSD contributors may not be used to
 endorse or promote this project without their written permission
 (BSD-3-Clause, clause 3).
 
+Every Rust file under sys/ and tools/ also carries, after any original
+notices in its <LICENSES> zone (or alone, where the source had none), an ISC
+notice for the Rust work: Copyright (c) 2026 Emilio Navarrete Lineros
+<enavarre@outlook.com>. The original notices are never altered; for a ported
+file, both notices apply.
+
 Files ported from zlib (Copyright (C) 1995-2026 Jean-loup Gailly and Mark
 Adler) are altered source versions: they are rewritten in Rust and are not
 the original software (zlib license, clause 2). Their license text is kept

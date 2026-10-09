@@ -26,8 +26,38 @@ LZ ports OpenBSD incrementally, and this tree inherits its gaps. These rules kee
     without licence text keeps its copyright lines as they are. Never shorten, reword or
     relicense it. A zlib port says it is an altered version (zlib clause 2).
   - `lineage.toml` `license` names the licence when it is not ISC, BSD or MIT, or is `"none"`
-    for a file whose source has no licence text (no `<LICENSES>` zone).
+    when the C source has no licence text (the Rust file then carries only the author's block,
+    below).
   - `LICENSE` lists the licence families present; a new family is added there in the same commit.
+- Authorship (the user's rule of 2026-10-09, milestone N0b): every `.rs` under `sys/` and
+  `tools/` carries, inside its `/* <LICENSES> */` zone, this ISC block, whole:
+  ```
+  /*
+   * Copyright (c) 2026 Emilio Navarrete Lineros <enavarre@outlook.com>
+   *
+   * Permission to use, copy, modify, and distribute this software for any
+   * purpose with or without fee is hereby granted, provided that the above
+   * copyright notice and this permission notice appear in all copies.
+   *
+   * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+   * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+   * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+   * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+   * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+   * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+   * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+   */
+  ```
+  - A file with original blocks (the port of a C file with licence text): the author's block
+    comes after them, as the last block of the zone, after one blank line. The original blocks
+    are never touched: never shortened, reworded, reordered, replaced or moved after it.
+  - A module with `license = "none"`, an `[[extra]]`, and every `.rs` outside `lineage.toml`
+    (crate roots, `mod.rs`, `sys/machine/`, `sys/stand/`, `sys/arch/host/`, `tools/`): the
+    author's block is the only block of the zone, and the zone is the file's first.
+  - New files carry it from their first commit; generated files carry it from the generator
+    (`gen-syscalls`). The canonical text is `AUTHOR_BLOCK` in `tools/xtask/src/layout.rs`;
+    `cargo xtask lz check` requires it in every file and compares an `inherited` module with LZ
+    without it (`lineage.md`).
 - Code that does not come from the pinned OpenBSD tree (ZFS, XFS, external libraries, ...) is
   outside that rule: its licence is decided by the user when the milestone that brings it is
   proposed. Until then: stop, tell the user, do not bring it in. A translation is still a derivative work, so rewriting does not

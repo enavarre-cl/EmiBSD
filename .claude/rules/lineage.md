@@ -34,8 +34,10 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
 - `inherited` means untouched since the pin: the file's blob id equals the LZ file's at the
   pinned commit, both taken after the RCS ident lines (`/* $OpenBSD: ... $ */`, `/* $NetBSD:
   ... $ */`) are stripped (`git hash-object --stdin` of the stripped text on each side). Those
-  lines are removed from every native file at N0 (decision 20); the `<LICENSES>` block is never
-  touched.
+  lines are removed from every native file at N0 (decision 20); the original `<LICENSES>`
+  blocks are never touched. The author's ISC block (N0b, `scope-and-stubs.md`) is removed from
+  the native side before the comparison, so a module that differs from LZ only by it stays
+  `inherited`.
   The first commit that changes the file sets `status = "adapted"` or `"redesigned"` in the
   same commit.
 - `adapted` means the module changed only at its call sites, because a type or API it uses was
@@ -55,8 +57,9 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
   with a reason. Dropping an LZ file is the user's decision, recorded in
   the commit body.
 - `license` carries what LZ's `ports.toml` recorded (`notes = "license: ..."` or
-  `license = "none"`): the licence family when it is not ISC, BSD or MIT, or `"none"` for a file
-  whose source has no licence text (no `<LICENSES>` zone). `LICENSE` lists the families; a new
+  `license = "none"`): the licence family when it is not ISC, BSD or MIT, or `"none"` when the
+  C source has no licence text: it describes the C, not the Rust file, whose `<LICENSES>` zone
+  then holds only the author's block. `LICENSE` lists the families; a new
   one is added there in the same commit.
 - A subsystem that moves as a whole is one `lineage:` commit that rewrites the `rust` paths and
   nothing else.
@@ -75,8 +78,10 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
   LZ -> native, native -> LZ and C -> native; `cargo xtask lz drift --functions` lands an LZ
   change on the native items that own the code now (`lz-sync.md`).
 - Zone markers: `lz check` validates `/* <LICENSES> */`, `/* <CODE> */` and `/* <TESTS> */` as
-  LZ's `ports check` does since M15; `<LICENSES>` is required in every module with an `lz` list
-  unless `license = "none"`, and forbidden in `[[extra]]` files.
+  LZ's `ports check` does since M15. `<LICENSES>` is required in every `.rs` under `sys/` and
+  `tools/` and ends with the author's block (N0b): in a module with an `lz` list and a licensed
+  C source it holds that source's blocks, whole, then the author's; with `license = "none"`, in
+  an `[[extra]]` and in every file outside `lineage.toml` it holds the author's block alone.
 - `[meta].lz` equals `lz/PINNED.md`; the `Commit:` of `reference/PINNED.md` equals the one LZ
   records at the pinned commit (`git -C reference/emibsd-lz show <PIN>:reference/PINNED.md`).
 - `cargo xtask lz status --write` regenerates the table between the markers in `README.md` and

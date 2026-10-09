@@ -24,8 +24,8 @@ repository: the dependency points one way.
   against LZ against OpenBSD.
 - Every smoke stays green (`just ci`, `just ci-full`).
 - Licences: every file keeps the whole licence blocks of every LZ file it derives from (the RCS
-  ident lines are not licence text and were dropped at N0); new code is ISC; code from outside OpenBSD's tree is the user's
-  decision.
+  ident lines are not licence text and were dropped at N0), and after them the author's ISC
+  block (N0b); new code is ISC; code from outside OpenBSD's tree is the user's decision.
 - The `machine` contract and the two architectures.
 
 ## Goals, in priority order
@@ -99,6 +99,7 @@ commit; crypto, IPsec, WireGuard and softraid CRYPTO change last of all, with ex
 | 2026-10-07 | Layout: subsystem directories fixed, free inside. |
 | 2026-10-08 | Function-level traceability lives in `lineage.toml` (`[[module.fn]]`, exceptions only), not in the files; the RCS ident lines are dropped (decision 20). |
 | 2026-10-09 | The port's repository became EmiBSD.LZ (public, locked down); this one is native from `lz-origin` = `f5985f1d055a`; `reference/openbsd-src` kept at LZ's pin; the milestone order N1..N8 recommended, the user's call at each start. |
+| 2026-10-09 | N0b, the user's decision: every `.rs` under `sys/` and `tools/` carries the author's ISC block ("Copyright (c) 2026 Emilio Navarrete Lineros <enavarre@outlook.com>") in its `<LICENSES>` zone, after the original blocks, which never change, or alone where there are none; `license = "none"` now describes the C source, not the Rust file; `lz check` requires the block and compares inherited modules without it. |
 | 2026-10-09 | From the external review: `adapted` as a third module status; the `method` of every applied sync; a timing rule for widely used items; `docs/SYNC.md`; the blockers inherited at `lz-origin` recorded in the baseline. |
 
 ## Later

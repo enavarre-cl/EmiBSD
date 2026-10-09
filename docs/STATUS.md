@@ -1,18 +1,17 @@
 # Status
 
-Milestone: **N0 (bootstrap) under way**: the governance, `lineage.toml` and `cargo xtask lz` are
-in; the first `just ci`, `just diff-openbsd` and the baseline numbers close it. Updated: 2026-10-09.
-
-Origin: EmiBSD.LZ `lz-origin` = `f5985f1d055a` (`docs: M16b met`); LZ keeps porting.
+Milestone: **N0 (bootstrap) closing, N0b (authorship) under way**: the first `just ci` is green;
+N0b puts the author's ISC block in every `.rs`; `just ci-full`, `just diff-openbsd` and the
+baseline numbers close N0 on the tree with N0b. Updated: 2026-10-09.
 
 Done:
-- The RCS ident lines dropped (decision 20); `lineage.toml` 1:1 from `ports.toml`, every module `inherited`.
-- `cargo xtask lz {check,status,drift,trace}`, `unsafe-report --check`, `just ci` with the three checks.
-- `CLAUDE.md`, `.claude/rules/`, `docs/PHASE2.md`, `ROADMAP.md` (N0..N8), `IDIOMS.md`, `SYNC.md`.
+- RCS ident lines dropped; `lineage.toml` 1:1 from `ports.toml`; `cargo xtask lz`, `unsafe-report --check`.
+- The first `just ci` green (67 smokes) after two xtask fixes (`lz check`, `gen-syscalls`).
 
 Next:
-- N0 close: `just userland`, `just ci`, `just ci-full`, `just diff-openbsd`; the baseline in the JOURNAL.
-- N1 (leaves: libkern, libz, the crypto primitives), after the user's go.
+- N0b (`lz check` accepts, then requires the block; applied by script); then N0's close:
+  `just ci-full` (after `just comp`), `just diff-openbsd`, the baseline in the JOURNAL.
+- N1 (the user's go of 2026-10-09): libkern done on `n1/libkern`, libz in progress; crypto after.
 
 Unsafe (`cargo xtask unsafe-report`): kernel 8198 blocks, 1041 fn, 768 impl, 27 trait, 323 other; tests 816 more.
 
