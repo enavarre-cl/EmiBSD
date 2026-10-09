@@ -61,6 +61,7 @@
 //! `pcppi0 at isa?` and `spkr0 at pcppi?` (M16d),
 //! `viomb* at virtio?` and `viornd* at virtio?` (M16d), and with the cargo feature `viocon`
 //! the commented-out `#viocon* at virtio?` (M16d; `docs/ARCHITECTURE.md`, "Cargo features"),
+//! `isadma0 at isa?` (M16a),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -72,8 +73,7 @@
 //! pckbc at isa on q35, `pckbc_acpi.c` is not ported, ...); every device at `iic?` (`spdmem*`,
 //! `lm*`, ... are not ported: the scan prints what it finds as not configured), the other
 //! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
-//! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`,
-//! `fdc0`, `wdc0` and `wdc1` (`disable`), the sensors, ...), `wd* at wdc?` (no `wdc` parent
+//! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`fdc0`, `wdc0` and `wdc1` (`disable`), the sensors, ...), `wd* at wdc?` (no `wdc` parent
 //! is configured), `pciide* at jmb?` (jmb(4) is not ported), `atapiscsi* at pciide?`
 //! (atapiscsi(4) is not ported); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re, vmx, pcn, ne, fxp and dc (`rl* at pci?` among them: QEMU's rtl8139 is
@@ -128,6 +128,7 @@ use crate::dev::ic::vga::VGA_CD;
 use crate::dev::ipmi::{IPMI_CA, IPMI_CD};
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
+use crate::dev::isa::isadma::{ISADMA_CA, ISADMA_CD};
 use crate::dev::isa::lpt_isa::LPT_ISA_CA;
 use crate::dev::isa::pckbc_isa::PCKBC_ISA_CA;
 use crate::dev::isa::pcppi::{PCPPI_CA, PCPPI_CD};
@@ -276,6 +277,8 @@ const LOC_COM1: &[i64] = &[0x2f8, 0, -1, 0, 3, -1, -1];
 const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 /// `loc[]` of `com3 at isa? disable port 0x2e8 irq 9`.
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
+/// `loc[]` of `isadma0 at isa?`: every locator at its `files.isa` default (M16a).
+const LOC_ISADMA: &[i64] = &[-1, 0, -1, 0, -1, -1, -1];
 /// `loc[]` of `lpt0 at isa? port 0x378 irq 7` (M16d).
 const LOC_LPT0: &[i64] = &[0x378, 0, -1, 0, 7, -1, -1];
 
@@ -447,10 +450,10 @@ const LN_ATA: i32 = 43;
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 102 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
+/// `cfdata[]`: 103 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
 /// and one more with `viocon`.
 const NCFDATA: usize =
-    102 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
+    103 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
 /// (`machine::autoconf::ioconf_mut`).
@@ -1591,7 +1594,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_ATA,
         0,
     ),
-    // 102: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
+    // 102: isadma0 at isa? (M16a)
+    Cfdata::new(
+        &ISADMA_CA,
+        &ISADMA_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_ISADMA,
+        0,
+        PV_ISA,
+        LN_ISA,
+        0,
+    ),
+    // 103: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
     #[cfg(feature = "viocon")]
     Cfdata::new(
         &VIOCON_CA,
@@ -1604,7 +1619,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 103 (102 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 104 (103 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

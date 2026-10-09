@@ -80,8 +80,9 @@
 //! `irq`, ...) and attaches the driver if its probe answers.
 //!
 //! ## Deviations
-//! - `NISADMA` and `NISAPNP` are 0 (`isavar.rs`): `isaattach` maps the delay port alone,
-//!   `isascan` allocates no DRQ, and `isapnp_isa_attach_hook` is not called.
+//! - `NISADMA` is 1 and `NISAPNP` 0 (`isavar.rs`): `isaattach` maps the DMA controllers'
+//!   registers and takes the delay port from the page registers' block, `isascan` allocates
+//!   the DRQs of what attached; `isapnp_isa_attach_hook` is not called.
 //! - `NACPI` is 0 (`acpi.c` is not ported), so `acpi_legacy_free` is never consulted.
 //! - `isa_intr_typename` returns a `&'static str`.
 
@@ -89,16 +90,17 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
-use crate::dev::isa::isareg::IO_DMAPG;
+use crate::dev::isa::isadmareg::{DMA1_IOSIZE, DMA2_IOSIZE};
+use crate::dev::isa::isareg::{IO_DMA1, IO_DMA2, IO_DMAPG};
 use crate::dev::isa::isavar::{
-    DRQUNK, IRQUNK, ISAPNP_MAX_DEVCLASS, ISAPNP_MAX_IDENT, IsaAttachArgs, IsaSoftc,
+    DRQUNK, IRQUNK, ISA_DRQ_ALLOC, ISAPNP_MAX_DEVCLASS, ISAPNP_MAX_IDENT, IsaAttachArgs, IsaSoftc,
     IsabusAttachArgs, cf_drq, cf_drq2, cf_iobase, cf_irq, cf_maddr, cf_msize,
 };
 use crate::kern::init_main::BOOTHOWTO;
 use crate::kern::kern_malloc::free;
 use crate::kern::subr_autoconf::{AUTOCONF_VERBOSE, config_attach, config_make_softc, config_scan};
 use crate::kern::subr_prf::{Str, panic, printf};
-use crate::machine::bus::bus_space_map;
+use crate::machine::bus::{bus_space_map, bus_space_subregion};
 use crate::machine::isa_machdep::{
     IST_EDGE, IST_LEVEL, IST_NONE, IST_PULSE, isa_attach_hook, isa_intr_check,
 };
@@ -147,14 +149,37 @@ pub fn isaattach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
 
     sc.sc_iot.set(Some(iba.iba_iot));
     sc.sc_memt.set(Some(iba.iba_memt));
-    // NISADMA > 0: sc_dmat (not configured).
+    sc.sc_dmat.set(iba.iba_dmat);
     sc.sc_ic.set(Some(iba.iba_ic));
 
     // NISAPNP > 0: isapnp_isa_attach_hook(sc) (not configured).
 
-    // NISADMA == 0: map port 0x84, which causes a 1.25us delay when read.
-    // SAFETY: the DMA page register block of the PC platform; this port is only ever read.
-    match unsafe { bus_space_map(iba.iba_iot, usize::from(IO_DMAPG) + 0x4, 0x1, 0) } {
+    // Map the registers used by the ISA DMA controller.
+    // XXX Should be done in the isadmaattach routine.. but the delay port makes it
+    // XXX troublesome. Note that these aren't really valid on ISA busses without DMA.
+    let map = |addr: u16, size: usize| {
+        // SAFETY: the 8237s and their page registers of the PC platform, at their fixed
+        // ports; only isadma.c's functions (and the delay port's readers) touch them.
+        unsafe { bus_space_map(iba.iba_iot, usize::from(addr), size, 0) }
+    };
+    match map(IO_DMA1, DMA1_IOSIZE) {
+        Ok(h) => sc.sc_dma1h.set(Some(h)),
+        Err(_) => panic(format_args!("isaattach: can't map DMA controller #1")),
+    }
+    match map(IO_DMA2, DMA2_IOSIZE) {
+        Ok(h) => sc.sc_dma2h.set(Some(h)),
+        Err(_) => panic(format_args!("isaattach: can't map DMA controller #2")),
+    }
+    let dmapgh = match map(IO_DMAPG, 0xf) {
+        Ok(h) => h,
+        Err(_) => panic(format_args!("isaattach: can't map DMA page registers")),
+    };
+    sc.sc_dmapgh.set(Some(dmapgh));
+
+    // Map port 0x84, which causes a 1.25us delay when read. We do this now, since several
+    // drivers need it.
+    // XXX this port doesn't exist on all ISA busses...
+    match bus_space_subregion(iba.iba_iot, dmapgh, 0x04, 1) {
         Ok(h) => sc.sc_delaybah.set(Some(h)),
         Err(_) => panic(format_args!("isaattach: can't map `delay port'")), // XXX
     }
@@ -236,6 +261,7 @@ pub fn isascan(parent: &Device, match_: CfMatch) {
         ia_isa: ptr::null_mut(),
         ia_iot: iot,
         ia_memt: memt,
+        ia_dmat: sc.sc_dmat.get(),
         ia_delaybah: sc.sc_delaybah.get(),
         ia_ic: ic,
         ipa_sibling: ptr::null_mut(),
@@ -336,7 +362,12 @@ pub fn isascan(parent: &Device, match_: CfMatch) {
             );
             // SAFETY: a fresh softc, owned by this loop until it attaches or is freed.
             dev = unsafe { SoftcMatch::new(config_make_softc(Some(parent), cf)) };
-            // NISADMA > 0: ISA_DRQ_ALLOC (not configured).
+            if ia2.ia_drq() != DRQUNK {
+                ISA_DRQ_ALLOC(sc, ia2.ia_drq());
+            }
+            if ia2.ia_drq2() != DRQUNK {
+                ISA_DRQ_ALLOC(sc, ia2.ia_drq2());
+            }
             ia2 = ia;
         }
         if verbose {
@@ -385,7 +416,13 @@ pub fn isascan(parent: &Device, match_: CfMatch) {
                 ptr::from_mut(&mut ia).cast(),
                 Some(isaprint),
             );
-            // NISADMA > 0: ISA_DRQ_ALLOC (not configured).
+
+            if ia.ia_drq() != DRQUNK {
+                ISA_DRQ_ALLOC(sc, ia.ia_drq());
+            }
+            if ia.ia_drq2() != DRQUNK {
+                ISA_DRQ_ALLOC(sc, ia.ia_drq2());
+            }
         }
     } else {
         if verbose {

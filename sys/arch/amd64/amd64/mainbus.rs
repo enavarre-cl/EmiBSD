@@ -103,6 +103,7 @@ use crate::arch::amd64::include::cpu::{CPUF_PRESENT, cpu_info_primary};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_SP, CpuAttachArgs};
 use crate::arch::amd64::include::efifbvar::EfifbAttachArgs;
 use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
+use crate::arch::amd64::isa::isa_machdep::ISA_BUS_DMA_TAG;
 use crate::arch::amd64::pci::pci_machdep::{PCI_BUS_DMA_TAG, pci_init_extents};
 use crate::dev::ipmi::ipmi_probe;
 use crate::dev::ipmivar::IpmiAttachArgs;
@@ -287,7 +288,7 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
                 iba_busname: b"isa",
                 iba_iot: X86_BUS_SPACE_IO,
                 iba_memt: X86_BUS_SPACE_MEM,
-                // NISADMA > 0: iba_dmat = &isa_bus_dma_tag (isadma: not configured).
+                iba_dmat: Some(&ISA_BUS_DMA_TAG),
                 iba_ic: ptr::null(),
             },
         };

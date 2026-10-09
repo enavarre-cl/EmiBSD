@@ -42,6 +42,7 @@ pub mod i82489var;
 pub mod i8259;
 pub mod intr;
 pub mod intrdefs;
+pub mod isa_machdep;
 pub mod mpbiosreg;
 pub mod mpbiosvar;
 pub mod mpconfig;

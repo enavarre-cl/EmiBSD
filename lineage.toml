@@ -323,6 +323,12 @@ status = "inherited"
 license = "none"
 
 [[module]]
+rust = "sys/arch/amd64/include/isa_machdep.rs"
+lz = ["sys/arch/amd64/include/isa_machdep.rs"]
+status = "inherited"
+notes = "M16a: ISA_DMA_BOUNCE_THRESHOLD, struct isa_dma_cookie (Cells; the zero-length id_bouncesegs[] after the header, reached by the unsafe id_bouncesegs(n)), ID_*; isa_chipset_tag_t and the prototypes are isa_machdep.c's port and machine::isa_machdep; atdevbase, ISA_PHYSADDR and ISA_HOLE_VADDR are not ported (the ISA hole is the direct map's, no driver converts hole addresses); wip until they are; test-ref of the constants (arch tests run only on the bare target)"
+
+[[module]]
 rust = "sys/arch/amd64/include/mpbiosreg.rs"
 lz = ["sys/arch/amd64/include/mpbiosreg.rs"]
 status = "inherited"
@@ -459,7 +465,7 @@ notes = "M2: gettick and i8254_delay (timer_mutex in M5; negative n treated as 0
 rust = "sys/arch/amd64/isa/isa_machdep.rs"
 lz = ["sys/arch/amd64/isa/isa_machdep.rs"]
 status = "inherited"
-notes = "M4: isa_intr_alloc (returns Option), isa_intr_check, isa_intr_establish, isa_intr_disestablish, isa_attach_hook (no device arguments; M8: sets mainbus.c's isa_has_been_seen as the C; isa.c reaches it through machine::isa_machdep); the IOAPIC pin lookup (mp_busses) is M5 and the ISA DMA bounce buffers (_isa_bus_dma*, isa_bus_dma_tag) M7; M13: isa_intr_establish's NIOAPIC > 0 lookup of the pin on mp_isa_bus (the I/O APIC pin and pic)"
+notes = "M4: isa_intr_alloc (returns Option), isa_intr_check, isa_intr_establish, isa_intr_disestablish, isa_attach_hook (no device arguments; M8: sets mainbus.c's isa_has_been_seen as the C; isa.c reaches it through machine::isa_machdep); the IOAPIC pin lookup (mp_busses) is M5; M13: isa_intr_establish's NIOAPIC > 0 lookup of the pin on mp_isa_bus (the I/O APIC pin and pic); M16a: the NISADMA > 0 part: isa_bus_dma_tag (ISA_BUS_DMA_TAG, given to the isa bus by mainbus.rs), _isa_bus_dmamap_create (bounces when avail_end, now machdep.rs's AVAIL_END, is past 16 MB without ISABUS_DMA_32BIT, or when the map has too few segments; cookie malloc'd with the segments after it; ALLOCNOW allocates the bounce pages), _isa_bus_dmamap_destroy (frees the cookie with its allocated size where the C passes 0), _isa_bus_dmamap_load (bounces unless _isa_dma_check_buffer passes), _isa_bus_dmamap_load_mbuf/uio/raw (panic, not implemented, as the C), _isa_bus_dmamap_unload, _isa_bus_dmamap_sync (the copies to and from the bounce buffer; DIAGNOSTIC's mix check under feature diagnostic, DEBUG not configured), _isa_bus_dmamem_alloc (below 16 MB first, then anywhere), _isa_dma_check_buffer (a page pmap_extract does not find is EINVAL, where the C reads a stale address), _isa_dma_alloc_bouncebuf, _isa_dma_free_bouncebuf; ISA_DMA_STATS not defined"
 
 [[module]]
 rust = "sys/arch/amd64/isa/nvram.rs"
@@ -2160,6 +2166,13 @@ license = "none"
 notes = "M16d: the whole header (ports, controller commands, command byte, ids); offsets usize, values u8; reference-backed test of every define"
 
 [[module]]
+rust = "sys/dev/ic/i8237reg.rs"
+lz = ["sys/dev/ic/i8237reg.rs"]
+status = "inherited"
+license = "none"
+notes = "M16a: the whole header: the DMA37MD_* mode and DMA37SM_* mask bits (u8); a test-ref of every define"
+
+[[module]]
 rust = "sys/dev/ic/i8253reg.rs"
 lz = ["sys/dev/ic/i8253reg.rs"]
 status = "inherited"
@@ -2412,6 +2425,25 @@ status = "inherited"
 rust = "sys/dev/isa/isa.rs"
 lz = ["sys/dev/isa/isa.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/isa/isadma.rs"
+lz = ["sys/dev/isa/isadma.rs"]
+status = "inherited"
+notes = "M16a: isadma_ca/isadma_cd, isadmamatch, isadmaattach (isa_dev, the eight isadma_dmam maps with BUS_DMA_24BIT|NOWAIT|ALLOCNOW; cfg machine_x86 for BUS_DMA_24BIT, as isadma_ca), isa_dmaunmask, isa_dmamask, isa_dmacascade, isa_dmamap_create (Result), isa_dmamap_destroy (clears the slot the C leaves stale), isa_dmastart (unsafe: the buffer contract of bus_dmamap_load; the compat map on BUS_DMA_BUS1), isa_dmaabort, isa_dmacount, isa_dmafinished (bool), isa_dmadone, isa_dmamem_alloc (the address as the value), isa_dmamem_free/unmap (unsafe), isa_dmamem_map, isa_drq_isfree (bool), isa_malloc/isa_free over the isa_mem list (AtomicPtr head, no lock as in the C); goto lose prints and panics as the C; a missing map panics where the C dereferences NULL; ISADMA_DEBUG not defined; host test of the page-port and mode tables"
+
+[[module]]
+rust = "sys/dev/isa/isadmareg.rs"
+lz = ["sys/dev/isa/isadmareg.rs"]
+status = "inherited"
+license = "none"
+notes = "M16a: the whole header: DMA1_CHN/DMA2_CHN as const fn dma1_chn/dma2_chn, DMA1_*/DMA2_* register offsets and sizes (usize, the C's 1*/2* products kept, clippy::identity_op allowed), i8237reg.h re-exported as the C includes it; host test of the channel registers and a test-ref"
+
+[[module]]
+rust = "sys/dev/isa/isadmavar.rs"
+lz = ["sys/dev/isa/isadmavar.rs"]
+status = "inherited"
+notes = "M16a: MAX_ISADMA, DMAMODE_*; __ISADMA_COMPAT is defined, so the isadma_cascade/start/abort/finished/done macros are functions over isadma.rs's isa_dev (isadma_start unsafe, its buffer as *mut u8); isadma_acquire/isadma_release are not ported: they expand to isa_dma_acquire/isa_dma_release, which nothing in the tree defines or calls; the prototypes are isadma.c's; test-ref of the constants"
 
 [[module]]
 rust = "sys/dev/isa/isareg.rs"

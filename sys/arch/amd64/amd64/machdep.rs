@@ -127,7 +127,8 @@
 //!   boot protocol (`docs/ARCHITECTURE.md`, "Boot flow"): `pmap_direct_base` is the
 //!   bootloader's higher-half direct map, and the memory clusters loaded into `uvm` are the
 //!   protocol's usable regions, which already exclude the kernel, the firmware and the
-//!   bootloader's own data. The ISA hole and the `avail_end` bookkeeping have nothing to do.
+//!   bootloader's own data. The ISA hole has nothing to do; `avail_end` is the end of the
+//!   highest usable region (M16a: the ISA DMA tag reads it).
 //! - `cpu_startup` prints the memory sizes and fills the boot CPU's TSS (`cpu_enter_pages`):
 //!   `version` (generated `vers.c`, M5-b), the exec and physio maps and `bufinit` are;
 //!   `cpu_init_extents` and `cpu_boot_mode` (M4-b) are not there yet.
@@ -378,6 +379,9 @@ pub static BIOS_UCODE: StaticCell<Option<BiosUcode>> = StaticCell::new(None);
 /// below it, `pmap_prealloc_lowmem_ptps`'s tables from it). Set by `getbootinfo`; 0 under
 /// Limine, whose memory map is used as it is.
 pub static AVAIL_START: AtomicUsize = AtomicUsize::new(0);
+/// `avail_end`: the end of physical pages. All physical pages that UVM manages are between
+/// `avail_start` and `avail_end` (M16a: the ISA DMA tag bounces when it is past 16 MB).
+pub static AVAIL_END: AtomicUsize = AtomicUsize::new(0);
 /// Whether `getbootinfo` dropped free memory beyond the 4 GB of direct map `locore0.S`
 /// builds (reported by `init_x86_64` once there is a console).
 static DIRECT_MAP_CLIPPED: AtomicBool = AtomicBool::new(false);
@@ -574,6 +578,7 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
         .map(|r| r.base.as_usize() + r.length.as_usize())
         .max()
         .unwrap_or(0);
+    AVAIL_END.store(avail_end, Ordering::Relaxed);
 
     // Call pmap initialization to make new kernel address space.
     // SAFETY: once, on the boot CPU, with the direct map set above and paging on.

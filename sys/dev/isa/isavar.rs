@@ -117,10 +117,13 @@
 //! Upstream: sys/dev/isa/isavar.h @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `NISADMA` is 0: `isadma0 at isa?` is in GENERIC, but `isadma.c` is not ported, so the
-//!   `#if NISADMA > 0` members (`iba_dmat`, `ia_dmat`, the DMA state of `struct isa_softc`)
-//!   and the `ISA_DRQ_*` macros over them are left out, as for a kernel without it.
-//!   `NISAPNP` is 0 too (ISA PnP is not in amd64's GENERIC): `struct isapnp_softc`, the
+//! - `NISADMA` is 1 (M16a): `isadma0 at isa?` is in amd64's GENERIC, the only kernel with an
+//!   ISA bus (arm64 compiles the bus but never attaches it), so the `#if NISADMA > 0` members
+//!   (`iba_dmat`, `ia_dmat`, the DMA state of `struct isa_softc`) are always there; the tags
+//!   are `Option`s (NULL until set). `ISA_DRQ_ISFREE`, `ISA_DRQ_ALLOC` and `ISA_DRQ_FREE`
+//!   keep their capitals as functions of the softc: `isadma.c` has an `isa_drq_isfree`
+//!   function of its own (`docs/C_TO_RUST.md`).
+//!   `NISAPNP` is 0 (ISA PnP is not in amd64's GENERIC): `struct isapnp_softc`, the
 //!   `ISAPNP_*` register macros and the `isapnp_*` prototypes are for `isapnp.c`, which is
 //!   not ported; the PnP members of `struct isa_attach_args` are kept, since the compatibility
 //!   names (`ia_iobase`, `ia_irq`, ...) live in them.
@@ -132,9 +135,12 @@
 //! - The `isa_softc`'s `sc_subdevs` list and `struct isadev` are kept; nothing links an
 //!   `isadev` yet (only `isapnp.c` does).
 
+use core::cell::Cell;
 use core::ffi::c_void;
 
-use crate::machine::bus::{BusSpaceHandle, BusSpaceTag};
+use crate::machine::bus::{
+    BUS_DMA_BUS1, BusDmaTag, BusDmamap, BusSize, BusSpaceHandle, BusSpaceTag,
+};
 use crate::machine::isa_machdep::IsaChipsetTag;
 use crate::queue_adapter;
 use crate::sys::device::{Cfdata, Device, Softc};
@@ -168,6 +174,10 @@ pub const IRQUNK: i32 = -1;
 pub const DRQUNK: i32 = -1;
 /// `MADDRUNK`: shared memory address is unknown.
 pub const MADDRUNK: i32 = -1;
+
+/// `ISABUS_DMA_32BIT`: some ISA devices (e.g. on a VLB) can perform 32-bit DMA. This flag
+/// is passed to bus_dmamap_create() to indicate that fact.
+pub const ISABUS_DMA_32BIT: i32 = BUS_DMA_BUS1;
 
 /// `struct isapnp_region`: one I/O or memory range.
 #[derive(Clone, Copy, Default)]
@@ -217,7 +227,8 @@ pub struct IsabusAttachArgs {
     pub iba_iot: BusSpaceTag,
     /// `iba_memt`: isa mem space tag.
     pub iba_memt: BusSpaceTag,
-    // iba_dmat: NISADMA > 0.
+    /// `iba_dmat`: isa DMA tag.
+    pub iba_dmat: Option<BusDmaTag>,
     /// `iba_ic`.
     pub iba_ic: IsaChipsetTag,
 }
@@ -231,7 +242,8 @@ pub struct IsaAttachArgs {
     pub ia_iot: BusSpaceTag,
     /// `ia_memt`: isa mem space tag.
     pub ia_memt: BusSpaceTag,
-    // ia_dmat: NISADMA > 0.
+    /// `ia_dmat`: DMA tag.
+    pub ia_dmat: Option<BusDmaTag>,
     /// `ia_delaybah`: i/o handle for `delay port'.
     pub ia_delaybah: Option<BusSpaceHandle>,
     /// `ia_ic`.
@@ -371,19 +383,55 @@ pub struct IsaSoftc {
     pub sc_iot: core::cell::Cell<Option<BusSpaceTag>>,
     /// `sc_memt`: isa mem space tag.
     pub sc_memt: core::cell::Cell<Option<BusSpaceTag>>,
-    // sc_dmat, sc_drqmap, sc_dma1h, sc_dma2h, sc_dmapgh, sc_dmamaps, sc_dmalength,
-    // sc_dmareads, sc_dmafinished: NISADMA > 0.
+    /// `sc_dmat`: isa DMA tag.
+    pub sc_dmat: Cell<Option<BusDmaTag>>,
     /// `sc_ic`.
     pub sc_ic: core::cell::Cell<Option<IsaChipsetTag>>,
+
+    /// `sc_drqmap` (`sc_drq`, XXX compatibility mode): bitmap representing the DRQ channels
+    /// available for ISA.
+    pub sc_drqmap: Cell<i32>,
+    /// `sc_dma1h`: i/o handle for DMA controller #1.
+    pub sc_dma1h: Cell<Option<BusSpaceHandle>>,
+    /// `sc_dma2h`: i/o handle for DMA controller #2.
+    pub sc_dma2h: Cell<Option<BusSpaceHandle>>,
+    /// `sc_dmapgh`: i/o handle for DMA page registers.
+    pub sc_dmapgh: Cell<Option<BusSpaceHandle>>,
+    /// `sc_dmamaps`: DMA maps used for the 8 DMA channels.
+    pub sc_dmamaps: [Cell<Option<&'static BusDmamap>>; 8],
+    /// `sc_dmalength`.
+    pub sc_dmalength: [Cell<BusSize>; 8],
+    /// `sc_dmareads`: state for isa_dmadone().
+    pub sc_dmareads: Cell<i32>,
+    /// `sc_dmafinished`: DMA completion state.
+    pub sc_dmafinished: Cell<i32>,
     /// `sc_delaybah`: this i/o handle is used to map port 0x84, which is read to provide a
     /// 1.25us delay. This access handle is mapped in isaattach(), and exported to drivers via
     /// isa_attach_args.
     pub sc_delaybah: core::cell::Cell<Option<BusSpaceHandle>>,
 }
 
-// SAFETY: `repr(C)` with the device first; the list head is null pointers and the cells
-// `None` when all-zero.
+// SAFETY: `repr(C)` with the device first; the list head is null pointers, the cells
+// `None` and the counters 0 when all-zero.
 unsafe impl Softc for IsaSoftc {}
+
+/// `ISA_DRQ_ISFREE(isadev, drq)`.
+#[allow(non_snake_case)] // the macro's name: isadma.c has an `isa_drq_isfree` function too
+pub fn ISA_DRQ_ISFREE(sc: &IsaSoftc, drq: i32) -> bool {
+    sc.sc_drqmap.get() & (1 << drq) == 0
+}
+
+/// `ISA_DRQ_ALLOC(isadev, drq)`.
+#[allow(non_snake_case)] // the macro's name, as `ISA_DRQ_ISFREE`
+pub fn ISA_DRQ_ALLOC(sc: &IsaSoftc, drq: i32) {
+    sc.sc_drqmap.set(sc.sc_drqmap.get() | (1 << drq));
+}
+
+/// `ISA_DRQ_FREE(isadev, drq)`.
+#[allow(non_snake_case)] // the macro's name, as `ISA_DRQ_ISFREE`
+pub fn ISA_DRQ_FREE(sc: &IsaSoftc, drq: i32) {
+    sc.sc_drqmap.set(sc.sc_drqmap.get() & !(1 << drq));
+}
 
 /// `cf_iobase` (`cf_loc[0]`).
 pub fn cf_iobase(cf: &Cfdata) -> i64 {
@@ -413,14 +461,27 @@ pub fn cf_drq(cf: &Cfdata) -> i64 {
 pub fn cf_drq2(cf: &Cfdata) -> i64 {
     cf.cf_loc.get(6).copied().unwrap_or(-1)
 }
-
-// ISABUS_DMA_32BIT (BUS_DMA_BUS1): NISADMA > 0.
 /* </CODE> */
 
 /* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drq_bitmap() {
+        let sc: std::boxed::Box<core::mem::MaybeUninit<IsaSoftc>> = std::boxed::Box::new_zeroed();
+        // SAFETY: `IsaSoftc` is a `Softc`: all-zero is a valid value of it.
+        let sc = unsafe { sc.assume_init() };
+        assert!(ISA_DRQ_ISFREE(&sc, 2));
+        ISA_DRQ_ALLOC(&sc, 2);
+        ISA_DRQ_ALLOC(&sc, 5);
+        assert!(!ISA_DRQ_ISFREE(&sc, 2) && !ISA_DRQ_ISFREE(&sc, 5) && ISA_DRQ_ISFREE(&sc, 4));
+        assert_eq!(sc.sc_drqmap.get(), 0x24);
+        ISA_DRQ_FREE(&sc, 2);
+        assert!(ISA_DRQ_ISFREE(&sc, 2));
+        assert_eq!(sc.sc_drqmap.get(), 0x20);
+    }
 
     #[test]
     #[ignore = "needs OPENBSD_SRC (just test-ref)"]
