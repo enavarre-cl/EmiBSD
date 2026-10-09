@@ -1578,6 +1578,7 @@ mod tests {
     use crate::adler32::adler32;
     use crate::zconf::MAX_WBITS;
     use crate::zlib::*;
+    use std::format;
     use std::vec;
     use std::vec::Vec;
 
@@ -3306,6 +3307,153 @@ mod tests {
             assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
             assert!(d.out == CORPUS);
             assert_eq!(inflateEnd(&mut strm), Ok(()));
+        }
+    }
+
+    /// The streams the exhaustive damage tests take apart, zlib and raw: one stored block, one
+    /// fixed block, one dynamic block, and blocks of all three kinds with sync flush markers
+    /// between them. Each is `(name, stream, windowBits)`; the first block's type is checked.
+    fn damage_streams(data: &[u8]) -> Vec<(&'static str, Vec<u8>, i32)> {
+        let mut v = Vec::new();
+        for wbits in [15, -15] {
+            let first = if wbits > 0 { 2 } else { 0 };
+            for (name, s, btype) in [
+                ("stored", deflate_all(data, 0, wbits, 8), Some(0)),
+                (
+                    "fixed",
+                    deflate_with(data, 6, wbits, Strategy::Fixed, usize::MAX, Flush::NoFlush),
+                    Some(1),
+                ),
+                ("dynamic", deflate_all(data, 9, wbits, 8), Some(2)),
+                (
+                    "blocks",
+                    deflate_with(data, 6, wbits, Strategy::Default, 150, Flush::SyncFlush),
+                    None,
+                ),
+            ] {
+                if let Some(btype) = btype {
+                    assert_eq!((s[first] >> 1) & 3, btype, "{name}");
+                }
+                v.push((name, s, wbits));
+            }
+        }
+        v
+    }
+
+    /// Every strict prefix of each damage stream: with `Flush::Finish` it is a buffer error
+    /// (no message) after a prefix of the data; without, the first call makes progress and
+    /// uses all the input (unless there was none), and the next one cannot; fed a byte at a
+    /// time, the same. The whole stream ends with exactly the data's size of output space and
+    /// is a buffer error, after all but the last byte, with one byte less.
+    #[test]
+    fn every_truncation_is_a_buffer_error() {
+        let data = &CORPUS[..700];
+        for (name, s, wbits) in damage_streams(data) {
+            for cut in 0..s.len() {
+                let p = &s[..cut];
+                let at = format!("{name} wbits {wbits} cut {cut}/{}", s.len());
+                for slow in BOTH {
+                    let d = decode(p, wbits, slow, usize::MAX, usize::MAX, Flush::Finish);
+                    assert_eq!((d.ret, d.msg), (Err(ZError::Buf), None), "{at} slow {slow}");
+                    assert!(data.starts_with(&d.out), "{at}");
+
+                    let mut buf = vec![0u8; data.len()];
+                    let mut strm = ZStream::new();
+                    assert_eq!(inflateInit2(&mut strm, wbits), Ok(()));
+                    strm.next_in = p;
+                    strm.next_out = &mut buf;
+                    let first = inflate_impl(&mut strm, Flush::NoFlush, slow);
+                    let want = if cut == 0 {
+                        Err(ZError::Buf)
+                    } else {
+                        Ok(ZStatus::Ok)
+                    };
+                    assert_eq!(first, want, "{at} slow {slow}");
+                    assert_eq!(strm.avail_in(), 0, "{at}");
+                    assert_eq!(strm.total_in as usize, cut);
+                    let second = inflate_impl(&mut strm, Flush::NoFlush, slow);
+                    assert_eq!(second, Err(ZError::Buf), "{at} slow {slow}");
+                    let n = strm.total_out as usize;
+                    assert_eq!(inflateEnd(&mut strm), Ok(()));
+                    assert!(buf[..n] == d.out[..], "{at}");
+                }
+                let d = decode(p, wbits, true, 1, 1, Flush::NoFlush);
+                assert_eq!((d.ret, d.msg), (Err(ZError::Buf), None), "{at} bytewise");
+                assert!(data.starts_with(&d.out), "{at}");
+            }
+            for slow in BOTH {
+                for space in [data.len(), data.len() - 1] {
+                    let mut buf = vec![0u8; space];
+                    let mut strm = ZStream::new();
+                    assert_eq!(inflateInit2(&mut strm, wbits), Ok(()));
+                    strm.next_in = &s;
+                    strm.next_out = &mut buf;
+                    let ret = inflate_impl(&mut strm, Flush::Finish, slow);
+                    let want = if space == data.len() {
+                        Ok(ZStatus::StreamEnd)
+                    } else {
+                        Err(ZError::Buf)
+                    };
+                    assert_eq!(ret, want, "{name} wbits {wbits} space {space}");
+                    assert_eq!(strm.total_out as usize, space);
+                    assert_eq!(inflateEnd(&mut strm), Ok(()));
+                    assert!(buf[..] == data[..space]);
+                }
+            }
+        }
+    }
+
+    /// Every bit of the first 160 bytes and the last 8 of each damage stream, flipped: decoding
+    /// never panics and ends at the end, in a data error (with the `SMALL` message) or out of
+    /// input (a buffer error, no message), the same in both decoders and when fed one byte at
+    /// a time into one byte of output at a time, with the same output. A zlib stream never
+    /// ends with wrong data (the Adler-32 catches it), and a flip in its header is always a
+    /// data error (it breaks the FCHECK test).
+    #[test]
+    fn every_bit_flip_fails_the_same_way_however_it_is_fed() {
+        let data = &CORPUS[..700];
+        for (name, s, wbits) in damage_streams(data) {
+            let n = s.len();
+            let positions = (0..n.min(160)).chain(n.saturating_sub(8).max(160)..n);
+            for pos in positions {
+                for bit in 0..8 {
+                    let mut c = s.clone();
+                    c[pos] ^= 1 << bit;
+                    let at = format!("{name} wbits {wbits} byte {pos}/{n} bit {bit}");
+                    let slow = decode_all(&c, wbits, true);
+                    let fast = decode_all(&c, wbits, false);
+                    assert!(
+                        matches!(
+                            slow.ret,
+                            Ok(ZStatus::StreamEnd) | Err(ZError::Data) | Err(ZError::Buf)
+                        ),
+                        "{at}: {:?}",
+                        slow.ret
+                    );
+                    match slow.ret {
+                        Err(ZError::Data) => assert_eq!(slow.msg, Some("error"), "{at}"),
+                        Err(ZError::Buf) => assert_eq!(slow.msg, None, "{at}"),
+                        _ => {}
+                    }
+                    assert_eq!((slow.ret, slow.msg), (fast.ret, fast.msg), "{at}");
+                    assert!(slow.out == fast.out, "{at}");
+                    if wbits > 0 {
+                        if pos < 2 {
+                            assert_eq!(slow.ret, Err(ZError::Data), "{at}");
+                        }
+                        if slow.ret == Ok(ZStatus::StreamEnd) {
+                            assert!(slow.out == data, "{at}");
+                        }
+                    }
+                    let bytewise = decode(&c, wbits, true, 1, 1, Flush::NoFlush);
+                    assert_eq!(
+                        (bytewise.ret, bytewise.msg),
+                        (slow.ret, slow.msg),
+                        "{at} bytewise"
+                    );
+                    assert!(bytewise.out == slow.out, "{at} bytewise");
+                }
+            }
         }
     }
 }
