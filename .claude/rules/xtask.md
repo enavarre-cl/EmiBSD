@@ -16,7 +16,8 @@ paths:
   (M8: OpenBSD's libc and programs cross-compiled from the reference sources, `userland.rs` over
   the make-subset evaluator `bsdmake.rs`; M16c: the base set's `/etc/firmware/fxp-*`
   files, which `sys/dev/microcode/fxp/build.c` writes, made from `rcvbundl.h` by
-  `userland/firmware.rs`), `comp` (M14: OpenBSD's clang, lld and libc++ from
+  `userland/firmware.rs`; a worktree's first build, and its first `comp`, is seeded from the
+  main checkout's by an APFS clone with the paths rebased, `userland/seed.rs`), `comp` (M14: OpenBSD's clang, lld and libc++ from
   `gnu/llvm` by its build glue, `userland/comp.rs`; outside `ci`, `just comp`).
 - External tools (`qemu-system-*`, Limine binaries, EDK2 firmware) are located at runtime via
   `brew --prefix <formula>` or `$PATH`, with an error that names the missing formula and points to

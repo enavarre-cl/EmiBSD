@@ -666,6 +666,8 @@ pub(crate) fn with_ctx<R>(
 /// `cargo xtask userland --arch A`.
 pub fn userland(root: &Path, arch: Arch) -> Result<()> {
     let tools = Tools::locate()?;
+    // A worktree's first build starts from the main checkout's (`userland/seed.rs`).
+    seed::seed_from_main(root, &format!("target/userland/{}", arch.name()))?;
     let ctx = new_ctx(root, arch, &tools)?;
     println!(
         "userland {}: OpenBSD sources {}, output {}",
@@ -2223,6 +2225,7 @@ mod libraries;
 pub(crate) mod miniroot;
 mod passwd;
 mod ramdisk;
+mod seed;
 pub(crate) use ramdisk::check_devices as check_ramdisk_devices;
 pub(crate) mod sets;
 mod shlib;

@@ -209,6 +209,8 @@ pub(crate) fn comp(root: &Path, arch: Arch, jobs: usize) -> Result<()> {
         .into());
     }
     let started = std::time::Instant::now();
+    // A worktree's first comp starts from the main checkout's (`userland/seed.rs`).
+    super::seed::seed_from_main(root, "target/comp")?;
     let base = root.join("target/comp");
     println!(
         "comp {}: OpenBSD sources {}, output {}, {jobs} jobs",

@@ -251,6 +251,21 @@ and `usr.bin/quota` (over `librpcsvc.a`, whose sources `rpcgen` makes from its `
 OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
 `PT_INTERP`).
 
+A git worktree's first build starts from the main checkout's (the user's decision of
+2026-10-09: the OpenBSD sources and the toolchain are pinned, so compiling them again in every
+agent's worktree is wasted time). When `target/userland/<arch>` (or, for `comp`,
+`target/comp`) is missing in a worktree and the main checkout has it, `userland/seed.rs`
+copies it with `cp -Rcp`: an APFS clone, instant and free of space until a file changes, that
+keeps the modification times the up-to-date checks compare. The build writes absolute paths
+into its records, so the copy's rule stamps (`*.cmd`), dependency files (`*.d`), archive member
+lists, include manifests and absolute symbolic links are rebased from the main checkout's path
+to the worktree's, except paths into `reference/`, which a worktree shares with the main
+checkout. The build then runs as usual and redoes only what differs. Measured on 2026-10-09:
+a fresh worktree's `cargo xtask userland --arch amd64` took 23 s, every OpenBSD object `(0
+rebuilt)`, only the three `tools/` programs (checked out after the main checkout's objects)
+recompiled. A worktree whose own changes touch the userland rebuilds what they touch; a copy
+that cannot be made or rebased is removed and the build starts from nothing, as before.
+
 Nothing is listed by hand. `tools/xtask/src/bsdmake.rs` evaluates the subset of `make(1)` the
 Makefiles use (assignments, lazy expansion, the `:L :M :N :R :S :old=new` modifiers, `.if`,
 `.for`, `.include`, `.PATH`, explicit rules) and fails on anything else. `SRCS`, `OBJS`, `.PATH`
