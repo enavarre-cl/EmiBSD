@@ -91,6 +91,10 @@ pub trait Cpu {
     /// `CPU_SSE` (`<machine/cpu.h>`): the `machdep` sysctl i386's libm reads, where defined.
     const CPU_SSE: Option<i32> = None;
 
+    /// `defined(__i386__) || defined(__amd64__)`: the machine is a PC, whose PS/2 keyboard
+    /// controller may be a legacy-free emulation (`pckbc(4)`, `pckbd(4)`, `pms(4)` test it).
+    const MACHINE_PC: bool = false;
+
     /// `CPU_ID_AA64ISAR0` (`<machine/cpu.h>`): arm64's instruction set attribute register 0
     /// sysctl, where defined.
     const CPU_ID_AA64ISAR0: Option<i32> = None;
@@ -387,6 +391,9 @@ pub const CPU_CHR2BLK: Option<i32> = <Machine as Cpu>::CPU_CHR2BLK;
 
 /// `CPU_SSE` on the selected machine (`None`: not defined there).
 pub const CPU_SSE: Option<i32> = <Machine as Cpu>::CPU_SSE;
+
+/// `MACHINE_PC` of the selected machine: `defined(__i386__) || defined(__amd64__)`.
+pub const MACHINE_PC: bool = <Machine as Cpu>::MACHINE_PC;
 
 /// `CPU_ID_AA64ISAR0` on the selected machine (`None`: not defined there).
 pub const CPU_ID_AA64ISAR0: Option<i32> = <Machine as Cpu>::CPU_ID_AA64ISAR0;

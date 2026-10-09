@@ -57,6 +57,7 @@ pub mod mii;
 pub mod mulaw;
 pub mod ofw;
 pub mod pci;
+pub mod pckbc;
 pub mod puc;
 pub mod pv;
 pub mod rasops;

@@ -17,16 +17,16 @@
 /* </LICENSES> */
 
 /* <CODE> */
-//! The ISA bus: OpenBSD `sys/dev/isa/`: the bus itself (`isa.c`, `isavar.h`), the register
-//! map amd64's timer code needs (`isareg.h`) and `com(4)`'s attachment (`com_isa.c`),
-//! `pckbc(4)`'s (`pckbc_isa.c`).
+//! The console and bell hooks of `pckbd(4)`: `<dev/pckbc/pckbdvar.h>`.
+//!
+//! Upstream: sys/dev/pckbc/pckbdvar.h @ 3ce1f3f79392
+//!
+//! The header declares two functions of `pckbd.c`: `pckbd_cnattach`, which `pckbc(4)`'s
+//! console attach calls, and `pckbd_hookup_bell`, which a beeper (`pcppi(4)`) calls to ring
+//! the keyboard's bell.
+//!
+//! ## Deviations
+//! - The prototypes are re-exports of the functions in `pckbd.rs`.
 
-pub mod com_isa;
-#[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/isa/isa.c
-pub mod isa;
-pub mod isareg;
-pub mod isavar;
-pub mod lpt_isa;
-pub mod pckbc_isa;
-pub mod vga_isa;
+pub use crate::dev::pckbc::pckbd::{PckbdBellFn, pckbd_cnattach, pckbd_hookup_bell};
 /* </CODE> */

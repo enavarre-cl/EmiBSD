@@ -17,16 +17,13 @@
 /* </LICENSES> */
 
 /* <CODE> */
-//! The ISA bus: OpenBSD `sys/dev/isa/`: the bus itself (`isa.c`, `isavar.h`), the register
-//! map amd64's timer code needs (`isareg.h`) and `com(4)`'s attachment (`com_isa.c`),
-//! `pckbc(4)`'s (`pckbc_isa.c`).
+//! The devices on `pckbc(4)`'s slots: OpenBSD `sys/dev/pckbc/`: the PS/2 keyboard
+//! (`pckbd`, its commands in `pckbdreg`, its console and bell hooks in `pckbdvar`, its
+//! layouts in `wskbdmap_mfii`).
 
-pub mod com_isa;
-#[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/isa/isa.c
-pub mod isa;
-pub mod isareg;
-pub mod isavar;
-pub mod lpt_isa;
-pub mod pckbc_isa;
-pub mod vga_isa;
+pub mod pckbd;
+pub mod pckbdreg;
+pub mod pckbdvar;
+#[rustfmt::skip] // generated from the C, licence block verbatim
+pub mod wskbdmap_mfii;
 /* </CODE> */
