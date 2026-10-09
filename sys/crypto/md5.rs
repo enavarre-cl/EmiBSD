@@ -50,15 +50,25 @@
 //! `HMAC-MD5-96` and of the TCP MD5 signature option.
 //!
 //! Upstream: sys/crypto/md5.h @ 3ce1f3f79392, sys/crypto/md5.c @ 3ce1f3f79392
+//! LZ: sys/crypto/md5.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module; `MD5_CTX` (`struct MD5Context`) is [`Md5Ctx`].
-//! - `MD5Update` takes a slice; `MD5Final` wipes the context by assignment
-//!   (`crate::crypto::wipe`).
 //! - `MD5Transform` keeps the C's step order but states the four round functions and the
 //!   per-round constants and shifts as tables read by a loop, where the C writes sixty-four
 //!   `MD5STEP` lines. The words are always read little-endian (the C copies on little-endian
 //!   machines and assembles bytes otherwise).
+//!
+//! ## Redesign
+//! - The context and its three functions are a type with methods (`docs/IDIOMS.md`, "a hash
+//!   context"): `MD5Init(&mut ctx)` is [`Md5Ctx::new`], `MD5Update(ctx, buf, len)` is
+//!   [`Md5Ctx::update`] over a slice, and `MD5Final(digest, ctx)` is [`Md5Ctx::finalize`],
+//!   which returns the digest instead of filling an out parameter. `finalize` takes
+//!   `&mut self` and wipes the context where it lives (the C's `explicit_bzero(ctx, ..)`), so
+//!   the caller's context holds no message state after it.
+//! - The fields are private: the chaining words and the partial block change only through
+//!   the methods.
+//! - `MD5Transform` takes the state words and one block, not the context, and keeps its name.
 
 use super::wipe;
 
@@ -67,15 +77,18 @@ pub const MD5_BLOCK_LENGTH: usize = 64;
 /// `MD5_DIGEST_LENGTH`.
 pub const MD5_DIGEST_LENGTH: usize = 16;
 
-/// `MD5_CTX`: a hash in progress.
+/// `MD5_CTX`: a hash in progress, from [`Md5Ctx::new`] to [`Md5Ctx::finalize`].
+///
+/// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
+/// hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Md5Ctx {
     /// `state`: the four chaining words.
-    pub state: [u32; 4],
+    state: [u32; 4],
     /// `count`: number of bits, mod 2^64.
-    pub count: u64,
+    count: u64,
     /// `buffer`: input buffer.
-    pub buffer: [u8; MD5_BLOCK_LENGTH],
+    buffer: [u8; MD5_BLOCK_LENGTH],
 }
 
 impl Default for Md5Ctx {
@@ -85,6 +98,78 @@ impl Default for Md5Ctx {
             count: 0,
             buffer: [0; MD5_BLOCK_LENGTH],
         }
+    }
+}
+
+impl Md5Ctx {
+    /// `MD5Init`: start MD5 accumulation. Set bit count to 0 and buffer to mysterious
+    /// initialization constants.
+    pub fn new() -> Self {
+        Self {
+            state: [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476],
+            count: 0,
+            buffer: [0; MD5_BLOCK_LENGTH],
+        }
+    }
+
+    /// The bytes waiting in `buffer`: the message length mod 64. The value is below 64, so
+    /// the conversion to `usize` is exact.
+    fn buffered(&self) -> usize {
+        ((self.count >> 3) % MD5_BLOCK_LENGTH as u64) as usize
+    }
+
+    /// `MD5Update`: update context to reflect the concatenation of another buffer full of
+    /// bytes.
+    pub fn update(&mut self, input: &[u8]) {
+        let mut input = input;
+
+        // Check how many bytes we already have and how many more we need.
+        let mut have = self.buffered();
+        let need = MD5_BLOCK_LENGTH - have;
+
+        // Update bitcount
+        self.count = self.count.wrapping_add((input.len() as u64) << 3);
+
+        if input.len() >= need {
+            if have != 0 {
+                self.buffer[have..].copy_from_slice(&input[..need]);
+                MD5Transform(&mut self.state, &self.buffer);
+                input = &input[need..];
+                have = 0;
+            }
+
+            // Process data in MD5_BLOCK_LENGTH-byte chunks.
+            let (blocks, rest) = input.as_chunks::<MD5_BLOCK_LENGTH>();
+            for block in blocks {
+                MD5Transform(&mut self.state, block);
+            }
+            input = rest;
+        }
+
+        // Handle any remaining bytes of data.
+        self.buffer[have..have + input.len()].copy_from_slice(input);
+    }
+
+    /// `MD5Final`: final wrapup - pad to 64-byte boundary with the bit pattern 1 0* (64-bit
+    /// count of bits processed, LSB-first) and return the digest; the context is wiped.
+    pub fn finalize(&mut self) -> [u8; MD5_DIGEST_LENGTH] {
+        // Convert count to 8 bytes in little endian order.
+        let count = self.count.to_le_bytes();
+
+        // Pad out to 56 mod 64.
+        let mut padlen = MD5_BLOCK_LENGTH - self.buffered();
+        if padlen < 1 + 8 {
+            padlen += MD5_BLOCK_LENGTH;
+        }
+        self.update(&PADDING[..padlen - 8]); // padlen - 8 <= 64
+        self.update(&count);
+
+        let mut digest = [0u8; MD5_DIGEST_LENGTH];
+        for (out, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
+            *out = word.to_le_bytes();
+        }
+        wipe(self); // in case it's sensitive
+        digest
     }
 }
 
@@ -114,73 +199,6 @@ const MD5_S: [u32; 64] = [
     21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
 ];
 
-/// `MD5Init`: start MD5 accumulation. Set bit count to 0 and buffer to mysterious
-/// initialization constants.
-#[allow(non_snake_case)] // the C name
-pub fn MD5Init(ctx: &mut Md5Ctx) {
-    ctx.count = 0;
-    ctx.state[0] = 0x67452301;
-    ctx.state[1] = 0xefcdab89;
-    ctx.state[2] = 0x98badcfe;
-    ctx.state[3] = 0x10325476;
-}
-
-/// `MD5Update`: update context to reflect the concatenation of another buffer full of bytes.
-#[allow(non_snake_case)] // the C name
-pub fn MD5Update(ctx: &mut Md5Ctx, input: &[u8]) {
-    let mut input = input;
-
-    // Check how many bytes we already have and how many more we need.
-    let mut have = ((ctx.count >> 3) & (MD5_BLOCK_LENGTH as u64 - 1)) as usize;
-    let need = MD5_BLOCK_LENGTH - have;
-
-    // Update bitcount
-    ctx.count = ctx.count.wrapping_add((input.len() as u64) << 3);
-
-    if input.len() >= need {
-        if have != 0 {
-            ctx.buffer[have..].copy_from_slice(&input[..need]);
-            MD5Transform(&mut ctx.state, &ctx.buffer);
-            input = &input[need..];
-            have = 0;
-        }
-
-        // Process data in MD5_BLOCK_LENGTH-byte chunks.
-        while input.len() >= MD5_BLOCK_LENGTH {
-            let mut block = [0u8; MD5_BLOCK_LENGTH];
-            block.copy_from_slice(&input[..MD5_BLOCK_LENGTH]);
-            MD5Transform(&mut ctx.state, &block);
-            input = &input[MD5_BLOCK_LENGTH..];
-        }
-    }
-
-    // Handle any remaining bytes of data.
-    if !input.is_empty() {
-        ctx.buffer[have..have + input.len()].copy_from_slice(input);
-    }
-}
-
-/// `MD5Final`: final wrapup - pad to 64-byte boundary with the bit pattern 1 0* (64-bit count
-/// of bits processed, MSB-first); the context is wiped.
-#[allow(non_snake_case)] // the C name
-pub fn MD5Final(digest: &mut [u8; MD5_DIGEST_LENGTH], ctx: &mut Md5Ctx) {
-    // Convert count to 8 bytes in little endian order.
-    let count = ctx.count.to_le_bytes();
-
-    // Pad out to 56 mod 64.
-    let mut padlen = MD5_BLOCK_LENGTH - ((ctx.count >> 3) & (MD5_BLOCK_LENGTH as u64 - 1)) as usize;
-    if padlen < 1 + 8 {
-        padlen += MD5_BLOCK_LENGTH;
-    }
-    MD5Update(ctx, &PADDING[..padlen - 8]); // padlen - 8 <= 64
-    MD5Update(ctx, &count);
-
-    for i in 0..4 {
-        digest[i * 4..i * 4 + 4].copy_from_slice(&ctx.state[i].to_le_bytes());
-    }
-    wipe(ctx); // in case it's sensitive
-}
-
 /// The round function of step `i` (the C's `F1` to `F4`): `F1` is optimized somewhat.
 fn md5_f(i: usize, x: u32, y: u32, z: u32) -> u32 {
     match i / 16 {
@@ -202,14 +220,14 @@ fn md5_g(i: usize) -> usize {
 }
 
 /// `MD5Transform`: the core of the MD5 algorithm, this alters an existing MD5 hash to reflect
-/// the addition of 16 longwords of new data. `MD5Update` blocks the data and converts bytes
-/// into longwords for this routine.
+/// the addition of 16 longwords of new data. [`Md5Ctx::update`] blocks the data and converts
+/// bytes into longwords for this routine.
 #[allow(non_snake_case)] // the C name
 pub fn MD5Transform(state: &mut [u32; 4], block: &[u8; MD5_BLOCK_LENGTH]) {
     let mut input = [0u32; MD5_BLOCK_LENGTH / 4];
 
-    for (i, w) in block.as_chunks::<4>().0.iter().enumerate() {
-        input[i] = u32::from_le_bytes(*w);
+    for (w, bytes) in input.iter_mut().zip(block.as_chunks::<4>().0) {
+        *w = u32::from_le_bytes(*bytes);
     }
 
     let [mut a, mut b, mut c, mut d] = *state;
@@ -227,10 +245,9 @@ pub fn MD5Transform(state: &mut [u32; 4], block: &[u8; MD5_BLOCK_LENGTH]) {
         b = b.wrapping_add(f.rotate_left(MD5_S[i]));
     }
 
-    state[0] = state[0].wrapping_add(a);
-    state[1] = state[1].wrapping_add(b);
-    state[2] = state[2].wrapping_add(c);
-    state[3] = state[3].wrapping_add(d);
+    for (s, v) in state.iter_mut().zip([a, b, c, d]) {
+        *s = s.wrapping_add(v);
+    }
 }
 /* </CODE> */
 
@@ -238,21 +255,19 @@ pub fn MD5Transform(state: &mut [u32; 4], block: &[u8; MD5_BLOCK_LENGTH]) {
 #[cfg(test)]
 mod tests {
     // Known-answer tests for MD5: the RFC 1321 appendix A.5 test suite, one million "a" and the
-    // digest of the digests of every length around the block boundaries (`hashlib`).
+    // digest of the digests of every length around the block boundaries (`hashlib`); a
+    // property test that any split of a random message gives the one-shot digest.
 
     use super::*;
-    use crate::crypto::testutil::hex;
+    use crate::crypto::testutil::{XorShift, hex};
 
     extern crate std;
     use std::vec::Vec;
 
     fn digest(data: &[u8]) -> [u8; MD5_DIGEST_LENGTH] {
-        let mut ctx = Md5Ctx::default();
-        let mut out = [0u8; MD5_DIGEST_LENGTH];
-        MD5Init(&mut ctx);
-        MD5Update(&mut ctx, data);
-        MD5Final(&mut out, &mut ctx);
-        out
+        let mut ctx = Md5Ctx::new();
+        ctx.update(data);
+        ctx.finalize()
     }
 
     #[test]
@@ -287,18 +302,18 @@ mod tests {
             hex("8215ef0796a20bcaaae116d3876c664a")
         );
         assert_eq!(
-        digest(b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu").to_vec(),
-        hex("03dd8807a93175fb062dfb55dc7d359c")
-    );
-        let mut ctx = Md5Ctx::default();
-        let mut out = [0u8; MD5_DIGEST_LENGTH];
-        MD5Init(&mut ctx);
+            digest(b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu").to_vec(),
+            hex("03dd8807a93175fb062dfb55dc7d359c")
+        );
+        let mut ctx = Md5Ctx::new();
         let chunk = [b'a'; 1000];
         for _ in 0..1000 {
-            MD5Update(&mut ctx, &chunk);
+            ctx.update(&chunk);
         }
-        MD5Final(&mut out, &mut ctx);
-        assert_eq!(out.to_vec(), hex("7707d6ae4e027c70eea2a935c2296f21"));
+        assert_eq!(
+            ctx.finalize().to_vec(),
+            hex("7707d6ae4e027c70eea2a935c2296f21")
+        );
     }
 
     #[test]
@@ -319,16 +334,28 @@ mod tests {
         let msg: Vec<u8> = (0..300).map(|i| (i * 13 % 256) as u8).collect();
         let whole = digest(&msg);
         for chunk in [1usize, 3, 7, 55, 56, 63, 64, 65, 128, 299] {
-            let mut ctx = Md5Ctx::default();
-            let mut out = [0u8; MD5_DIGEST_LENGTH];
-            MD5Init(&mut ctx);
+            let mut ctx = Md5Ctx::new();
             for piece in msg.chunks(chunk) {
-                MD5Update(&mut ctx, piece);
+                ctx.update(piece);
             }
-            MD5Final(&mut out, &mut ctx);
-            assert_eq!(out, whole, "chunks of {chunk}");
-            // Final wipes the context.
+            assert_eq!(ctx.finalize(), whole, "chunks of {chunk}");
+            // finalize wipes the context where it lives.
             assert_eq!(ctx, Md5Ctx::default());
+        }
+    }
+
+    #[test]
+    fn random_splits_give_the_one_shot_digest() {
+        let mut rng = XorShift::new(0x6d64_355f_7370_6c74);
+        for _ in 0..200 {
+            let len = rng.below(600);
+            let msg = rng.bytes(len);
+            let whole = digest(&msg);
+            let mut ctx = Md5Ctx::new();
+            for piece in rng.split(&msg) {
+                ctx.update(piece);
+            }
+            assert_eq!(ctx.finalize(), whole, "{} bytes", msg.len());
         }
     }
 }

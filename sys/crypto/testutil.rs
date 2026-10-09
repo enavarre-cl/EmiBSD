@@ -49,6 +49,51 @@ pub(crate) fn hexn<const N: usize>(s: &str) -> [u8; N] {
     a
 }
 
+/// A xorshift64* generator for the property tests: deterministic from its seed, so a failure
+/// reproduces, and no crate dependency.
+pub(crate) struct XorShift(u64);
+
+impl XorShift {
+    /// A generator started at `seed` (a zero state would stay zero, so the low bit is set).
+    pub(crate) fn new(seed: u64) -> Self {
+        Self(seed | 1)
+    }
+
+    /// The next 64 random bits.
+    pub(crate) fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+
+    /// A value in `0..n`; `n` is not zero.
+    pub(crate) fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() % n as u64) as usize
+    }
+
+    /// `n` random bytes.
+    pub(crate) fn bytes(&mut self, n: usize) -> Vec<u8> {
+        (0..n).map(|_| self.next_u64() as u8).collect()
+    }
+
+    /// `msg` cut at random points into consecutive pieces, some of them empty; their
+    /// concatenation is `msg`.
+    pub(crate) fn split<'a>(&mut self, msg: &'a [u8]) -> Vec<&'a [u8]> {
+        let mut pieces = Vec::new();
+        let mut rest = msg;
+        while !rest.is_empty() {
+            let n = self.below(rest.len().min(150) + 1);
+            let (piece, tail) = rest.split_at(n);
+            pieces.push(piece);
+            rest = tail;
+        }
+        pieces
+    }
+}
+
 /// The integers of the table `name` of the C file `rel` (below `$OPENBSD_SRC`): every number
 /// between the `{` that follows `name[` and the closing `};`, comments dropped, in order. For
 /// the reference-backed tests (`just test-ref`).

@@ -140,7 +140,7 @@ use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use libkern::StaticCell;
 
-use crate::crypto::md5::{MD5_DIGEST_LENGTH, MD5Final, MD5Init, MD5Update, Md5Ctx};
+use crate::crypto::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
 use crate::crypto::sha2::{SHA512_DIGEST_LENGTH, SHA512Final, SHA512Init, SHA512Update, Sha2Ctx};
 use crate::dev::rnd::arc4random_buf;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
@@ -1339,9 +1339,7 @@ pub fn tcp_signature(
     doswap: bool,
     sig: &mut [u8; MD5_DIGEST_LENGTH],
 ) -> bool {
-    let mut ctx = Md5Ctx::default();
-
-    MD5Init(&mut ctx);
+    let mut ctx = Md5Ctx::new();
 
     match af {
         0 | AF_INET_I32 => {
@@ -1359,7 +1357,7 @@ pub fn tcp_signature(
             b[8] = ippseudo.ippseudo_pad;
             b[9] = ippseudo.ippseudo_p;
             b[10..12].copy_from_slice(&ippseudo.ippseudo_len.to_ne_bytes());
-            MD5Update(&mut ctx, &b);
+            ctx.update(&b);
         }
         #[cfg(feature = "inet6")]
         AF_INET6_I32 => {
@@ -1379,7 +1377,7 @@ pub fn tcp_signature(
             b[32..36].copy_from_slice(&ip6pseudo.ip6ph_len.to_ne_bytes());
             b[36..39].copy_from_slice(&ip6pseudo.ip6ph_zero);
             b[39] = ip6pseudo.ip6ph_nxt;
-            MD5Update(&mut ctx, &b);
+            ctx.update(&b);
         }
         _ => {}
     }
@@ -1393,7 +1391,7 @@ pub fn tcp_signature(
         th0.th_win = htons(th0.th_win);
         th0.th_urp = htons(th0.th_urp);
     }
-    MD5Update(&mut ctx, &tcphdr_bytes(&th0));
+    ctx.update(&tcphdr_bytes(&th0));
 
     let thlen = i32::from(th.th_off()) * size_of::<u32>() as i32;
     let len = m.m_pkthdr().len.get() - iphlen - thlen;
@@ -1401,7 +1399,7 @@ pub fn tcp_signature(
     // tcp_signature_apply
     if len > 0
         && m_apply(m, iphlen + thlen, len, |data| {
-            MD5Update(&mut ctx, data);
+            ctx.update(data);
             Ok(())
         })
         .is_err()
@@ -1410,8 +1408,8 @@ pub fn tcp_signature(
     }
 
     // SAFETY: the caller holds the TDB, whose key lives until its `xf_zeroize`.
-    MD5Update(&mut ctx, unsafe { tdb.tdb_amxkey() });
-    MD5Final(sig, &mut ctx);
+    ctx.update(unsafe { tdb.tdb_amxkey() });
+    *sig = ctx.finalize();
 
     true
 }

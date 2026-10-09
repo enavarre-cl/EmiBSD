@@ -1105,7 +1105,8 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/hmac.rs"
 lz = ["sys/crypto/hmac.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/md5.rs"]
 
 [[module]]
 rust = "sys/crypto/idgen.rs"
@@ -1115,7 +1116,22 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/md5.rs"
 lz = ["sys/crypto/md5.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/md5.rs::MD5Init"
+native = ["Md5Ctx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/md5.rs::MD5Update"
+native = ["Md5Ctx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/md5.rs::MD5Final"
+native = ["Md5Ctx::finalize"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/podd.rs"
@@ -1170,7 +1186,8 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/md5.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
@@ -2072,7 +2089,8 @@ notes = "PLACEHOLDER: arc4random/arc4random_buf/arc4random_uniform over SplitMix
 [[module]]
 rust = "sys/dev/softraid.rs"
 lz = ["sys/dev/softraid.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/md5.rs"]
 
 [[module]]
 rust = "sys/dev/softraid_concat.rs"
@@ -3714,7 +3732,8 @@ status = "inherited"
 [[module]]
 rust = "sys/net/pf_ioctl.rs"
 lz = ["sys/net/pf_ioctl.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/md5.rs"]
 
 [[module]]
 rust = "sys/net/pf_lb.rs"
@@ -3996,7 +4015,8 @@ status = "inherited"
 [[module]]
 rust = "sys/netinet/tcp_subr.rs"
 lz = ["sys/netinet/tcp_subr.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/md5.rs"]
 
 [[module]]
 rust = "sys/netinet/tcp_timer.rs"
@@ -5448,7 +5468,7 @@ reason = "replaces config(8)'s generated ioconf.c for arm64 GENERIC: cfdata[] an
 
 [[extra]]
 rust = "sys/crypto/testutil.rs"
-reason = "host test helper: hex decoding for the known-answer vectors of sys/crypto"
+reason = "host test helper: hex decoding for the known-answer vectors of sys/crypto and a seeded xorshift generator for its property tests"
 
 [[extra]]
 rust = "sys/dev/consfile.rs"

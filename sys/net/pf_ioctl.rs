@@ -113,7 +113,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering as AtomicOrdering;
 
 use crate::conf::param::NMBCLUST;
-use crate::crypto::md5::{MD5Final, MD5Init, MD5Update, Md5Ctx};
+use crate::crypto::md5::Md5Ctx;
 use crate::dev::rnd::arc4random;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_lock_init};
@@ -922,30 +922,30 @@ pub fn pf_queue_manager(q: &PfQueuespec) -> Option<&'static PfqOps> {
 /// `pf_hash_rule_addr`: hashes the members of an operand that identify it.
 pub fn pf_hash_rule_addr(ctx: &mut Md5Ctx, pfr: &PfRuleAddr) {
     let v = pfr.addr.v.get();
-    MD5Update(ctx, &[pfr.addr.type_.get()]);
+    ctx.update(&[pfr.addr.type_.get()]);
     match pfr.addr.type_.get() {
         PF_ADDR_DYNIFTL => {
-            MD5Update(ctx, v.ifname());
-            MD5Update(ctx, &[pfr.addr.iflags.get()]);
+            ctx.update(v.ifname());
+            ctx.update(&[pfr.addr.iflags.get()]);
         }
         PF_ADDR_TABLE => {
             if !v.tblname().starts_with(PF_OPTIMIZER_TABLE_PFX) {
-                MD5Update(ctx, v.tblname());
+                ctx.update(v.tblname());
             }
         }
         PF_ADDR_ADDRMASK => {
             // XXX ignore af?
-            MD5Update(ctx, &v.addr().addr8);
-            MD5Update(ctx, &v.mask().addr8);
+            ctx.update(&v.addr().addr8);
+            ctx.update(&v.mask().addr8);
         }
-        PF_ADDR_RTLABEL => MD5Update(ctx, v.rtlabelname()),
+        PF_ADDR_RTLABEL => ctx.update(v.rtlabelname()),
         _ => {}
     }
 
-    MD5Update(ctx, &pfr.port[0].get().to_ne_bytes());
-    MD5Update(ctx, &pfr.port[1].get().to_ne_bytes());
-    MD5Update(ctx, &[pfr.neg.get()]);
-    MD5Update(ctx, &[pfr.port_op.get()]);
+    ctx.update(&pfr.port[0].get().to_ne_bytes());
+    ctx.update(&pfr.port[1].get().to_ne_bytes());
+    ctx.update(&[pfr.neg.get()]);
+    ctx.update(&[pfr.port_op.get()]);
 }
 
 /// `pf_hash_rule`: hashes the members of a rule that identify it (`PF_MD5_UPD`: the bytes as
@@ -953,36 +953,36 @@ pub fn pf_hash_rule_addr(ctx: &mut Md5Ctx, pfr: &PfRuleAddr) {
 pub fn pf_hash_rule(ctx: &mut Md5Ctx, rule: &PfRule) {
     pf_hash_rule_addr(ctx, &rule.src);
     pf_hash_rule_addr(ctx, &rule.dst);
-    MD5Update(ctx, pf_cstr(&rule.label));
-    MD5Update(ctx, pf_cstr(&rule.ifname));
-    MD5Update(ctx, pf_cstr(&rule.rcv_ifname));
-    MD5Update(ctx, pf_cstr(&rule.match_tagname));
-    MD5Update(ctx, &rule.match_tag.to_be_bytes()); // dup?
-    MD5Update(ctx, &rule.os_fingerprint.to_be_bytes());
-    MD5Update(ctx, &rule.prob.to_be_bytes());
-    MD5Update(ctx, &rule.uid.uid[0].to_be_bytes());
-    MD5Update(ctx, &rule.uid.uid[1].to_be_bytes());
-    MD5Update(ctx, &[rule.uid.op]);
-    MD5Update(ctx, &rule.gid.gid[0].to_be_bytes());
-    MD5Update(ctx, &rule.gid.gid[1].to_be_bytes());
-    MD5Update(ctx, &[rule.gid.op]);
-    MD5Update(ctx, &rule.rule_flag.get().to_be_bytes());
-    MD5Update(ctx, &[rule.action]);
-    MD5Update(ctx, &[rule.direction]);
-    MD5Update(ctx, &[rule.af]);
-    MD5Update(ctx, &[rule.quick]);
-    MD5Update(ctx, &[rule.ifnot]);
-    MD5Update(ctx, &[rule.rcvifnot]);
-    MD5Update(ctx, &[rule.match_tag_not]);
-    MD5Update(ctx, &[rule.keep_state]);
-    MD5Update(ctx, &[rule.proto]);
-    MD5Update(ctx, &rule.type_.to_ne_bytes());
-    MD5Update(ctx, &rule.code.to_ne_bytes());
-    MD5Update(ctx, &[rule.flags]);
-    MD5Update(ctx, &[rule.flagset]);
-    MD5Update(ctx, &[rule.allow_opts]);
-    MD5Update(ctx, &[rule.rt]);
-    MD5Update(ctx, &[rule.tos]);
+    ctx.update(pf_cstr(&rule.label));
+    ctx.update(pf_cstr(&rule.ifname));
+    ctx.update(pf_cstr(&rule.rcv_ifname));
+    ctx.update(pf_cstr(&rule.match_tagname));
+    ctx.update(&rule.match_tag.to_be_bytes()); // dup?
+    ctx.update(&rule.os_fingerprint.to_be_bytes());
+    ctx.update(&rule.prob.to_be_bytes());
+    ctx.update(&rule.uid.uid[0].to_be_bytes());
+    ctx.update(&rule.uid.uid[1].to_be_bytes());
+    ctx.update(&[rule.uid.op]);
+    ctx.update(&rule.gid.gid[0].to_be_bytes());
+    ctx.update(&rule.gid.gid[1].to_be_bytes());
+    ctx.update(&[rule.gid.op]);
+    ctx.update(&rule.rule_flag.get().to_be_bytes());
+    ctx.update(&[rule.action]);
+    ctx.update(&[rule.direction]);
+    ctx.update(&[rule.af]);
+    ctx.update(&[rule.quick]);
+    ctx.update(&[rule.ifnot]);
+    ctx.update(&[rule.rcvifnot]);
+    ctx.update(&[rule.match_tag_not]);
+    ctx.update(&[rule.keep_state]);
+    ctx.update(&[rule.proto]);
+    ctx.update(&rule.type_.to_ne_bytes());
+    ctx.update(&rule.code.to_ne_bytes());
+    ctx.update(&[rule.flags]);
+    ctx.update(&[rule.flagset]);
+    ctx.update(&[rule.allow_opts]);
+    ctx.update(&[rule.rt]);
+    ctx.update(&[rule.tos]);
 }
 
 /// `pf_commit_rules`: makes the inactive rules of ruleset `anchor` (transaction `version`)
@@ -1036,10 +1036,7 @@ pub fn pf_commit_rules(version: u32, anchor: &[u8]) -> Result<(), Errno> {
 
 /// `pf_calc_chksum`: the MD5 of the inactive rules of `rs`, stored as `pf_status.pf_chksum`.
 pub fn pf_calc_chksum(rs: &PfRuleset) {
-    let mut ctx = Md5Ctx::default();
-    let mut digest = [0u8; PF_MD5_DIGEST_LENGTH];
-
-    MD5Init(&mut ctx);
+    let mut ctx = Md5Ctx::new();
 
     if rs.inactive.rcount.get() != 0 {
         for rule in rs.inactive_ptr().iter() {
@@ -1047,7 +1044,7 @@ pub fn pf_calc_chksum(rs: &PfRuleset) {
         }
     }
 
-    MD5Final(&mut digest, &mut ctx);
+    let digest: [u8; PF_MD5_DIGEST_LENGTH] = ctx.finalize();
     PF_STATUS.pf_chksum.set(digest);
 }
 

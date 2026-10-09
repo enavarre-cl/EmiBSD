@@ -50,7 +50,7 @@
 
 use libkern::explicit_bzero;
 
-use super::md5::{MD5_BLOCK_LENGTH, MD5_DIGEST_LENGTH, MD5Final, MD5Init, MD5Update, Md5Ctx};
+use super::md5::{MD5_BLOCK_LENGTH, MD5_DIGEST_LENGTH, Md5Ctx};
 use super::sha1::{
     SHA1_BLOCK_LENGTH, SHA1_DIGEST_LENGTH, SHA1Final, SHA1Init, SHA1Update, Sha1Ctx,
 };
@@ -63,7 +63,7 @@ use super::sha2::{
 macro_rules! hmac_family {
     (
         $ctx_ty:ident, $hash_ctx:ty, $block:ident, $digest:ident,
-        $hash_init:ident, $hash_update:ident, $hash_final:ident,
+        $hash_init:expr, $hash_update:expr, $hash_final:expr,
         $init:ident, $update:ident, $final:ident, $name:literal
     ) => {
         #[doc = concat!("`", $name, "`: an HMAC in progress.")]
@@ -149,9 +149,9 @@ hmac_family!(
     Md5Ctx,
     MD5_BLOCK_LENGTH,
     MD5_DIGEST_LENGTH,
-    MD5Init,
-    MD5Update,
-    MD5Final,
+    |c: &mut Md5Ctx| *c = Md5Ctx::new(),
+    Md5Ctx::update,
+    |d: &mut [u8; MD5_DIGEST_LENGTH], c: &mut Md5Ctx| *d = c.finalize(),
     HMAC_MD5_Init,
     HMAC_MD5_Update,
     HMAC_MD5_Final,

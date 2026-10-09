@@ -142,7 +142,7 @@ use super::gmac::{
     AES_GMAC_Final, AES_GMAC_Init, AES_GMAC_Reinit, AES_GMAC_Setkey, AES_GMAC_Update, AesGmacCtx,
     GMAC_BLOCK_LEN, GMAC_DIGEST_LEN,
 };
-use super::md5::{MD5_DIGEST_LENGTH, MD5Final, MD5Init, MD5Update, Md5Ctx};
+use super::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
 use super::rijndael::{RijndaelCtx, rijndael_decrypt, rijndael_encrypt, rijndael_set_key};
 use super::rmd160::{RMD160_DIGEST_LENGTH, RMD160Final, RMD160Init, RMD160Update, Rmd160Ctx};
 use super::set_key::des_set_key;
@@ -655,7 +655,7 @@ fn chacha20_crypt_ks(key: &mut Kschedule, data: &mut [u8]) {
 macro_rules! hash_wrappers {
     (
         $variant:ident, $ctx:ty, $dlen:expr,
-        $hash_init:ident, $hash_update:ident, $hash_final:ident,
+        $hash_init:expr, $hash_update:expr, $hash_final:expr,
         $init_fn:ident, $update_fn:ident, $final_fn:ident, $who:literal
     ) => {
         fn $init_fn(c: &mut AuthCtx) {
@@ -688,9 +688,9 @@ hash_wrappers!(
     Md5,
     Md5Ctx,
     MD5_DIGEST_LENGTH,
-    MD5Init,
-    MD5Update,
-    MD5Final,
+    |c: &mut Md5Ctx| *c = Md5Ctx::new(),
+    Md5Ctx::update,
+    |d: &mut [u8; MD5_DIGEST_LENGTH], c: &mut Md5Ctx| *d = c.finalize(),
     md5_init,
     MD5Update_int,
     md5_final,

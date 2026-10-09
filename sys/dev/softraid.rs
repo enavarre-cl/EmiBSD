@@ -114,7 +114,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use libkern::{StaticCell, explicit_bzero, strlcpy};
 
-use crate::crypto::md5::{MD5_DIGEST_LENGTH, MD5Final, MD5Init, MD5Update, Md5Ctx};
+use crate::crypto::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
 use crate::dev::bio::{bio_register, bio_status, bio_status_init};
 use crate::dev::biovar::{
     BIO_MSG_COUNT, BIO_MSG_ERROR, BIO_MSG_INFO, BIO_MSG_LEN, BIO_MSG_WARN, BIO_STATUS_ERROR,
@@ -5011,16 +5011,13 @@ pub fn sr_checksum_print(md5: &[u8; MD5_DIGEST_LENGTH]) {
 pub fn sr_checksum(_sc: &SrSoftc, src: &[Cell<u8>]) -> [u8; MD5_DIGEST_LENGTH] {
     // DNPRINTF(SR_D_MISC, "sr_checksum(%p %p %d)")
 
-    let mut ctx = Md5Ctx::default();
-    let mut md5 = [0u8; MD5_DIGEST_LENGTH];
-    MD5Init(&mut ctx);
+    let mut ctx = Md5Ctx::new();
     let mut buf = [0u8; 64];
     for chunk in src.chunks(buf.len()) {
         cells_read(&mut buf[..chunk.len()], chunk);
-        MD5Update(&mut ctx, &buf[..chunk.len()]);
+        ctx.update(&buf[..chunk.len()]);
     }
-    MD5Final(&mut md5, &mut ctx);
-    md5
+    ctx.finalize()
 }
 
 /// `sr_uuid_generate`: a random (version 4, RFC 4122 variant) UUID.
@@ -5614,12 +5611,10 @@ mod tests {
         );
         // longer than the 64-byte staging buffer
         let long: Vec<Cell<u8>> = (0..1000).map(|i| Cell::new(i as u8)).collect();
-        let mut ctx = Md5Ctx::default();
-        let mut want = [0u8; MD5_DIGEST_LENGTH];
         let bytes: Vec<u8> = (0..1000).map(|i| i as u8).collect();
-        MD5Init(&mut ctx);
-        MD5Update(&mut ctx, &bytes);
-        MD5Final(&mut want, &mut ctx);
+        let mut ctx = Md5Ctx::new();
+        ctx.update(&bytes);
+        let want = ctx.finalize();
         assert_eq!(sr_checksum(sc, &long), want);
     }
 
