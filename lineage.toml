@@ -1850,6 +1850,12 @@ status = "inherited"
 notes = "M16a: the whole file: ata_get_params (IDENTIFY into a DmaBuf, dma_alloc not ported; the big-endian swaps under target_endian big; the string fixing in ata_params_fixup), ata_set_mode, ata_dmaerr, ata_perror (snprintf into a byte buffer). ata_get_params/ata_set_mode panic when flags hold neither AT_WAIT nor AT_POLL (exec_on_stack), where the C would leave the transfer pointing into a dead frame; every caller passes one. Host tests (string swaps, error texts, DMA error accounting)"
 
 [[module]]
+rust = "sys/dev/ata/ata_wdc.rs"
+lz = ["sys/dev/ata/ata_wdc.rs"]
+status = "inherited"
+notes = "M16a: the whole file but HIBERNATE (not configured: wd_hibernate_io not compiled): wdcdebug_wd_mask (feature wdcdebug), wdc_ata_bio (&'static ata_bio), wdc_ata_bio_start, _wdc_ata_bio_start (again/do_pio/intr/timeout gotos as labelled blocks and a loop; LBA28, LBA48 and CHS; PIO single/multiple and DMA through the controller hooks, EINVAL falling back to PIO), wdc_ata_bio_intr, wdc_ata_bio_kill_xfer, wdc_ata_bio_done, wdc_ata_ctrl_intr (the RECAL..READY switch with its fallthroughs as a state loop), wdc_ata_err; the label fields read in place (AtaBio::label). Host tests: a task file emulated behind the channel vtbl (one ATA disk): wdcprobe, IDENTIFY, PIO mode selection, a polled READ MULTIPLE after RECAL/SET FEATURES/SET MULTI and a polled WRITE"
+
+[[module]]
 rust = "sys/dev/ata/atareg.rs"
 lz = ["sys/dev/ata/atareg.rs"]
 status = "inherited"
@@ -1876,6 +1882,12 @@ rust = "sys/dev/ata/satareg.rs"
 lz = ["sys/dev/ata/satareg.rs"]
 status = "inherited"
 notes = "M16a: license: NetBSD Foundation BSD-2, kept whole; the whole header: the SStatus, SError and SControl values (u32, mixed-case C names kept), SControl_PMP as a const fn. Reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/ata/wd.rs"
+lz = ["sys/dev/ata/wd.rs"]
+status = "inherited"
+notes = "M16a: the whole driver but B_FORMAT (not defined: wdformat), WD_DUMP_NOT_TRUSTED (not defined) and HIBERNATE: wd_ca/wd_cd, wdprobe, wdattach (model string in wd_model), wdactivate, wddetach, wdstrategy, wdstart, __wdstart, wddone, wdrestart, wdread/wdwrite (physio), wdopen (wdopen_noproc for wdsize), wdclose, wdgetdefaultlabel, wdgetdisklabel (the label built in a local and installed as sd.rs does), wdioctl (DIOCRLDINFO's label malloc'ed as in the C; the rest to wdc_ioctl), wdsize, wddump (nothing calls it yet: dumpsys not ported), wd_get_params (always on sc_params, as every caller), wd_flushcache (keeps the C's test of ERR_NODEV against the AT_* flags), wd_standby. bdevsw 0 / cdevsw 3 on both archs (NWD 1 on amd64, 0 on arm64 as GENERIC). Host tests (model string, strncpy)"
 
 [[module]]
 rust = "sys/dev/ata/wdvar.rs"

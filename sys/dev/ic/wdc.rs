@@ -2605,4 +2605,11 @@ pub fn wdc_ioctl(
         _ => Err(ENOTTY),
     }
 }
+
+/// Forgets the transfer pool, whose items live in the memory of an earlier test
+/// (`setup_real_memory` replaces it): the next `wdc_alloc_queue` sets it up again.
+#[cfg(test)]
+pub(crate) fn wdc_test_reset() {
+    WDC_QUEUE_INITED.store(false, Ordering::Relaxed);
+}
 /* </CODE> */

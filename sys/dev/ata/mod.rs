@@ -19,16 +19,19 @@
 /* <CODE> */
 //! ATA and SATA support: OpenBSD `sys/dev/ata/`. `atascsi` is the SCSI to ATA translation
 //! layer of the SATA host controllers (`ahci(4)`), `pmreg` the port multiplier registers;
-//! `ata` holds the IDENTIFY and SET FEATURES commands of a wdc(4) channel's drives;
-//! `atareg`, `atavar`, `satareg` and `wdvar` are the IDENTIFY block, the drive data and
-//! commands, the SATA registers and wd(4)'s softc (M16a).
+//! `wd` is wd(4), the ATA disk of a wdc(4) channel, with `ata` (IDENTIFY, SET FEATURES) and
+//! `ata_wdc` (its transfers through the channel); `atareg`, `atavar`, `satareg` and `wdvar`
+//! are the IDENTIFY block, the drive data and commands, the SATA registers and wd(4)'s
+//! softc (M16a).
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/ata/ata.c
 pub mod ata;
+pub mod ata_wdc;
 pub mod atareg;
 pub mod atascsi;
 pub mod atavar;
 pub mod pmreg;
 pub mod satareg;
+pub mod wd;
 pub mod wdvar;
 /* </CODE> */
