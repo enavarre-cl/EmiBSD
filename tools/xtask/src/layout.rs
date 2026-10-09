@@ -31,7 +31,7 @@
 //! /* </TESTS> */
 //! ```
 //!
-//! [`check`] validates one file's zones and [`check_author`] its author block (N0b);
+//! [`check`] validates one file's zones and [`check_author`] its author block (the authorship rule);
 //! `cargo xtask lz check` runs both over the tree with the licence policy `lineage.toml` gives
 //! each path. Reading rule: `sed -n '/<CODE>/,/<\/CODE>/p' file.rs`.
 //!
@@ -56,7 +56,7 @@ pub(crate) enum Licenses {
     AuthorOnly,
 }
 
-/// The author's ISC block (N0b), as it sits in a LICENSES zone: the canonical text that
+/// The author's ISC block (the authorship rule of 2026-10-09), as it sits in a LICENSES zone: the canonical text that
 /// `.claude/rules/scope-and-stubs.md` quotes and `gen-syscalls` writes.
 pub(crate) const AUTHOR_BLOCK: &str = concat!(
     "/*\n",
@@ -230,7 +230,7 @@ fn licenses_zone(lines: &[&str]) -> Option<(usize, usize)> {
     Some((open, open + close))
 }
 
-/// Validate the author's block of one file (N0b). With `required` (what `lz check` passes), a
+/// Validate the author's block of one file (the authorship rule). With `required` (what `lz check` passes), a
 /// file without it is an error; without, only a misplaced or altered block is.
 pub(crate) fn check_author(rel: &str, src: &str, lic: Licenses, required: bool) -> Vec<String> {
     let mut errs = Vec::new();
@@ -244,7 +244,7 @@ pub(crate) fn check_author(rel: &str, src: &str, lic: Licenses, required: bool) 
             ));
         } else if required {
             errs.push(format!(
-                "{rel}: no <LICENSES> zone with the author's block (scope-and-stubs.md, N0b)"
+                "{rel}: no <LICENSES> zone with the author's block (scope-and-stubs.md, Authorship)"
             ));
         }
         return errs;
@@ -288,7 +288,7 @@ pub(crate) fn check_author(rel: &str, src: &str, lic: Licenses, required: bool) 
             } else if required {
                 errs.push(format!(
                     "{rel}: no author's block before the original notices (scope-and-stubs.md, \
-                     N0b)"
+                     Authorship)"
                 ));
             }
         }
@@ -297,7 +297,7 @@ pub(crate) fn check_author(rel: &str, src: &str, lic: Licenses, required: bool) 
 }
 
 /// `src` without an empty LICENSES zone (the markers and the blank line after them): before
-/// N0b a port of a C file without licence text could carry one, and LZ fills it with the
+/// the authorship rule a port of a C file without licence text could carry one, and LZ fills it with the
 /// author's block alone. `lz check` compares both sides through it.
 pub(crate) fn drop_empty_licenses_zone(src: &str) -> String {
     let lines: Vec<&str> = src.split_inclusive('\n').collect();

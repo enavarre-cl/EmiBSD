@@ -29,7 +29,7 @@ LZ ports OpenBSD incrementally, and this tree inherits its gaps. These rules kee
     when the C source has no licence text (the Rust file then carries only the author's block,
     below).
   - `LICENSE` lists the licence families present; a new family is added there in the same commit.
-- Authorship (the user's rule of 2026-10-09, milestone N0b): every `.rs` under `sys/` and
+- Authorship (the user's rule of 2026-10-09): every `.rs` under `sys/` and
   `tools/` carries, inside its `/* <LICENSES> */` zone, this ISC block, whole:
   ```
   /*

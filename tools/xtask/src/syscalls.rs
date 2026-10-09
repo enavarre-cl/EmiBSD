@@ -710,7 +710,7 @@ pub fn generate(root: &Path) -> Result<Vec<(&'static str, String)>> {
 }
 
 /// The generated source in the zones of `layout.rs`: the author's block alone in `<LICENSES>`
-/// (the C files carry no notice, `license = "none"` in lineage.toml; N0b), then all of the
+/// (the C files carry no notice, `license = "none"` in lineage.toml; the authorship rule), then all of the
 /// source in `<CODE>`. The C files' RCS ident lines are not carried over (decision 20,
 /// docs/PHASE2.md): the `//! Upstream:` banner names the pinned source.
 fn zoned(src: &str) -> String {

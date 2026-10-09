@@ -1,17 +1,17 @@
 # Status
 
-Milestone: **N0 (bootstrap) closing, N0b (authorship) under way**: the first `just ci` is green;
-N0b puts the author's ISC block in every `.rs`; `just ci-full`, `just diff-openbsd` and the
-baseline numbers close N0 on the tree with N0b. Updated: 2026-10-09.
+Milestone: **N0 (bootstrap) closing**: `just ci` green; the authorship rule (the author's ISC
+block first in every `.rs`, through LZ 44edb2c) is in and pushed; `just ci-full`, `just
+diff-openbsd` and the baseline numbers close N0. Updated: 2026-10-09.
 
 Done:
 - RCS ident lines dropped; `lineage.toml` 1:1 from `ports.toml`; `cargo xtask lz`, `unsafe-report --check`.
 - The first `just ci` green (67 smokes) after two xtask fixes (`lz check`, `gen-syscalls`).
+- The author's ISC block first in every `.rs` (LZ 44edb2c synced; `lz check` requires it).
 
 Next:
-- N0b (`lz check` accepts, then requires the block; applied by script); then N0's close:
-  `just ci-full` (after `just comp`), `just diff-openbsd`, the baseline in the JOURNAL.
-- N1 (the user's go of 2026-10-09): libkern done on `n1/libkern`, libz in progress; crypto after.
+- N0's close: `just comp` (paused), `just ci-full`, `just diff-openbsd`, the baseline in the JOURNAL.
+- N1 (the user's go of 2026-10-09): integrate `n1/libkern` and `n1/libz` (reviewed); then crypto.
 
 Unsafe (`cargo xtask unsafe-report`): kernel 8198 blocks, 1041 fn, 768 impl, 27 trait, 323 other; tests 816 more.
 

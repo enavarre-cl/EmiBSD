@@ -35,7 +35,7 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
   pinned commit, both taken after the RCS ident lines (`/* $OpenBSD: ... $ */`, `/* $NetBSD:
   ... $ */`) are stripped (`git hash-object --stdin` of the stripped text on each side). Those
   lines are removed from every native file at N0 (decision 20); the original `<LICENSES>`
-  blocks are never touched. The author's ISC block (N0b, `scope-and-stubs.md`) is removed from
+  blocks are never touched. The author's ISC block (`scope-and-stubs.md`, Authorship) is removed from
   the native side before the comparison, so a module that differs from LZ only by it stays
   `inherited`.
   The first commit that changes the file sets `status = "adapted"` or `"redesigned"` in the
@@ -79,7 +79,7 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
   change on the native items that own the code now (`lz-sync.md`).
 - Zone markers: `lz check` validates `/* <LICENSES> */`, `/* <CODE> */` and `/* <TESTS> */` as
   LZ's `ports check` does since M15. `<LICENSES>` is required in every `.rs` under `sys/` and
-  `tools/` and starts with the author's block (N0b): in a module with an `lz` list and a
+  `tools/` and starts with the author's block (`scope-and-stubs.md`): in a module with an `lz` list and a
   licensed C source the author's comes first, then that source's blocks, whole; with
   `license = "none"`, in
   an `[[extra]]` and in every file outside `lineage.toml` it holds the author's block alone.

@@ -313,7 +313,7 @@ pub(crate) fn strip_ident_lines(src: &str) -> String {
 }
 
 /// A module's text as `lz check` compares it with its LZ source: without the RCS ident lines
-/// (decision 20) and the author's block (N0b), and with the blank lines that start or end the
+/// (decision 20) and the author's block (the authorship rule), and with the blank lines that start or end the
 /// LICENSES zone dropped, and an empty LICENSES zone dropped. Applied to both sides.
 fn comparable(src: &str) -> String {
     drop_empty_licenses_zone(&trim_licenses_edges(&strip_author_block(

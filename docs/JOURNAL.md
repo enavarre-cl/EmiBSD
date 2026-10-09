@@ -20,7 +20,9 @@ Boundary: _(the `docs: N0 met` commit)_. Range `lz-origin..<hash>`.
 - Failed: _(filled at the close)_
 - Idioms: _(filled at the close)_
 - Rules: the governance rewrite (`CLAUDE.md`, `.claude/rules/`), decisions 16 to 20
-  (`docs/PHASE2.md`).
+  (`docs/PHASE2.md`); the authorship rule of 2026-10-09 (the author's ISC block first in every
+  `.rs`), first planned as a milestone N0b, then absorbed from LZ 44edb2c and pushed at once at
+  the user's request; the milestone was dropped once it was in.
 - LZ sync: `f5985f1d055a..44edb2c8323e`, 2 commits (the logo, the author's block): cherry-pick
   1, cherry-pick-conflicts 1, reimplemented 0.
 - Numbers: _(from the tools at the close: `cargo xtask unsafe-report`, `lz status`, the smoke

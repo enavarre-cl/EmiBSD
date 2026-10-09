@@ -50,7 +50,7 @@ text on top and tests at the bottom, and an agent that wants the code reads
 `sed -n '/<CODE>/,/<\/CODE>/p' file.rs`. The tests are inline in the same file, however long:
 the former `<name>/tests.rs` files (324 of them) became `#[cfg(test)] mod tests { .. }` in the
 TESTS zone, so the module path of every test (`crate::x::tests::name`) is unchanged and one file
-holds a module and its tests. Every LICENSES zone starts with the author's ISC block (N0b, the
+holds a module and its tests. Every LICENSES zone starts with the author's ISC block (the
 user's decision of 2026-10-09): before the original notices of a port, or alone in the ports whose
 C file has no licence text (or is generated, `license = "none"` in `lineage.toml`), the
 `[[extra]]` files and the files outside `lineage.toml`. One exception is written down: the test
