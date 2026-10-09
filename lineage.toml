@@ -2126,6 +2126,12 @@ lz = ["sys/dev/ic/mc6845reg.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ic/mpi.rs"
+lz = ["sys/dev/ic/mpi.rs"]
+status = "inherited"
+notes = "M16: mpi(4); criterion: QEMU's mptsas1068 disk mounted, both archs"
+
+[[module]]
 rust = "sys/dev/ic/mpireg.rs"
 lz = ["sys/dev/ic/mpireg.rs"]
 status = "inherited"
