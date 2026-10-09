@@ -25,7 +25,7 @@
 //! `virtio_pcireg`) is the virtio transport (`virtio* at pci?`), `nvme_pci` the NVM
 //! Express front-end (`nvme* at pci?`), `ahci_pci` the AHCI SATA front-end (`ahci* at
 //! pci?`), `siop_pci` (with `siop_pci_common`) the Symbios SCSI front-end (`siop* at
-//! pci?`) (M13); `xhci_pci` the xHCI front-end (`xhci* at
+//! pci?`) (M13); `mpi_pci` the LSI Fusion-MPT front-end (`mpi* at pci?`, M16a); `xhci_pci` the xHCI front-end (`xhci* at
 //! pci?`), `auich` the Intel ICH AC'97 audio controller (`auich* at pci?`), `azalia` (with
 //! `azalia_codec`) the HD Audio controller (`azalia* at pci?`) (M12); `puc` (with `pucvar`
 //! and `pucdata`) the "universal" communication card driver (`puc* at pci?`, M13); `if_vmx` (with
@@ -56,6 +56,7 @@ pub mod if_pcn;
 pub mod if_re_pci;
 pub mod if_vmx;
 pub mod if_vmxreg;
+pub mod mpi_pci;
 pub mod nvme_pci;
 pub mod ohci_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
