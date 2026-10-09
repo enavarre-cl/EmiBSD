@@ -37,6 +37,17 @@
 //! - The recipe's output goes to `target/smoke/RECIPE/log`; one line per recipe is printed
 //!   when it ends, and the whole log of every failed recipe once all have ended. The command
 //!   fails if any recipe failed.
+//! - A watchdog outside the recipe (the user's decision of 2026-10-09): every limit above
+//!   lives inside the recipe's own xtask process, so a process that hangs before it gets
+//!   there (an `xtask smoke` was once frozen in macOS's dynamic loader, `_dyld_start`, for
+//!   2 h 30 min, before `main` and so before QEMU) is stopped by nothing. `smoke-all` polls
+//!   each recipe once a second and stops it when it outlives its limit, the sum of its boots'
+//!   limits (`just --dry-run`: 180 s per `xtask smoke`, a `smoke2`'s `--timeout`) times the
+//!   scale, plus [`LIMIT_MARGIN`]; or when its log has not grown for [`QUIET_LIMIT`] (a
+//!   waiting boot prints `boot::Heartbeat`'s line once a minute, so a still log means a hung
+//!   process). Stopping kills the recipe's whole process tree (`just`, its shell, `cargo`,
+//!   xtask, QEMU, swtpm) with SIGKILL, appends the cause to the log, and reports the recipe as
+//!   `TIMEOUT`, a failure, while the others go on.
 //!
 //! The rest of what runs at once was made per run before: `smoke2`'s link ports are free
 //! ports asked of the system (and asked again if QEMU finds one taken), its VMs have their
@@ -45,13 +56,14 @@
 //! so a long one does not start last.
 
 use std::collections::VecDeque;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::Result;
 use crate::boot;
@@ -61,6 +73,17 @@ pub const DEFAULT_JOBS: usize = 4;
 
 /// The most recipes `-j` may run at once.
 pub const MAX_JOBS: usize = 32;
+
+/// Added to a recipe's summed boot limits before the watchdog stops it: what runs between
+/// the boots (`cargo` starting xtask, disk images, `nvme-root`, `e2fsck`).
+const LIMIT_MARGIN: Duration = Duration::from_secs(300);
+
+/// A recipe whose log has not grown for this long is stopped (the user's figure).
+const QUIET_LIMIT: Duration = Duration::from_secs(600);
+
+/// A recipe's boot limits when `just --dry-run` shows none (it failed, or the recipe boots
+/// through something else): one hour, before the scale.
+const UNKNOWN_BOOTS: Duration = Duration::from_secs(3600);
 
 /// `smoke-all`'s arguments: `-j N`, `--just PATH` and the recipe names, in any order.
 #[derive(Debug, PartialEq, Eq)]
@@ -106,6 +129,8 @@ pub fn parse_args<'a>(args: &[&'a str]) -> Result<Args<'a>> {
 struct Finished {
     recipe: String,
     ok: bool,
+    /// Stopped by the watchdog (`why` says which limit).
+    timeout: bool,
     seconds: f32,
     log: PathBuf,
     why: String,
@@ -140,7 +165,8 @@ pub fn smoke_all(root: &Path, jobs: usize, just_bin: &str, recipes: &[&str]) -> 
                 let Some(recipe) = next else {
                     break;
                 };
-                let done = run_recipe(&root, &base, &just_bin, &recipe, scale);
+                let limit = recipe_limit(&root, &just_bin, &recipe, scale);
+                let done = run_recipe(&root, &base, &just_bin, &recipe, scale, limit);
                 if tx.send(done).is_err() {
                     break;
                 }
@@ -155,7 +181,13 @@ pub fn smoke_all(root: &Path, jobs: usize, just_bin: &str, recipes: &[&str]) -> 
         count += 1;
         println!(
             "smoke-all: [{count:>2}/{total}] {} {:<16} {:>6.1}s{}",
-            if done.ok { "ok  " } else { "FAIL" },
+            if done.ok {
+                "ok  "
+            } else if done.timeout {
+                "TIMEOUT"
+            } else {
+                "FAIL"
+            },
             done.recipe,
             done.seconds,
             if done.ok {
@@ -241,15 +273,137 @@ fn sort_longest_first(v: &mut [(String, Option<f32>)]) {
     });
 }
 
-/// Runs `just --no-deps recipe` with its own run directory and log; never fails itself, the
-/// result says how the recipe ended.
-fn run_recipe(root: &Path, base: &Path, just_bin: &str, recipe: &str, scale: usize) -> Finished {
+/// The watchdog's limit for `recipe`: its boots' limits from `just --dry-run`
+/// ([`boot_limits`]) times `scale`, plus [`LIMIT_MARGIN`].
+fn recipe_limit(root: &Path, just_bin: &str, recipe: &str, scale: usize) -> Duration {
+    let shown = Command::new(just_bin)
+        .args(["--no-deps", "--dry-run", recipe])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .output();
+    let boots = match shown {
+        Ok(o) if o.status.success() => {
+            // `just` prints the commands of a dry run on stderr.
+            let text = String::from_utf8_lossy(&o.stderr).into_owned()
+                + &String::from_utf8_lossy(&o.stdout);
+            boot_limits(&text)
+        }
+        _ => None,
+    };
+    boots.unwrap_or(UNKNOWN_BOOTS) * u32::try_from(scale).unwrap_or(10) + LIMIT_MARGIN
+}
+
+/// The sum of the time limits of the boots in a recipe's commands: `boot::SMOKE_TIMEOUT` for
+/// each `xtask smoke`, its `--timeout` (or the same default) for each `xtask smoke2`. `None`
+/// when there is no boot.
+fn boot_limits(commands: &str) -> Option<Duration> {
+    let mut sum = Duration::ZERO;
+    let mut boots = 0;
+    for line in commands.lines() {
+        let mut words = line.split_whitespace();
+        let Some(cmd) = words
+            .by_ref()
+            .skip_while(|w| *w != "xtask")
+            .nth(1)
+            .filter(|c| *c == "smoke" || *c == "smoke2")
+        else {
+            continue;
+        };
+        let mut limit = boot::SMOKE_TIMEOUT;
+        if cmd == "smoke2" {
+            let mut rest = words;
+            while let Some(w) = rest.next() {
+                if w == "--timeout"
+                    && let Some(s) = rest.next().and_then(|v| v.parse::<u64>().ok())
+                {
+                    limit = Duration::from_secs(s);
+                }
+            }
+        }
+        sum += limit;
+        boots += 1;
+    }
+    (boots > 0).then_some(sum)
+}
+
+/// Why the watchdog stops a recipe that has run `elapsed` with a log still for `quiet`, if
+/// it does.
+fn watchdog(elapsed: Duration, quiet: Duration, limit: Duration) -> Option<String> {
+    if elapsed > limit {
+        Some(format!(
+            "over its limit of {}s (its boots' limits x the scale, + {}s)",
+            limit.as_secs(),
+            LIMIT_MARGIN.as_secs()
+        ))
+    } else if quiet >= QUIET_LIMIT {
+        Some(format!("its log has not grown for {}s", quiet.as_secs()))
+    } else {
+        None
+    }
+}
+
+/// `root` and every process below it in `table` (pid, parent pid pairs), parents first.
+fn descendants(table: &[(u32, u32)], root: u32) -> Vec<u32> {
+    let mut found = vec![root];
+    let mut i = 0;
+    while i < found.len() {
+        let parent = found[i];
+        for &(pid, ppid) in table {
+            if ppid == parent && !found.contains(&pid) {
+                found.push(pid);
+            }
+        }
+        i += 1;
+    }
+    found
+}
+
+/// SIGKILLs `root` and its whole process tree, read from `ps` once, parents first, so none
+/// of them starts another process meanwhile. A tree, not a process group: a recipe in a
+/// group of its own would no longer get the terminal's Ctrl-C.
+fn kill_tree(root: u32) {
+    let table: Vec<(u32, u32)> = Command::new("ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| {
+                    let mut w = l.split_whitespace();
+                    Some((w.next()?.parse().ok()?, w.next()?.parse().ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let pids: Vec<String> = descendants(&table, root)
+        .iter()
+        .map(u32::to_string)
+        .collect();
+    let _ = Command::new("kill")
+        .arg("-KILL")
+        .args(&pids)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Runs `just --no-deps recipe` with its own run directory and log, under the watchdog
+/// (`limit`, [`QUIET_LIMIT`]); never fails itself, the result says how the recipe ended.
+fn run_recipe(
+    root: &Path,
+    base: &Path,
+    just_bin: &str,
+    recipe: &str,
+    scale: usize,
+    limit: Duration,
+) -> Finished {
     let dir = base.join(recipe);
     let log = dir.join("log");
     let started = Instant::now();
     let finish = |ok: bool, why: String| Finished {
         recipe: recipe.to_string(),
         ok,
+        timeout: false,
         seconds: started.elapsed().as_secs_f32(),
         log: log.clone(),
         why,
@@ -257,15 +411,21 @@ fn run_recipe(root: &Path, base: &Path, just_bin: &str, recipe: &str, scale: usi
     if let Err(e) = fs::create_dir_all(&dir) {
         return finish(false, format!("{}: {e}", dir.display()));
     }
-    let out = match File::create(&log) {
+    let mut out = match File::create(&log) {
         Ok(f) => f,
         Err(e) => return finish(false, format!("{}: {e}", log.display())),
     };
+    let _ = writeln!(
+        out,
+        "smoke-all: watchdog: {recipe} stops after {}s, or {}s without output",
+        limit.as_secs(),
+        QUIET_LIMIT.as_secs()
+    );
     let err = match out.try_clone() {
         Ok(f) => f,
         Err(e) => return finish(false, format!("{}: {e}", log.display())),
     };
-    let status = Command::new(just_bin)
+    let spawned = Command::new(just_bin)
         .args(["--no-deps", recipe])
         .current_dir(root)
         .env(boot::RUN_DIR_ENV, &dir)
@@ -273,7 +433,39 @@ fn run_recipe(root: &Path, base: &Path, just_bin: &str, recipe: &str, scale: usi
         .stdin(Stdio::null())
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err))
-        .status();
+        .spawn();
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => return finish(false, format!("{just_bin}: {e}")),
+    };
+    let mut size = 0;
+    let mut grew = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Ok(s),
+            Ok(None) => {}
+            Err(e) => break Err(e),
+        }
+        let now = fs::metadata(&log).map(|m| m.len()).unwrap_or(0);
+        if now != size {
+            size = now;
+            grew = Instant::now();
+        }
+        if let Some(why) = watchdog(started.elapsed(), grew.elapsed(), limit) {
+            kill_tree(child.id());
+            let _ = child.wait();
+            if let Ok(mut f) = OpenOptions::new().append(true).open(&log) {
+                let _ = writeln!(
+                    f,
+                    "\nsmoke-all: watchdog: {recipe} {why}; killed its process tree"
+                );
+            }
+            let mut done = finish(false, why);
+            done.timeout = true;
+            return done;
+        }
+        thread::sleep(Duration::from_secs(1));
+    };
     let done = match status {
         Ok(s) if s.success() => finish(true, String::new()),
         Ok(s) => finish(false, format!("just exited with {s}")),
@@ -326,6 +518,85 @@ mod tests {
         assert!(parse_args(&["-j", "x"]).is_err());
         assert!(parse_args(&["-j"]).is_err());
         assert!(parse_args(&["--bogus", "smoke-a"]).is_err());
+    }
+
+    #[test]
+    fn boot_limits_add_up_the_recipes_boots() {
+        let cmds = "test -f target/userland/amd64/ramdisk.ffs || exit 1\n\
+            cargo xtask smoke --arch amd64 --send 'x --timeout 9\\n'\n\
+            cargo xtask nvme-root --arch amd64 target/x.img\n\
+            cargo xtask smoke2 --arch arm64 --timeout 400 --both-expect ok\n\
+            cargo xtask smoke2 --arch amd64\n";
+        // 180 (a smoke's --timeout-like text is not smoke2's flag) + 400 + 180.
+        assert_eq!(boot_limits(cmds), Some(Duration::from_secs(760)));
+        assert_eq!(boot_limits("cargo xtask smoke-all -j 4 smoke-a\n"), None);
+        assert_eq!(boot_limits("echo nothing\n"), None);
+    }
+
+    #[test]
+    fn watchdog_stops_on_the_limit_or_a_still_log() {
+        let s = Duration::from_secs;
+        assert_eq!(watchdog(s(100), s(30), s(500)), None);
+        assert_eq!(watchdog(s(500), s(599), s(500)), None);
+        let over = watchdog(s(501), s(0), s(500)).unwrap();
+        assert!(over.starts_with("over its limit of 500s"), "{over}");
+        let quiet = watchdog(s(700), s(600), s(9000)).unwrap();
+        assert_eq!(quiet, "its log has not grown for 600s");
+    }
+
+    #[test]
+    fn the_tree_is_the_root_and_everything_below_it_parents_first() {
+        // just 10 -> sh 11 -> cargo 12 -> xtask 13 -> qemu 14; 20 is a stranger.
+        let table = [
+            (14, 13),
+            (11, 10),
+            (20, 1),
+            (13, 12),
+            (12, 11),
+            (15, 13),
+            (10, 1),
+        ];
+        assert_eq!(descendants(&table, 10), [10, 11, 12, 13, 14, 15]);
+        assert_eq!(descendants(&table, 13), [13, 14, 15]);
+        assert_eq!(descendants(&table, 99), [99]);
+    }
+
+    #[test]
+    fn a_hung_recipe_is_killed_whole_and_reported_as_a_timeout() {
+        // A stand-in `just`: a shell whose child sleeps without a word, as the frozen xtask did.
+        let dir = std::env::temp_dir().join(format!("xtask-smokeall-wd-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let just = dir.join("fake-just");
+        fs::write(
+            &just,
+            "#!/bin/sh\necho started\nsleep 300 &\necho $! > \"$EMIBSD_RUN_DIR/child\"\nwait\n",
+        )
+        .unwrap();
+        Command::new("chmod").arg("+x").arg(&just).status().unwrap();
+        let done = run_recipe(
+            &dir,
+            &dir,
+            just.to_str().unwrap(),
+            "smoke-hang",
+            1,
+            Duration::from_secs(2),
+        );
+        assert!(!done.ok && done.timeout, "{}", done.why);
+        assert!(done.why.starts_with("over its limit of 2s"), "{}", done.why);
+        let log = fs::read_to_string(dir.join("smoke-hang/log")).unwrap();
+        assert!(
+            log.contains("smoke-all: watchdog: smoke-hang over its limit"),
+            "{log}"
+        );
+        // The sleeping grandchild went with it.
+        let child = fs::read_to_string(dir.join("smoke-hang/child")).unwrap();
+        let alive = Command::new("kill")
+            .args(["-0", child.trim()])
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(!alive.success(), "pid {} still alive", child.trim());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

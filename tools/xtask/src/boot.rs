@@ -117,6 +117,48 @@ pub(crate) fn time_limit(base: Duration) -> Duration {
     base * timeout_scale(std::env::var(TIMEOUT_SCALE_ENV).ok().as_deref())
 }
 
+/// How often a waiting boot says it is still running ([`Heartbeat`]).
+pub(crate) const HEARTBEAT: Duration = Duration::from_secs(60);
+
+/// One line every [`HEARTBEAT`] while a boot waits for QEMU, which otherwise prints nothing
+/// until it ends (a boot may take its limit times `$EMIBSD_TIMEOUT_SCALE`, minutes). So a
+/// run's log grows for as long as xtask itself is alive, and `smoke-all`'s watchdog can take a
+/// log that stays still for ten minutes as a hung recipe (`smokeall.rs`).
+pub(crate) struct Heartbeat {
+    started: Instant,
+    next: Duration,
+}
+
+impl Heartbeat {
+    pub(crate) fn new() -> Heartbeat {
+        Heartbeat {
+            started: Instant::now(),
+            next: HEARTBEAT,
+        }
+    }
+
+    /// Prints `xtask: NAME: still running after Ns, B serial bytes` when one is due.
+    pub(crate) fn tick(&mut self, name: &str, serial_bytes: usize) {
+        if let Some(line) = self.due(self.started.elapsed(), name, serial_bytes) {
+            println!("{line}");
+        }
+    }
+
+    /// The line due at `elapsed`, if any; the next one is due a whole [`HEARTBEAT`] later.
+    fn due(&mut self, elapsed: Duration, name: &str, serial_bytes: usize) -> Option<String> {
+        if elapsed < self.next {
+            return None;
+        }
+        while self.next <= elapsed {
+            self.next += HEARTBEAT;
+        }
+        Some(format!(
+            "xtask: {name}: still running after {}s, {serial_bytes} serial bytes",
+            elapsed.as_secs()
+        ))
+    }
+}
+
 /// The factor of [`time_limit`], from the variable's value; anything not in 1..=10 is 1.
 fn timeout_scale(value: Option<&str>) -> u32 {
     value
@@ -890,7 +932,9 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
     let mut next_send = 0;
     // Where in the transcript the next trigger is looked for: after the previous send.
     let mut search_from = 0;
+    let mut heartbeat = Heartbeat::new();
     let exit = loop {
+        heartbeat.tick(arch.name(), transcript.lock().map(|t| t.len()).unwrap_or(0));
         if let Some((after, text)) = sends.get(next_send).copied() {
             let found = transcript.lock().ok().and_then(|t| {
                 let s = String::from_utf8_lossy(&t[search_from.min(t.len())..]).into_owned();
@@ -1165,6 +1209,22 @@ mod tests {
         assert_eq!(timeout_scale(Some("0")), 1);
         assert_eq!(timeout_scale(Some("11")), 1);
         assert_eq!(timeout_scale(Some("1.5")), 1);
+    }
+
+    #[test]
+    fn heartbeat_is_due_once_a_minute() {
+        let mut h = Heartbeat::new();
+        let s = |n| Duration::from_secs(n);
+        assert_eq!(h.due(s(59), "amd64", 10), None);
+        assert_eq!(
+            h.due(s(60), "amd64", 10).as_deref(),
+            Some("xtask: amd64: still running after 60s, 10 serial bytes")
+        );
+        assert_eq!(h.due(s(61), "amd64", 10), None);
+        // A late poll prints one line, not one per minute missed.
+        assert!(h.due(s(250), "amd64", 99).is_some());
+        assert_eq!(h.due(s(299), "amd64", 99), None);
+        assert!(h.due(s(300), "amd64", 99).is_some());
     }
 
     #[test]

@@ -1959,6 +1959,24 @@ user's plan). The shape is one build phase, then one run phase:
 - Time limits (180 s per boot, or a recipe's `--timeout`) are multiplied by
   `EMIBSD_TIMEOUT_SCALE`, which `smoke-all` sets to N/2 rounded up (2 for N = 4): the VMs
   share the host's cores, and the limits are there to catch hangs. No expectation changes.
+- A watchdog outside each recipe (the user's decision of 2026-10-09). The limits above live
+  inside the recipe's xtask process, so a process that hangs before it gets to them is stopped
+  by nothing: in one `ci-full` run an `xtask smoke` of `smoke-softraid` sat in macOS's dynamic
+  loader (`_dyld_start`, before `main`, so QEMU never started) for 2 h 30 min while
+  `smoke-all` waited and the log stayed still. Now `smoke-all` polls every recipe once a
+  second and stops it when it runs longer than its limit, or when its log has not grown for
+  ten minutes. The limit is the sum of the recipe's boot limits, read from
+  `just --no-deps --dry-run <recipe>` (180 s per `xtask smoke`, a `smoke2`'s `--timeout`; an
+  hour when none shows), times the scale, plus five minutes for what runs between boots;
+  `smoke-boot`'s 16 boots give 101 min at N = 4, `smoke-ntfs`'s one boot 11 min. The log's
+  first line says both. For the still-log rule a waiting boot prints
+  `xtask: <arch>: still running after Ns, B serial bytes` once a minute (`boot::Heartbeat`,
+  also in `smoke2` and in the serial VMs of `install` and `diff-openbsd`), since a boot
+  otherwise prints nothing until it ends. Stopping a recipe SIGKILLs its whole process tree,
+  read from `ps` and killed parents first (`just`, its shell, `cargo`, xtask, QEMU, swtpm), not
+  a process group: in a group of its own a recipe would no longer get the terminal's Ctrl-C.
+  The cause goes at the end of the log, the recipe is reported `TIMEOUT` (a failure, its log
+  printed with the others'), the other recipes go on, and `smoke-all` exits non-zero.
 
 `JOBS=N just smoke` (or `just jobs=N smoke`, or `JOBS=N just ci`) picks another N; `JOBS=1`
 runs the recipes one after the other, still each in its own directory.

@@ -44,6 +44,7 @@ pub(crate) struct Vm {
     /// The transcript is written here every few seconds and when the VM is dropped.
     log: PathBuf,
     last_flush: Instant,
+    heartbeat: boot::Heartbeat,
 }
 
 /// What [`Vm::respond`] stops on.
@@ -92,6 +93,7 @@ impl Vm {
             cursor: 0,
             log,
             last_flush: Instant::now(),
+            heartbeat: boot::Heartbeat::new(),
         })
     }
 
@@ -123,8 +125,10 @@ impl Vm {
     }
 
     /// Whether QEMU has exited. (Also refreshes the log file now and then, so a long run
-    /// can be followed with `tail -f`.)
+    /// can be followed with `tail -f`, and prints `boot::Heartbeat`'s line once a minute.)
     pub(crate) fn exited(&mut self) -> bool {
+        let bytes = self.len();
+        self.heartbeat.tick(&self.name, bytes);
         if self.last_flush.elapsed() > Duration::from_secs(5) {
             self.last_flush = Instant::now();
             let _ = fs::write(&self.log, self.text());

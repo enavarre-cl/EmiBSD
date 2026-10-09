@@ -59,7 +59,14 @@ Four tiers. Every change lands with the tier it belongs to.
    through xtask (`EMIBSD_RUN_DIR` puts them in `target/smoke/<recipe>/`), never a shared
    path under `target/`; and depends on no other recipe's disks or order. A recipe that
    needs a fixed host port has it to itself; a time limit is not tightened to fit a quiet
-   machine (`EMIBSD_TIMEOUT_SCALE` scales them under parallel load).
+   machine (`EMIBSD_TIMEOUT_SCALE` scales them under parallel load). `smoke-all` also
+   watches each recipe from outside (the user's decision of 2026-10-09, after a recipe's
+   xtask hung in macOS's dynamic loader for 2 h 30 min, past every limit, since those live
+   inside it): a recipe over the sum of its boots' limits times the scale plus five minutes,
+   or whose log has not grown for ten minutes, has its whole process tree killed and is
+   reported `TIMEOUT`, a failure; the others go on and `smoke-all` exits non-zero. So a
+   waiting boot prints a line a minute (`boot::Heartbeat`), and a recipe step that runs for
+   minutes without output (none does yet) must print as it goes or it is taken for hung.
 4. **Differential tests** (M12+): `just diff-openbsd`, beside `ci`, not in it. The same
    scenarios on EmiBSD and on the OpenBSD snapshot of `tools/xtask/openbsd-snapshot.toml`
    (docs/ARCHITECTURE.md "diff-openbsd"). Run it before closing a milestone and after any

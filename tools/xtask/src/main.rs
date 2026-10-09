@@ -112,7 +112,8 @@
 //! current directory. The files a boot writes (the image, the EDK2 variable store, the
 //! persistent disks; `target/...` above) go to `$EMIBSD_RUN_DIR` instead of `target/` when it
 //! is set (`smoke-all` does, per recipe); `$EMIBSD_TIMEOUT_SCALE` (1 to 10) multiplies the
-//! time limits of `smoke` and `smoke2`.
+//! time limits of `smoke` and `smoke2`. While a boot waits it prints a line a minute
+//! (`boot::Heartbeat`), which `smoke-all`'s watchdog relies on (`smokeall.rs`).
 
 use std::fs;
 use std::path::{Path, PathBuf};

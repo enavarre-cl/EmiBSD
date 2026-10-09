@@ -381,7 +381,13 @@ fn run(boot: &Boot<'_>, plan: &Plan, ports: (u16, u16), last: bool) -> Result<Ou
 
     // Poll both VMs until both are done, one failed or the time is up.
     let mut failure: Option<String> = None;
+    let mut heartbeat = boot::Heartbeat::new();
     loop {
+        let bytes: usize = vms
+            .iter()
+            .map(|v| v.transcript.lock().map(|t| t.len()).unwrap_or(0))
+            .sum();
+        heartbeat.tick(&format!("{} a+b", arch.name()), bytes);
         for vm in &mut vms {
             if vm.done_at.is_some() {
                 continue;
