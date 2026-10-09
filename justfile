@@ -2257,7 +2257,7 @@ smoke-lpt: (build-amd64 "--features qemu,multiprocessor")
 
 # M16d: pcppi(4) and spkr(4), amd64 (the only GENERIC with them). QEMU's PC speaker is heard
 # through the `wav` backend (`--pcspk`, devices.rs: `-machine pcspk-audiodev`). First boot: the
-# shell writes BEL to /dev/ttyC0; wsdisplay's bell goes to the keyboard on its mux, pckbd(4),
+# shell writes BEL to /dev/ttyC0 (ksh's `print`; the ramdisk has no printf(1)); wsdisplay's bell goes to the keyboard on its mux, pckbd(4),
 # whose bell pcppi hooked up (pcppi_kbd_bell): counter 2 of the i8254 at the bell's pitch, gated
 # to the speaker for its period (400 Hz, 100 ms), and `--expect-tone` finds it in the file, as
 # OpenBSD 8.0 does on the same machine (diff-openbsd probe: 8170 loud samples). Second boot:
@@ -2265,7 +2265,7 @@ smoke-lpt: (build-amd64 "--features qemu,multiprocessor")
 # QEMU's `wav` backend writes through a 16 kB stdio buffer and the smoke kills QEMU once the
 # lines are seen, so the shell rings the bell ten times, 0.2 s apart, to have more than a buffer
 # of it in the file. Part of `smoke`.
-bell_session := 'for i in 1 2 3 4 5 6 7 8 9 10; do printf "\\007" > /dev/ttyC0; sleep 0.2; done; sleep 1; echo bell-$((40+2))\n'
+bell_session := 'for i in 1 2 3 4 5 6 7 8 9 10; do print -n "\\a" > /dev/ttyC0; sleep 0.2; done; sleep 1; echo bell-$((40+2))\n'
 spkr_session := 'echo cdefgab > /dev/speaker; echo spkr-rc-$?; sleep 1; echo spkr-$((40+2))\n'
 smoke-bell: (build-amd64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs || \
