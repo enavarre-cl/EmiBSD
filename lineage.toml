@@ -1256,8 +1256,42 @@ kind = "renamed"
 [[module]]
 rust = "sys/crypto/gmac.rs"
 lz = ["sys/crypto/gmac.rs"]
-status = "adapted"
-adapted_by = ["sys/crypto/aes.rs"]
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/gmac.rs::ghash_update_mi"
+native = ["GhashCtx::update_mi"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/gmac.rs::ghash_update"
+native = ["GhashCtx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/gmac.rs::AES_GMAC_Init"
+native = ["AesGmacCtx::init"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/gmac.rs::AES_GMAC_Setkey"
+native = ["AesGmacCtx::setkey"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/gmac.rs::AES_GMAC_Reinit"
+native = ["AesGmacCtx::reinit"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/gmac.rs::AES_GMAC_Update"
+native = ["AesGmacCtx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/gmac.rs::AES_GMAC_Final"
+native = ["AesGmacCtx::finalize"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/hmac.rs"
@@ -1544,7 +1578,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs", "sys/crypto/rijndael.rs", "sys/crypto/aes.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs", "sys/crypto/rijndael.rs", "sys/crypto/aes.rs", "sys/crypto/gmac.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"

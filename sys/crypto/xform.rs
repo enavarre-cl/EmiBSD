@@ -139,10 +139,7 @@ use super::cryptodev::{
 };
 use super::des_locl::DesKeySchedule;
 use super::ecb3_enc::des_ecb3_encrypt;
-use super::gmac::{
-    AES_GMAC_Final, AES_GMAC_Init, AES_GMAC_Reinit, AES_GMAC_Setkey, AES_GMAC_Update, AesGmacCtx,
-    GMAC_BLOCK_LEN, GMAC_DIGEST_LEN,
-};
+use super::gmac::{AesGmacCtx, GMAC_BLOCK_LEN, GMAC_DIGEST_LEN};
 use super::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
 use super::rijndael::RijndaelCtx;
 use super::rmd160::{RMD160_DIGEST_LENGTH, Rmd160Ctx};
@@ -751,14 +748,14 @@ hash_wrappers!(
 /// `AES_GMAC_Init` over the context enum.
 fn gmac_init(c: &mut AuthCtx) {
     let mut x = AesGmacCtx::default();
-    AES_GMAC_Init(&mut x);
+    x.init();
     *c = AuthCtx::AesGmac(x);
 }
 
 /// `AES_GMAC_Setkey` over the context enum.
 fn gmac_setkey(c: &mut AuthCtx, key: &[u8]) -> Result<(), Errno> {
     match c {
-        AuthCtx::AesGmac(x) => AES_GMAC_Setkey(x, key),
+        AuthCtx::AesGmac(x) => x.setkey(key),
         _ => bad_ctx("gmac"),
     }
 }
@@ -766,7 +763,7 @@ fn gmac_setkey(c: &mut AuthCtx, key: &[u8]) -> Result<(), Errno> {
 /// `AES_GMAC_Reinit` over the context enum.
 fn gmac_reinit(c: &mut AuthCtx, iv: &[u8]) {
     match c {
-        AuthCtx::AesGmac(x) => AES_GMAC_Reinit(x, iv),
+        AuthCtx::AesGmac(x) => x.reinit(iv),
         _ => bad_ctx("gmac"),
     }
 }
@@ -774,7 +771,10 @@ fn gmac_reinit(c: &mut AuthCtx, iv: &[u8]) {
 /// `AES_GMAC_Update` over the context enum.
 fn gmac_update(c: &mut AuthCtx, data: &[u8]) -> Result<(), Errno> {
     match c {
-        AuthCtx::AesGmac(x) => AES_GMAC_Update(x, data),
+        AuthCtx::AesGmac(x) => {
+            x.update(data);
+            Ok(())
+        }
         _ => bad_ctx("gmac"),
     }
 }
@@ -782,7 +782,9 @@ fn gmac_update(c: &mut AuthCtx, data: &[u8]) -> Result<(), Errno> {
 /// `AES_GMAC_Final` over the context enum.
 fn gmac_final(digest: &mut [u8], c: &mut AuthCtx) {
     match c {
-        AuthCtx::AesGmac(x) => AES_GMAC_Final(digest_out::<GMAC_DIGEST_LEN>(digest), x),
+        AuthCtx::AesGmac(x) => {
+            *digest_out::<GMAC_DIGEST_LEN>(digest) = core::mem::take(x).finalize();
+        }
         _ => bad_ctx("gmac"),
     }
 }

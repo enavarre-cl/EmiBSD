@@ -39,6 +39,7 @@
 //! `AES-GMAC` and `AES-GCM` ESP transforms (RFC 4106, 4543) use it through `xform.c`.
 //!
 //! Upstream: sys/crypto/gmac.h @ 3ce1f3f79392, sys/crypto/gmac.c @ 3ce1f3f79392
+//! LZ: sys/crypto/gmac.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module; `GHASH_CTX` is [`GhashCtx`] and
@@ -46,19 +47,38 @@
 //! - `ghash_update` is a `void (*)(GHASH_CTX *, uint8_t *, size_t)` global that machine
 //!   dependent code may override with an optimised routine (amd64 does with PCLMULQDQ,
 //!   `ghash_update_pclmul`, in `arch/amd64/amd64/aesni.c`, which is not ported). Here it is
-//!   the function [`ghash_update`], which is `ghash_update_mi`; the override waits for aesni.
+//!   the method [`GhashCtx::update`], which is `ghash_update_mi`; the override waits for
+//!   aesni.
 //! - `ghash_gfmul` and `ghash_update_mi` work on the 16-byte blocks as byte arrays. The C
 //!   casts the arrays to `uint32_t *` and uses the words only for the xors and as big-endian
 //!   words in the multiplication, so the results are the same.
 //! - `AES_GMAC_Setkey` returns `Result<(), Errno>` (`EINVAL` for an AES key of a size other
-//!   than 16, 24 or 32 bytes) where the C returns `void` and ignores `AES_Setkey`'s result;
-//!   `AES_GMAC_Update` returns `Result<(), Errno>` for the `int` that is always 0. The
-//!   arguments are slices for pointer-and-length pairs. `Final` wipes the keystream block with
-//!   `explicit_bzero`.
+//!   than 16, 24 or 32 bytes) where the C returns `void` and ignores `AES_Setkey`'s result.
+//!   The arguments are slices for pointer-and-length pairs. `Final` wipes the keystream block
+//!   with `explicit_bzero`.
+//!
+//! ## Redesign
+//! - The functions over a context are methods: `ghash_update_mi` and `ghash_update` are
+//!   [`GhashCtx::update_mi`] and [`GhashCtx::update`]; `AES_GMAC_Init`, `_Setkey`, `_Reinit`,
+//!   `_Update` and `_Final` are [`AesGmacCtx::init`], [`AesGmacCtx::setkey`],
+//!   [`AesGmacCtx::reinit`], [`AesGmacCtx::update`] and [`AesGmacCtx::finalize`] (LZ: free
+//!   functions with the context first). The framework's `Init`, `Setkey`, `Reinit`, `Update`,
+//!   `Final` order is unchanged, so keying stays a method on an initialised context.
+//! - `ghash_gfmul` returns the product (LZ: an `&mut` out parameter); `update` returns nothing
+//!   (LZ: `Result<(), Errno>` for the C's `int` that is always 0, which `xform.rs` still
+//!   reports); `finalize` consumes the context and returns the tag (LZ: an `&mut [u8; 16]` out
+//!   parameter and the context kept), and the context is wiped as it drops.
+//! - [`GhashCtx`] (the hash subkey `H = E(K, 0)` and the running hash) zeroes itself when
+//!   dropped, as the AES key in [`AesGmacCtx`] does (`docs/IDIOMS.md`); neither is `Copy` or
+//!   `PartialEq` any more.
+//! - Constant time: `ghash_gfmul` keeps the C's masks (each bit of `x` turned into an all-ones
+//!   or all-zero word, the reduction by the low bit of `V` likewise), with no branch on the
+//!   data or the key; the loops run over the 128 bit positions and the data length.
 
 use libkern::explicit_bzero;
 
 use super::aes::AesCtx;
+use super::wipe;
 use crate::sys::errno::Errno;
 
 /// `GMAC_BLOCK_LEN`.
@@ -69,8 +89,8 @@ pub const GMAC_DIGEST_LEN: usize = 16;
 /// `AESCTR_NONCESIZE`: bytes of salt at the end of the key material.
 const AESCTR_NONCESIZE: usize = 4;
 
-/// `GHASH_CTX`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// `GHASH_CTX`: the hash subkey and the running hash. Zeroed when dropped.
+#[derive(Clone, Debug, Default)]
 pub struct GhashCtx {
     /// `H`: hash subkey.
     pub h: [u8; GMAC_BLOCK_LEN],
@@ -80,7 +100,41 @@ pub struct GhashCtx {
     pub z: [u8; GMAC_BLOCK_LEN],
 }
 
-/// `AES_GMAC_CTX`.
+impl Drop for GhashCtx {
+    /// Wipes the subkey and the state (`docs/IDIOMS.md`: a key schedule is zeroed when
+    /// dropped).
+    fn drop(&mut self) {
+        explicit_bzero(&mut self.h);
+        explicit_bzero(&mut self.s);
+        explicit_bzero(&mut self.z);
+    }
+}
+
+impl GhashCtx {
+    /// `ghash_update_mi`: the machine independent GHASH update: absorbs the whole blocks of
+    /// `x` (a trailing partial block is ignored).
+    pub fn update_mi(&mut self, x: &[u8]) {
+        let mut y = self.z;
+
+        for blk in x.as_chunks::<GMAC_BLOCK_LEN>().0 {
+            let mut s = [0u8; GMAC_BLOCK_LEN];
+            for ((s, y), b) in s.iter_mut().zip(y).zip(blk) {
+                *s = y ^ b;
+            }
+            self.s = ghash_gfmul(&s, &self.h);
+            y = self.s;
+        }
+        self.z = self.s;
+    }
+
+    /// `ghash_update`: the GHASH update in use (see the deviations: always `update_mi`).
+    pub fn update(&mut self, x: &[u8]) {
+        self.update_mi(x);
+    }
+}
+
+/// `AES_GMAC_CTX`: an authentication in progress. Its key and hash state are zeroed when it
+/// drops.
 #[derive(Clone, Debug, Default)]
 pub struct AesGmacCtx {
     /// `ghash`.
@@ -91,12 +145,71 @@ pub struct AesGmacCtx {
     pub j: [u8; GMAC_BLOCK_LEN],
 }
 
-/// `ghash_gfmul`: computes a block multiplication in the GF(2^128).
-pub fn ghash_gfmul(
-    x: &[u8; GMAC_BLOCK_LEN],
-    y: &[u8; GMAC_BLOCK_LEN],
-    product: &mut [u8; GMAC_BLOCK_LEN],
-) {
+impl AesGmacCtx {
+    /// `AES_GMAC_Init`: clears the hash state and the counter block (not the key).
+    pub fn init(&mut self) {
+        wipe(&mut self.ghash.h);
+        wipe(&mut self.ghash.s);
+        wipe(&mut self.ghash.z);
+        wipe(&mut self.j);
+    }
+
+    /// `AES_GMAC_Setkey`: the AES key (16, 24 or 32 bytes) followed by the 4-byte salt;
+    /// `EINVAL` for another AES key size.
+    pub fn setkey(&mut self, key: &[u8]) -> Result<(), Errno> {
+        let klen = key.len();
+        if klen < AESCTR_NONCESIZE {
+            return Err(Errno::EINVAL);
+        }
+        let (aes_key, salt) = key.split_at(klen - AESCTR_NONCESIZE);
+        self.k = AesCtx::new(aes_key)?;
+
+        // copy out salt to the counter block
+        self.j[..AESCTR_NONCESIZE].copy_from_slice(salt);
+
+        // prepare a hash subkey
+        self.ghash.h = self.k.encrypt(&self.ghash.h);
+        Ok(())
+    }
+
+    /// `AES_GMAC_Reinit`: starts a message under the IV (8 bytes in IPsec), copied into the
+    /// counter block after the salt.
+    pub fn reinit(&mut self, iv: &[u8]) {
+        // copy out IV to the counter block
+        self.j[AESCTR_NONCESIZE..AESCTR_NONCESIZE + iv.len()].copy_from_slice(iv);
+    }
+
+    /// `AES_GMAC_Update`: authenticates `data`, zero-padding a last partial block.
+    pub fn update(&mut self, data: &[u8]) {
+        let (blocks, rest) = data.as_chunks::<GMAC_BLOCK_LEN>();
+
+        if !blocks.is_empty() {
+            self.ghash.update(blocks.as_flattened());
+        }
+        if !rest.is_empty() {
+            let mut blk = [0u8; GMAC_BLOCK_LEN];
+            blk[..rest.len()].copy_from_slice(rest);
+            self.ghash.update(&blk);
+        }
+    }
+
+    /// `AES_GMAC_Final`: the 16-byte tag: the hash xor the encryption of the counter block 1.
+    /// The context, keys included, is wiped as it drops.
+    pub fn finalize(mut self) -> [u8; GMAC_DIGEST_LEN] {
+        // do one round of GCTR
+        self.j[GMAC_BLOCK_LEN - 1] = 1;
+        let mut keystream = self.k.encrypt(&self.j);
+        let mut digest = [0u8; GMAC_DIGEST_LEN];
+        for ((d, s), k) in digest.iter_mut().zip(self.ghash.s).zip(keystream) {
+            *d = s ^ k;
+        }
+        explicit_bzero(&mut keystream);
+        digest
+    }
+}
+
+/// `ghash_gfmul`: the product of `x` and `y` in GF(2^128).
+pub fn ghash_gfmul(x: &[u8; GMAC_BLOCK_LEN], y: &[u8; GMAC_BLOCK_LEN]) -> [u8; GMAC_BLOCK_LEN] {
     let mut v = [0u32; 4];
     let mut z = [0u32; 4];
 
@@ -121,94 +234,11 @@ pub fn ghash_gfmul(
         v[0] = (v[0] >> 1) ^ (0xe1000000 & mask);
     }
 
+    let mut product = [0u8; GMAC_BLOCK_LEN];
     for (b, w) in product.as_chunks_mut::<4>().0.iter_mut().zip(z) {
         *b = w.to_be_bytes();
     }
-}
-
-/// `ghash_update_mi`: the machine independent GHASH update: absorbs the whole blocks of `x`
-/// (a trailing partial block is ignored).
-pub fn ghash_update_mi(ctx: &mut GhashCtx, x: &[u8]) {
-    let mut y = ctx.z;
-
-    for blk in x.as_chunks::<GMAC_BLOCK_LEN>().0 {
-        let mut s = [0u8; GMAC_BLOCK_LEN];
-        for i in 0..GMAC_BLOCK_LEN {
-            s[i] = y[i] ^ blk[i];
-        }
-        ghash_gfmul(&s, &ctx.h, &mut ctx.s);
-        y = ctx.s;
-    }
-    ctx.z = ctx.s;
-}
-
-/// `ghash_update`: the GHASH update in use (see the deviations: always `ghash_update_mi`).
-pub fn ghash_update(ctx: &mut GhashCtx, x: &[u8]) {
-    ghash_update_mi(ctx, x);
-}
-
-/// `AES_GMAC_Init`.
-#[allow(non_snake_case)] // the C name
-pub fn AES_GMAC_Init(ctx: &mut AesGmacCtx) {
-    ctx.ghash.h = [0; GMAC_BLOCK_LEN];
-    ctx.ghash.s = [0; GMAC_BLOCK_LEN];
-    ctx.ghash.z = [0; GMAC_BLOCK_LEN];
-    ctx.j = [0; GMAC_BLOCK_LEN];
-}
-
-/// `AES_GMAC_Setkey`: the AES key (16, 24 or 32 bytes) followed by the 4-byte salt.
-#[allow(non_snake_case)] // the C name
-pub fn AES_GMAC_Setkey(ctx: &mut AesGmacCtx, key: &[u8]) -> Result<(), Errno> {
-    let klen = key.len();
-    if klen < AESCTR_NONCESIZE {
-        return Err(Errno::EINVAL);
-    }
-    ctx.k = AesCtx::new(&key[..klen - AESCTR_NONCESIZE])?;
-
-    // copy out salt to the counter block
-    ctx.j[..AESCTR_NONCESIZE].copy_from_slice(&key[klen - AESCTR_NONCESIZE..]);
-
-    // prepare a hash subkey
-    ctx.ghash.h = ctx.k.encrypt(&ctx.ghash.h);
-    Ok(())
-}
-
-/// `AES_GMAC_Reinit`: starts a message under the 8-byte IV.
-#[allow(non_snake_case)] // the C name
-pub fn AES_GMAC_Reinit(ctx: &mut AesGmacCtx, iv: &[u8]) {
-    // copy out IV to the counter block
-    ctx.j[AESCTR_NONCESIZE..AESCTR_NONCESIZE + iv.len()].copy_from_slice(iv);
-}
-
-/// `AES_GMAC_Update`: authenticates `data`, zero-padding a last partial block.
-#[allow(non_snake_case)] // the C name
-pub fn AES_GMAC_Update(ctx: &mut AesGmacCtx, data: &[u8]) -> Result<(), Errno> {
-    let len = data.len();
-    let mut blk = [0u8; GMAC_BLOCK_LEN];
-
-    if len > 0 {
-        let plen = len % GMAC_BLOCK_LEN;
-        if len >= GMAC_BLOCK_LEN {
-            ghash_update(&mut ctx.ghash, &data[..len - plen]);
-        }
-        if plen != 0 {
-            blk[..plen].copy_from_slice(&data[len - plen..]);
-            ghash_update(&mut ctx.ghash, &blk);
-        }
-    }
-    Ok(())
-}
-
-/// `AES_GMAC_Final`: the 16-byte tag: the hash xor the encryption of the counter block 1.
-#[allow(non_snake_case)] // the C name
-pub fn AES_GMAC_Final(digest: &mut [u8; GMAC_DIGEST_LEN], ctx: &mut AesGmacCtx) {
-    // do one round of GCTR
-    ctx.j[GMAC_BLOCK_LEN - 1] = 1;
-    let mut keystream = ctx.k.encrypt(&ctx.j);
-    for i in 0..GMAC_DIGEST_LEN {
-        digest[i] = ctx.ghash.s[i] ^ keystream[i];
-    }
-    explicit_bzero(&mut keystream);
+    product
 }
 /* </CODE> */
 
@@ -234,21 +264,19 @@ mod tests {
         let mut material = key.to_vec();
         material.extend_from_slice(&iv[..4]);
 
-        AES_GMAC_Init(&mut ctx);
-        assert_eq!(AES_GMAC_Setkey(&mut ctx, &material), Ok(()));
-        AES_GMAC_Reinit(&mut ctx, &iv[4..]);
-        assert_eq!(AES_GMAC_Update(&mut ctx, aad), Ok(()));
-        assert_eq!(AES_GMAC_Update(&mut ctx, ct), Ok(()));
+        ctx.init();
+        assert_eq!(ctx.setkey(&material), Ok(()));
+        ctx.reinit(&iv[4..]);
+        ctx.update(aad);
+        ctx.update(ct);
 
         // The length block: the bit lengths, big-endian, in the low word of each half.
         let mut blk = [0u8; GMAC_BLOCK_LEN];
         blk[4..8].copy_from_slice(&((aad.len() * 8) as u32).to_be_bytes());
         blk[12..16].copy_from_slice(&((ct.len() * 8) as u32).to_be_bytes());
-        assert_eq!(AES_GMAC_Update(&mut ctx, &blk), Ok(()));
+        ctx.update(&blk);
 
-        let mut out = [0u8; GMAC_DIGEST_LEN];
-        AES_GMAC_Final(&mut out, &mut ctx);
-        out
+        ctx.finalize()
     }
 
     fn k128() -> Vec<u8> {
@@ -355,39 +383,88 @@ mod tests {
         let mut one = [0u8; 16];
         one[0] = 0x80;
         let x: [u8; 16] = hexn("0388dace60b6a392f328c2b971b2fe78");
-        let mut out = [0u8; 16];
-        ghash_gfmul(&x, &one, &mut out);
-        assert_eq!(out, x);
-        ghash_gfmul(&one, &x, &mut out);
-        assert_eq!(out, x);
+        assert_eq!(ghash_gfmul(&x, &one), x);
+        assert_eq!(ghash_gfmul(&one, &x), x);
         // And 0 * x is 0; the product commutes.
-        ghash_gfmul(&[0; 16], &x, &mut out);
-        assert_eq!(out, [0; 16]);
+        assert_eq!(ghash_gfmul(&[0; 16], &x), [0; 16]);
         let y: [u8; 16] = hexn("66e94bd4ef8a2c3b884cfa59ca342b2e");
-        let (mut xy, mut yx) = ([0u8; 16], [0u8; 16]);
-        ghash_gfmul(&x, &y, &mut xy);
-        ghash_gfmul(&y, &x, &mut yx);
-        assert_eq!(xy, yx);
+        assert_eq!(ghash_gfmul(&x, &y), ghash_gfmul(&y, &x));
         // The test case 2 hash: H = E(K, 0) = 66e94bd4ef8a2c3b884cfa59ca342b2e and the ciphertext
         // block c: GHASH(c || len) = c*H^2 + len*H; the first step c * H is
         // 5e2ec746917062882c85b0685353deb7 (the intermediate value of the spec's table).
-        ghash_gfmul(&hexn("0388dace60b6a392f328c2b971b2fe78"), &y, &mut out);
+        let out = ghash_gfmul(&hexn("0388dace60b6a392f328c2b971b2fe78"), &y);
         assert_eq!(out.to_vec(), hex("5e2ec746917062882c85b0685353deb7"));
     }
 
     #[test]
     fn bad_key_sizes_are_rejected() {
         let mut ctx = AesGmacCtx::default();
-        AES_GMAC_Init(&mut ctx);
+        ctx.init();
         // 4 bytes of salt after an AES key of 16, 24 or 32: the other lengths are errors.
         for len in [0usize, 3, 4, 19, 21, 27, 31, 37, 40] {
             assert_eq!(
-                AES_GMAC_Setkey(&mut ctx, &std::vec![0u8; len]),
+                ctx.setkey(&std::vec![0u8; len]),
                 Err(Errno::EINVAL),
                 "{len}"
             );
         }
-        assert_eq!(AES_GMAC_Setkey(&mut ctx, &[0u8; 20]), Ok(()));
+        assert_eq!(ctx.setkey(&[0u8; 20]), Ok(()));
+    }
+
+    /// xorshift64: the property tests' generator.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    fn bytes(st: &mut u64, n: usize) -> Vec<u8> {
+        (0..n).map(|_| next(st) as u8).collect()
+    }
+
+    #[test]
+    fn whole_block_splits_and_flipped_bits() {
+        // `update` pads each call's partial block, so the data may be split anywhere on a block
+        // boundary without changing the tag; and every single flipped bit of the key material,
+        // the IV or the data changes it.
+        let mut st = 0x5851_f42d_4c95_7f2du64;
+        for i in 0..40 {
+            let key = bytes(&mut st, [16, 24, 32][i % 3]);
+            let iv = bytes(&mut st, 12);
+            let len = (next(&mut st) % 80) as usize;
+            let data = bytes(&mut st, len);
+            let whole = tag(&key, &iv, &data, &[]);
+
+            let cut = 16 * (next(&mut st) as usize % (data.len() / 16 + 1));
+            let mut ctx = AesGmacCtx::default();
+            let mut material = key.clone();
+            material.extend_from_slice(&iv[..4]);
+            ctx.init();
+            assert_eq!(ctx.setkey(&material), Ok(()));
+            ctx.reinit(&iv[4..]);
+            ctx.update(&data[..cut]);
+            ctx.update(&data[cut..]);
+            let mut blk = [0u8; GMAC_BLOCK_LEN];
+            blk[4..8].copy_from_slice(&((data.len() * 8) as u32).to_be_bytes());
+            ctx.update(&blk);
+            assert_eq!(ctx.finalize(), whole, "cut at {cut} of {}", data.len());
+
+            let bit = next(&mut st) as usize;
+            let mut k2 = key.clone();
+            let at = (bit / 8) % k2.len();
+            k2[at] ^= 1 << (bit % 8);
+            assert_ne!(tag(&k2, &iv, &data, &[]), whole);
+            let mut iv2 = iv.clone();
+            iv2[(bit / 8) % 12] ^= 1 << (bit % 8);
+            assert_ne!(tag(&key, &iv2, &data, &[]), whole);
+            if !data.is_empty() {
+                let mut d2 = data.clone();
+                let at = (bit / 8) % d2.len();
+                d2[at] ^= 1 << (bit % 8);
+                assert_ne!(tag(&key, &iv, &d2, &[]), whole);
+            }
+        }
     }
 }
 /* </TESTS> */
