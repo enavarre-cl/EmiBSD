@@ -47,6 +47,7 @@
 //! iic(4) stack);
 //! M16b: `ehci* at pci?` and `usb* at ehci?`, `uhci* at pci?` and `usb* at uhci?`, `ohci* at pci?` and `usb* at ohci?`,
 //! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?`;
+//! M16d: `viomb* at virtio?` and `viornd* at virtio?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -55,7 +56,7 @@
 //! attach below it) and `agintc` (`device agintc: fdt`, whose ITS `agintcmsi` attaches
 //! below it). Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
-//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `ehci*`, `uhci*`, `ohci*`, `azalia*`, `ahci*`, `nvme*`, `ppb*`,
+//! `vioblk*`, `viomb*`, `viornd*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `ehci*`, `uhci*`, `ohci*`, `azalia*`, `ahci*`, `nvme*`, `ppb*`,
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
 //! ...), `ahci*` at `fdt?`, `ehci*` at `acpi?` and `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
@@ -118,6 +119,8 @@ use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
+use crate::dev::pv::viomb::{VIOMB_CA, VIOMB_CD};
+use crate::dev::pv::viornd::{VIORND_CA, VIORND_CD};
 use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
@@ -313,9 +316,9 @@ const NFREE: usize = 8;
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    71
+    73
 } else {
-    70
+    72
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -1132,7 +1135,31 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_UCOMBUS,
         0,
     ),
-    // 70: cpu* at mainbus? (GENERIC.MP)
+    // 70: viomb* at virtio? (M16d)
+    Cfdata::new(
+        &VIOMB_CA,
+        &VIOMB_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 71: viornd* at virtio? (M16d)
+    Cfdata::new(
+        &VIORND_CA,
+        &VIORND_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 72: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
     // The free slots.

@@ -2779,6 +2779,18 @@ lz = ["sys/dev/pv/vioblkreg.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/pv/viomb.rs"
+lz = ["sys/dev/pv/viomb.rs"]
+status = "inherited"
+notes = "M16d: license: BSD-2 (NetBSD, two notices kept whole); the whole file: viomb_ca/cd, match, attach (inflate and deflate queues, dma_alloc'ed frame number array and its map, taskq viomb, the desired/current sensors), viomb_config_change, viomb_worker, viomb_inflate (uvm_pglistalloc below dma_constraint), viomb_deflate, viomb_read_config, viomb_vq_dequeue (Result), viomb_inflate_intr, viomb_deflate_intr; the C's quirks kept: sensors lag the last request, a short deflate records i - 1 entries, request lengths are nvpages words; deviations: VIRTIO_PAGE_SIZE == PAGE_SIZE a const assertion (the C's #error), viomb_nvpages host-tested, VIOMBDEBUG behind VIRTIO_DEBUG; viomb* at virtio? on both archs; smoke-virtio: balloon 384 of 512 MB then 512 give raw0=134217728/raw1=133169152 then 0/1048576, as OpenBSD 8.0 does at the same scale"
+
+[[module]]
+rust = "sys/dev/pv/viornd.rs"
+lz = ["sys/dev/pv/viornd.rs"]
+status = "inherited"
+notes = "M16d: the whole file: viornd_ca/cd (CD_COCOVM), match, attach (dma_alloc'ed 16-byte buffer, its map, one queue, the first request a tick after attach), viornd_vq_done (the words to enqueue_randomness, the next request 15 << shift s later unless VIORND_ONESHOT), viornd_tick; deviations: the interval and word count are host-tested functions (viornd_interval, viornd_nwords), VIORND_DEBUG messages behind a const; gap: enqueue_randomness is rnd.c's M3 placeholder (unported! entropy pool), so the words reach no pool; viornd* at virtio? on both archs; smoke-virtio (amd64: viornd0 at virtio2, irq69/viornd0:1 1 as on OpenBSD 8.0; arm64: viornd0 at virtio28, one interrupt)"
+
+[[module]]
 rust = "sys/dev/pv/vioscsi.rs"
 lz = ["sys/dev/pv/vioscsi.rs"]
 status = "inherited"
@@ -3429,6 +3441,12 @@ status = "inherited"
 rust = "sys/kern/clock_subr.rs"
 lz = ["sys/kern/clock_subr.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/kern/dma_alloc.rs"
+lz = ["sys/kern/dma_alloc.rs"]
+status = "inherited"
+notes = "M16d: the whole file, for viornd(4) and viomb(4): dmapools (dma16 .. dma65536 on kp_dma_contig), dma_alloc_init (called by uvm_init after kmeminit, replacing its unported! report), dma_alloc_index, dma_alloc, dma_free; deviations: dmanames is a compile-time table of &'static str (pool_init keeps the name), dma_alloc_index returns Option, dma_alloc Option<NonNull<u8>>; the earlier ports that stood in malloc(9) for it (scsiconf, scsi_ioctl, atascsi, ahci, sd, cd, softraid_crypto) keep their notes; host tests (bucket choice, names, a PR_ZERO item round trip)"
 
 [[module]]
 rust = "sys/kern/exec_elf.rs"
@@ -6143,7 +6161,7 @@ notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONC
 rust = "sys/uvm/uvm_init.rs"
 lz = ["sys/uvm/uvm_init.rs"]
 status = "inherited"
-notes = "uvm_init: page system, uvm_map_init, uvm_km_init (kernel_map), uvmfault_init, pmap_init, kmeminit, uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init, the bestfit switch of kernel_map (kmem_map waits for kmeminit's suballoc) run; uvm_km_page_init, dma_alloc_init, uvm_km_page_lateinit and uvm_init_percpu's counters report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; vm_min_kernel_address is a runtime value (amd64 shifts the kernel map above its direct map) and uvm_maxkaddr is raised to it before uvm_km_init; M11a: uvm_init_percpu calls uvm_anon_init_percpu; uvmexp_counters stay static atomics, so counters_alloc_ncpus (now in subr_percpu.rs) is not called: a deviation, no longer reported"
+notes = "uvm_init: page system, uvm_map_init, uvm_km_init (kernel_map), uvmfault_init, pmap_init, kmeminit, uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init, the bestfit switch of kernel_map (kmem_map waits for kmeminit's suballoc) run; uvm_km_page_init, uvm_km_page_lateinit and uvm_init_percpu's counters report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; vm_min_kernel_address is a runtime value (amd64 shifts the kernel map above its direct map) and uvm_maxkaddr is raised to it before uvm_km_init; M11a: uvm_init_percpu calls uvm_anon_init_percpu; uvmexp_counters stay static atomics, so counters_alloc_ncpus (now in subr_percpu.rs) is not called: a deviation, no longer reported; M16d: dma_alloc_init runs (kern/dma_alloc.rs)"
 
 [[module]]
 rust = "sys/uvm/uvm_io.rs"

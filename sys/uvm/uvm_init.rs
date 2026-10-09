@@ -61,6 +61,7 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::kern::dma_alloc::dma_alloc_init;
 use crate::kern::kern_malloc::kmeminit;
 use crate::machine::{Machine, Pmap, VmParam};
 use crate::sys::types::{Vaddr, Vsize};
@@ -135,7 +136,7 @@ pub fn uvm_init() {
     kmeminit();
 
     // step 7.5: init the dma allocator, which is backed by pools.
-    let _ = unported!("dma_alloc_init");
+    dma_alloc_init();
 
     // Init all pagers and the pager_map.
     uvm_pager_init();

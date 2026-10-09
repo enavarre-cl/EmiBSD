@@ -23,11 +23,14 @@
 //! (`dev/pci/virtio_pci.rs`, `dev/fdt/virtio_mmio.rs`) and the device drivers share;
 //! `if_vio` is the network driver, `vio(4)`; `vioblk` the block driver, `vioblk(4)` (a SCSI
 //! adapter), with its header `vioblkreg`, and `vioscsi` the SCSI host adapter driver,
-//! `vioscsi(4)`, with `vioscsireg`.
+//! `vioscsi(4)`, with `vioscsireg`; `viornd` the entropy source, `viornd(4)`, and `viomb`
+//! the memory balloon, `viomb(4)`.
 
 pub mod if_vio;
 pub mod vioblk;
 pub mod vioblkreg;
+pub mod viomb;
+pub mod viornd;
 pub mod vioscsi;
 pub mod vioscsireg;
 pub mod virtio;

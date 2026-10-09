@@ -120,7 +120,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
+    "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm smoke-virtio " + \
     "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom " + \
     "smoke-pckbc smoke-eap smoke-lpt"
 
@@ -2852,6 +2852,42 @@ smoke-tpm: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --expect 'tpm0 at acpi0 TPM_ 2.0 (TIS) addr 0xfed40000/0x5000, device 0x00011014 rev 0x1'
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --tpm crb {{tpm_check}} \
         --expect 'tpm0 at acpi0 TPM_ 2.0 (CRB) addr 0xfed40000/0x1000, device 0x00000000 rev 0x0'
+
+# M16d: viornd(4) and viomb(4), both archs: QEMU's virtio entropy device and memory balloon
+# (`--virtio-rng --balloon`, hwopts.rs; virtio-*-pci on amd64, virtio-mmio on arm64, found
+# there before the disks, so the virtioN numbers differ per arch). viornd asks for 16 bytes one
+# tick after its attach and gets one interrupt (as OpenBSD 8.0: `irq69/viornd0:1 1` on amd64;
+# the next request is 15 << 5 s away); its words reach enqueue_randomness, still rnd.c's M3
+# placeholder (dev/rnd.rs). The balloon is driven from QEMU's monitor (`--monitor-after`):
+# `balloon 384` of the smokes' 512 MB, then `balloon 512`; ten seconds after each,
+# hw.sensors.viomb0 shows what OpenBSD 8.0 shows on the same machine (the C's sensors lag the
+# last 1 MB request: 128 MB desired, 127 MB current; then 0 and 1 MB), and `vmstat -s`'s
+# pages free drop by at least the 32768 pages the balloon took and come back. Part of `smoke`.
+virtio_check := "--virtio-rng --balloon --expect-ramdisk --until-seen " + disk_login + " " + \
+    "--send-after '# ' --send 'pf() { vmstat -s | while read n a b; do [ $a$b = pagesfree ] && echo $n; done; }; " + \
+    "f0=$(pf); echo m16d-inflate-$((40+1))\\n' " + \
+    "--monitor-after 'm16d-inflate-41' --monitor 'balloon 384' " + \
+    "--send-after 'm16d-inflate-41' --send 'sleep 10; f1=$(pf); " + \
+    "echo inflated: $(sysctl -n hw.sensors.viomb0.raw0) / $(sysctl -n hw.sensors.viomb0.raw1); " + \
+    "[ $((f0-f1)) -ge 32768 ] && echo m16d-took-$((32000+768)); echo m16d-deflate-$((40+2))\\n' " + \
+    "--monitor-after 'm16d-deflate-42' --monitor 'balloon 512' " + \
+    "--send-after 'm16d-deflate-42' --send 'sleep 10; f2=$(pf); " + \
+    "echo deflated: $(sysctl -n hw.sensors.viomb0.raw0) / $(sysctl -n hw.sensors.viomb0.raw1); " + \
+    "[ $((f2-f1)) -ge 32512 ] && echo m16d-gave-$((32000+512)); " + \
+    "vmstat -i | while read n t r; do echo intr $n $t; done; echo m16d-done-$((40+3))\\n' " + \
+    "--expect 'inflated: 134217728 (desired) / 133169152 (current)' --expect 'm16d-took-32768' " + \
+    "--expect 'deflated: 0 (desired) / 1048576 (current)' --expect 'm16d-gave-32512' --expect 'm16d-done-43'"
+
+smoke-virtio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-virtio: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{virtio_check}} \
+        --expect 'viornd0 at virtio2' --expect 'virtio2: msix per-VQ' \
+        --expect 'viomb0 at virtio3' --expect 'virtio3: msix shared' --expect 'intr irq69/viornd0:1 1'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{virtio_check}} \
+        --expect 'virtio27 at mainbus0: Virtio Memory Balloon Device' --expect 'viomb0 at virtio27' \
+        --expect 'virtio28 at mainbus0: Virtio Entropy Device' --expect 'viornd0 at virtio28' \
+        --expect 'intr irq76/virtio28 1'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
