@@ -92,7 +92,9 @@ const ARCH_OPTIONS: &[(&str, &str, &[&str])] = &[("ntfs", "option_ntfs", &["amd6
 /// `machine_x86`: the x86 machine headers (`struct pic`, `intr_establish`, the inside of
 /// `struct bus_dma_tag` and its `_bus_dma*` functions, the direct map, `bios_memmap`) that
 /// the x86-only `dev/acpi/acpidmar.c` uses directly, and the idle hooks, `cpu_info`
-/// members and `monitor`/`mwait` of `dev/acpi/acpicpu_x86.c` (`sys/machine/x86.rs`).
+/// members and `monitor`/`mwait` of `dev/acpi/acpicpu_x86.c`, and the `BUS_DMA_24BIT`,
+/// `<machine/ioctl_fd.h>` and NVRAM of `dev/isa/isadma.c`, `fdc.c` and `fd.c` (M16a)
+/// (`sys/machine/x86.rs`).
 const ARCH_MACHINE: &[(&str, &[&str])] = &[
     ("machine_pci_chipset", &["arm64"]),
     ("machine_x86", &["amd64"]),

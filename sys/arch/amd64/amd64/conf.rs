@@ -57,7 +57,8 @@
 //! - A slot whose driver is not ported holds `cdev_notdef()` (`bdev_notdef()`), where the C
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
-//!   drivers present are `wd` (0 block, 3 character, M16a; `NWD` is 0 on arm64), `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
+//!   drivers present are `wd` (0 block, 3 character, M16a; `NWD` is 0 on arm64), `fd` (2
+//!   block, 9 character, M16a), `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmouse` (68, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
 //!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `ucom` (66, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`), `viocon` (94, M16d; `NVIOCON` 0 unless feature `viocon`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
@@ -85,6 +86,7 @@ use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
 use crate::dev::ic::lpt::{lptclose, lptopen, lptwrite};
 use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
+use crate::dev::isa::fd::{fdclose, fddump, fdioctl, fdopen, fdread, fdsize, fdstrategy, fdwrite};
 use crate::dev::isa::spkr::{spkrclose, spkrioctl, spkropen, spkrwrite};
 use crate::dev::midi::{NMIDI, midiclose, midiioctl, midikqfilter, midiopen, midiread, midiwrite};
 use crate::dev::pv::viocon::{
@@ -166,6 +168,9 @@ pub const NWSDISPLAY: i32 = 1;
 /// `NWD`: config(8)'s count for `wd*` (`wd.h`): `wd*` at `wdc?` and `pciide?` in GENERIC (M16a).
 pub const NWD: i32 = 1;
 
+/// `NFD`: config(8)'s count for `fd*` (`fd.h`): `fd* at fdc?` in GENERIC (M16a).
+pub const NFD: i32 = 1;
+
 /// An empty block slot.
 const fn bnotdef() -> Cell<Bdevsw> {
     Cell::new(bdev_notdef())
@@ -183,7 +188,10 @@ pub static BDEVSW: Devsw<Bdevsw, 20> = Devsw([
         NWD, wdopen, wdclose, wdstrategy, wdioctl, wddump, wdsize,
     )),
     bnotdef(), // 1: swap pseudo-device (sw: uvm_swap.c, not ported)
-    bnotdef(), // 2: floppy diskette (fd: not ported)
+    // 2: floppy diskette
+    Cell::new(bdev_disk_init(
+        NFD, fdopen, fdclose, fdstrategy, fdioctl, fddump, fdsize,
+    )),
     bnotdef(), // 3
     // 4: SCSI disk
     Cell::new(bdev_disk_init(
@@ -265,7 +273,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     Cell::new(cdev_tty_init(
         NCOM, comopen, comclose, comread, comwrite, comioctl, comstop, comtty,
     )),
-    cnotdef(), // 9: floppy disk (fd: not ported)
+    // 9: floppy disk
+    Cell::new(cdev_disk_init(
+        NFD, fdopen, fdclose, fdread, fdwrite, fdioctl,
+    )),
     cnotdef(), // 10 vmm (not ported)
     cnotdef(), // 11: Sony CD-ROM
     // 12: frame buffers, etc.

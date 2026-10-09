@@ -323,6 +323,12 @@ status = "inherited"
 license = "none"
 
 [[module]]
+rust = "sys/arch/amd64/include/ioctl_fd.rs"
+lz = ["sys/arch/amd64/include/ioctl_fd.rs"]
+status = "inherited"
+notes = "M16a: FD_FORMAT_VERSION, FD_MAX_NSEC, struct fd_formb (repr(C); its format_info union is the structured member, raw[] being only a view of it; the fd_formb_* macros are field names), struct fd_idfield_data, struct fd_form_data, struct fd_type (repr(C), name a pointer to a static NUL-terminated string, FdType::name reads it; Sync), FD_FORM/FD_GTYPE/FD_STYPE/FD_GOPTS/FD_SOPTS, FDOPT_NORETRY; the FDC_*KBPS duplicates are fdreg.h's, re-exported; sizes asserted at compile time; reached by generic code through machine::x86"
+
+[[module]]
 rust = "sys/arch/amd64/include/isa_machdep.rs"
 lz = ["sys/arch/amd64/include/isa_machdep.rs"]
 status = "inherited"
@@ -2250,6 +2256,12 @@ status = "inherited"
 notes = "M16c: ne2000_softc (repr(C), dp8390 softc first); the sc_type enum is Ne2000Type"
 
 [[module]]
+rust = "sys/dev/ic/nec765reg.rs"
+lz = ["sys/dev/ic/nec765reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: main status bits, ST0-ST3 bits with their %b strings as byte strings for Bitmask, NE7CMD_* commands, NE7_SPEC_1/NE7_SPEC_2 as const fn ne7_spec_1/ne7_spec_2; host tests of the %b output (OpenBSD 8.0's \"st0 21<seek_cmplt>\") and the specify bytes, test-ref of every define"
+
+[[module]]
 rust = "sys/dev/ic/ns16550reg.rs"
 lz = ["sys/dev/ic/ns16550reg.rs"]
 status = "inherited"
@@ -2420,6 +2432,30 @@ status = "inherited"
 rust = "sys/dev/isa/com_isa.rs"
 lz = ["sys/dev/isa/com_isa.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/isa/fd.rs"
+lz = ["sys/dev/isa/fd.rs"]
+status = "inherited"
+notes = "M16a: fd_types[] (FD_TYPES), struct fd_softc (Cells, Softc, FdDrivechain adapter), fd_ca/fd_cd, fdgetdisklabel (a local label installed by fdopen/DIOCRLDINFO, as wd.rs), fdprobe, fdattach (DKF_NOLABELREAD, disk_attach, bufq_init, the three timeouts), fdactivate, fd_nvtotype, fd_dev_to_type, fdstrategy, fdstart, fdfinish, fdread/fdwrite (physio), fd_set_motor, fd_motor_off, fd_motor_on, fdopen, fdclose, fdsize (-1), fddump (ENXIO), fdintr (the switch with its doseek/doio labels as an inner loop; isadma_start's result ignored as in C), fdtimeout, fdretry, fdioctl (MTIOCTOP, DIOC*, FD_FORM, FD_GTYPE, FD_GOPTS, FD_SOPTS; FD_STYPE ENOTTY as in C; addr the ioctl's kernel copy), fdformat (B_FORMAT = B_XXX; the request read unaligned); unit lookups panic where the C dereferences NULL; DIAGNOSTIC checks under feature diagnostic; cfg machine_x86; bdevsw 2/cdevsw 9 on amd64 (NFD 1); smoke-fd"
+
+[[module]]
+rust = "sys/dev/isa/fdc.rs"
+lz = ["sys/dev/isa/fdc.rs"]
+status = "inherited"
+notes = "M16a: fdc_ca/fdc_cd, fdcprobe (reset + specify; the C's leak of the first mapping when the second fails kept), fdcattach (isa_intr_establish at IPL_BIO, kthread_create_deferred), fdc_create_kthread, fdcattach_deferred (NVRAM_DISKETTE through mc146818_read on fdc0, fd_nvtotype for drives 0-1, config_found for drives 0-3, kthread_exit), fddprint, fdcresult and out_fdc (Result: the C's -1 is Err(EIO), fdcresult's count the Ok value), fdcstart, fdcstatus (%b through Bitmask), fdcpseudointr, fdcintr (NFD > 0: fdintr); DIAGNOSTIC checks under feature diagnostic; cfg machine_x86 (the NVRAM read and struct fd_type are x86 items, reached through machine::x86)"
+
+[[module]]
+rust = "sys/dev/isa/fdlink.rs"
+lz = ["sys/dev/isa/fdlink.rs"]
+status = "inherited"
+notes = "M16a: enum fdc_state and enum fdc_type as i32 constants (fdtimeout steps the state with ++), struct fdc_fdlink (sc_fd[] as Cell<Option<&FdSoftc>>, sc_drives a TailqHead over fd.rs's FdDrivechain), struct fdc_softc (Cells, Softc; the sc_link union is the disk link alone: struct ft_softc exists nowhere in the tree), struct fdc_attach_args; the prototypes are fdc.c's and fd.c's; cfg machine_x86 (struct fd_type is x86's <machine/ioctl_fd.h>)"
+
+[[module]]
+rust = "sys/dev/isa/fdreg.rs"
+lz = ["sys/dev/isa/fdreg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: the register offsets keep their lower-case names (fdout, fdsts, fddata, fdctl, fdin; non_upper_case_globals allowed), FDO_*, FDC_*KBPS, FDI_DCHG, FDC_NPORT, FDCTL_NPORT, FDC_MAXIOSIZE; FDO_MOEN/FDUNIT/FDTYPE/FDPART as const fn fdo_moen/fdunit/fdtype/fdpart, FD_BSIZE(fd) as fd_bsize of the type's size code; nec765reg.h re-exported as the C includes it; host test of the minor-number macros, test-ref"
 
 [[module]]
 rust = "sys/dev/isa/isa.rs"

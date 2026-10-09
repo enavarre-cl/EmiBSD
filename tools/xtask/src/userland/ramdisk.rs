@@ -98,6 +98,9 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 /// - IDE disks (`wd`, M16a), made by `devices()` from `WD_UNITS` the same way: block `wd` 0
 ///   (`bdev_disk_init(NWD,wd)`), character 3, `wd0a`..`wd0p` and `rwd0a`..`rwd0p` for
 ///   `wd0`..`wd3` (`MAKEDEV all`'s; `dodisk wd $U 0 3`);
+/// - the floppy (`fd`, M16a, amd64): block 2 (`bdev_disk_init(NFD,fd)`), character 9,
+///   `fd0a`, `fd0b`, `fd0c`, `fd0i` and `rfd0a`..`rfd0i`, minors 0, 1, 2 and 8 (`MAKEDEV`'s
+///   `fd*` for `fd0`, the ramdisk target's), mode 0640, group `operator`;
 /// - `bio` is major 79 (`bio` 79 / 79: `/dev/bio`, `MAKEDEV` makes it 0600), minor 0;
 /// - `fuse` is major 92 (`cdev_fuse_init`, 277 / 227: `/dev/fuse0`, cloning, the one node
 ///   libfuse opens; `MAKEDEV`'s `_mcdev(fuse, ...)` makes it 0600), minor 0;
@@ -158,6 +161,17 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("lpt0", 'c', 16, 0, 0o600, "wheel"),
     // M16d: spkr(4) (`MAKEDEV`'s `speaker`: `M speaker c 27 0 600`; amd64's cdevsw 27).
     ("speaker", 'c', 27, 0, 0o600, "wheel"),
+    // M16a: fd(4)'s first drive (`MAKEDEV`'s `fd*` for `fd0`: `n=$((U*128 + typnum*64))`,
+    // `M fd0a b 2 $n`, `fd0b` n+1, `fd0c` n+2, `fd0i` n+8, and `rfd0*` on character 9;
+    // amd64's bdevsw 2 and cdevsw 9, which arm64's leave unconfigured).
+    ("fd0a", 'b', 2, 0, 0o640, "operator"),
+    ("fd0b", 'b', 2, 1, 0o640, "operator"),
+    ("fd0c", 'b', 2, 2, 0o640, "operator"),
+    ("fd0i", 'b', 2, 8, 0o640, "operator"),
+    ("rfd0a", 'c', 9, 0, 0o640, "operator"),
+    ("rfd0b", 'c', 9, 1, 0o640, "operator"),
+    ("rfd0c", 'c', 9, 2, 0o640, "operator"),
+    ("rfd0i", 'c', 9, 8, 0o640, "operator"),
     ("usb0", 'c', 61, 0, 0o640, "wheel"),
     // M16b: `uhid` 62 (`MAKEDEV`'s `_mcdev(uhid, uhid*, uhid, {-major_uhid_c-}, 600)`, whose
     // target lists units 0 to 7). `ugen` 63 is made by `devices()`.
@@ -1342,6 +1356,14 @@ mod tests {
                 .iter()
                 .any(|d| d.0 == "rd0a" && d.1 == 'b' && (d.2, d.3) == (17, 0))
         );
+    }
+
+    #[test]
+    fn fd_nodes_follow_makedev() {
+        let find = |n: &str| DEVICES.iter().find(|d| d.0 == n).map(|d| (d.1, d.2, d.3));
+        assert_eq!(find("fd0c"), Some(('b', 2, 2)));
+        assert_eq!(find("rfd0c"), Some(('c', 9, 2)));
+        assert_eq!(find("fd0i"), Some(('b', 2, 8)));
     }
 
     #[test]

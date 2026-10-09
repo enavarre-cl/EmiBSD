@@ -61,7 +61,8 @@
 //! `pcppi0 at isa?` and `spkr0 at pcppi?` (M16d),
 //! `viomb* at virtio?` and `viornd* at virtio?` (M16d), and with the cargo feature `viocon`
 //! the commented-out `#viocon* at virtio?` (M16d; `docs/ARCHITECTURE.md`, "Cargo features"),
-//! `isadma0 at isa?` (M16a),
+//! `isadma0 at isa?`, `fdc0 at isa? port 0x3f0 irq 6 drq 2` and `fd* at fdc? flags 0x00`
+//! (M16a; `#fdc1 at isa? port 0x370` stays commented out, as in GENERIC),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -73,7 +74,7 @@
 //! pckbc at isa on q35, `pckbc_acpi.c` is not ported, ...); every device at `iic?` (`spdmem*`,
 //! `lm*`, ... are not ported: the scan prints what it finds as not configured), the other
 //! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
-//! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`fdc0`, `wdc0` and `wdc1` (`disable`), the sensors, ...), `wd* at wdc?` (no `wdc` parent
+//! `amdpcib?` and `tcpcib?`, and every other device at `isa?` ( `wdc0` and `wdc1` (`disable`), the sensors, ...), `wd* at wdc?` (no `wdc` parent
 //! is configured), `pciide* at jmb?` (jmb(4) is not ported), `atapiscsi* at pciide?`
 //! (atapiscsi(4) is not ported); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re, vmx, pcn, ne, fxp and dc (`rl* at pci?` among them: QEMU's rtl8139 is
@@ -127,6 +128,8 @@ use crate::dev::ic::siop::SIOP_CD;
 use crate::dev::ic::vga::VGA_CD;
 use crate::dev::ipmi::{IPMI_CA, IPMI_CD};
 use crate::dev::isa::com_isa::COM_ISA_CA;
+use crate::dev::isa::fd::{FD_CA, FD_CD};
+use crate::dev::isa::fdc::{FDC_CA, FDC_CD};
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
 use crate::dev::isa::isadma::{ISADMA_CA, ISADMA_CD};
 use crate::dev::isa::lpt_isa::LPT_ISA_CA;
@@ -279,6 +282,18 @@ const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
 /// `loc[]` of `isadma0 at isa?`: every locator at its `files.isa` default (M16a).
 const LOC_ISADMA: &[i64] = &[-1, 0, -1, 0, -1, -1, -1];
+/// `loc[]` of `fdc0 at isa? port 0x3f0 irq 6 drq 2` (M16a).
+const LOC_FDC0: &[i64] = &[0x3f0, 0, -1, 0, 6, 2, -1];
+
+/// `pv[]` for children of `fdc0` (`cfdata[103]`, M16a).
+const PV_FDC: &[i16] = &[103];
+
+/// `loc[]` of `fd* at fdc? flags 0x00`: `drive = -1` (`dev/isa/files.isa`: `device fdc
+/// {[drive = -1]}`).
+const LOC_FDC_UNK: &[i64] = &[-1];
+
+/// `cf_locnames` of an entry at `fdc`: `drive`.
+const LN_FDC: i32 = 46;
 /// `loc[]` of `lpt0 at isa? port 0x378 irq 7` (M16d).
 const LOC_LPT0: &[i64] = &[0x378, 0, -1, 0, 7, -1, -1];
 
@@ -450,10 +465,10 @@ const LN_ATA: i32 = 43;
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 103 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
+/// `cfdata[]`: 105 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
 /// and one more with `viocon`.
 const NCFDATA: usize =
-    103 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
+    105 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
 /// (`machine::autoconf::ioconf_mut`).
@@ -1606,7 +1621,31 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_ISA,
         0,
     ),
-    // 103: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
+    // 103: fdc0 at isa? port 0x3f0 irq 6 drq 2 (M16a)
+    Cfdata::new(
+        &FDC_CA,
+        &FDC_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_FDC0,
+        0,
+        PV_ISA,
+        LN_ISA,
+        0,
+    ),
+    // 104: fd* at fdc? flags 0x00 (M16a)
+    Cfdata::new(
+        &FD_CA,
+        &FD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_FDC_UNK,
+        0x00,
+        PV_FDC,
+        LN_FDC,
+        0,
+    ),
+    // 105: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
     #[cfg(feature = "viocon")]
     Cfdata::new(
         &VIOCON_CA,
@@ -1619,7 +1658,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 104 (103 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 106 (105 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
@@ -1759,8 +1798,8 @@ pub static LOCNAMES: [&[u8]; 26] = [
 
 /// `locnamp[]`: one run of indices into `LOCNAMES` per locator attribute, each ended by `-1`
 /// (`config(8)` writes one per parent device; `mkioconf.c`'s XXX asks for this compression).
-pub static LOCNAMP: [i16; 46] = [
+pub static LOCNAMP: [i16; 48] = [
     -1, 0, -1, 1, 2, -1, 3, 4, 5, 6, 7, 8, 9, -1, 10, 11, -1, 3, 12, 13, 14, 15, 16, -1, 17, -1, 3,
-    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1, 23, -1, 24, 25, -1,
+    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1, 23, -1, 24, 25, -1, 25, -1,
 ];
 /* </CODE> */

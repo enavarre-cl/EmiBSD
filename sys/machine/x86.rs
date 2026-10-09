@@ -42,6 +42,12 @@
 //! `dev/ipmi.c`'s x86 part (`ipmi_probe`, amd64's mainbus, M16e) reads SMBIOS's IPMI device
 //! information with `bios.c`'s `smbios_find_table` and `struct smbtable`
 //! (`<machine/smbiosvar.h>`).
+//!
+//! `dev/isa/isadma.c`, `fdc.c` and `fd.c` (isadma(4), fdc(4), fd(4), M16a) are configured
+//! only on x86: isadma's maps use `BUS_DMA_24BIT`, fd(4)'s densities and format requests are
+//! `<machine/ioctl_fd.h>`'s, and fdc(4) reads the diskette types from the RTC's NVRAM
+//! (`mc146818_read`, `<i386/isa/nvram.h>`) under `#if defined(__i386__) ||
+//! defined(__amd64__)`.
 
 pub use crate::arch::current::amd64::bios::smbios_find_table;
 pub use crate::arch::current::amd64::bus_dma::{
@@ -71,11 +77,20 @@ pub use crate::arch::current::include::cpufunc::{
 };
 pub use crate::arch::current::include::i82093var::APIC_INT_VIA_MSG;
 pub use crate::arch::current::include::intrdefs::IST_PULSE;
+pub use crate::arch::current::include::ioctl_fd::{
+    FD_FORM, FD_FORMAT_VERSION, FD_GOPTS, FD_GTYPE, FD_MAX_NSEC, FD_SOPTS, FD_STYPE, FDOPT_NORETRY,
+    FdFormData, FdFormb, FdIdfieldData, FdType,
+};
 pub use crate::arch::current::include::pci_machdep::PciIntrHandle;
 pub use crate::arch::current::include::pic::{PIC_MSI, Pic};
 pub use crate::arch::current::include::pio::inb;
 pub use crate::arch::current::include::psl::PSL_I;
 pub use crate::arch::current::include::smbiosvar::Smbtable;
 pub use crate::arch::current::include::specialreg::TPM_ARAT;
+pub use crate::arch::current::isa::clock::mc146818_read;
+pub use crate::arch::current::isa::nvram::{
+    NVRAM_DISKETTE, NVRAM_DISKETTE_12M, NVRAM_DISKETTE_144M, NVRAM_DISKETTE_360K,
+    NVRAM_DISKETTE_720K, NVRAM_DISKETTE_NONE, NVRAM_DISKETTE_TYPE5, NVRAM_DISKETTE_TYPE6,
+};
 pub use crate::arch::current::pci::acpipci::acpipci_domain_to_seg;
 /* </CODE> */

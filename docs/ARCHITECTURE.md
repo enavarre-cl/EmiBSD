@@ -218,7 +218,11 @@ host tests. `dev/acpi/acpicpu_x86.c` (acpicpu(4), M16e) is written against it th
 sets the machine's `cpu_idle_cycle_fcn` and `cpu_suspend_cycle_fcn`, links itself into
 `struct cpu_info` (`ci_acpicpudev`, `ci_mwait`) and idles with `hlt`, `inb` or
 `monitor`/`mwait`; its `_CST`/`_PSS` parsing and its choice of an idle state are plain
-functions with host tests.
+functions with host tests. M16a's ISA floppy stack is the third user: isadma(4)'s maps ask
+for `BUS_DMA_24BIT` (its attachment carries the cfg, the rest of `isadma.c` is generic), and
+fdc(4), fd(4) and `fdlink.h` are gated as whole modules, since nearly every item names
+`<machine/ioctl_fd.h>`'s `struct fd_type` or the RTC's NVRAM diskette byte; their register
+headers (`fdreg.h`, `nec765reg.h`) compile everywhere with their host tests.
 
 ## Dependencies
 

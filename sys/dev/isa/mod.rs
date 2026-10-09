@@ -20,9 +20,18 @@
 //! The ISA bus: OpenBSD `sys/dev/isa/`: the bus itself (`isa.c`, `isavar.h`), the register
 //! map amd64's timer code needs (`isareg.h`) and `com(4)`'s attachment (`com_isa.c`),
 //! `pckbc(4)`'s (`pckbc_isa.c`). M16a adds the DMA controller (`isadma.c`, `isadmareg.h`,
-//! `isadmavar.h`).
+//! `isadmavar.h`) and the floppy (`fdc.c`, `fd.c`, `fdlink.h`, `fdreg.h`); all but `fdreg.h`,
+//! like `isadma`'s attachment, exist where cfg `machine_x86` is set
+//! (`machine::x86`).
 
 pub mod com_isa;
+#[cfg(machine_x86)]
+pub mod fd;
+#[cfg(machine_x86)]
+pub mod fdc;
+#[cfg(machine_x86)]
+pub mod fdlink;
+pub mod fdreg;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/isa/isa.c
 pub mod isa;
 pub mod isadma;

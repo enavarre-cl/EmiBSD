@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-wd smoke-mpi smoke-sdmmc smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-vmwpvs smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-wd smoke-fd smoke-mpi smoke-sdmmc smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-vmwpvs smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm smoke-virtio smoke-viogpu " + \
@@ -1573,6 +1573,32 @@ smoke-wd: (build-amd64 "--features qemu,multiprocessor")
         --expect "pciide0: channel 1 ignored (disabled)" \
         --expect '/dev/rwd0a: ' --expect "wd-written-42" --expect "m16a-wd-42" --expect "wd-cmp-42" \
         --expect "1048576 bytes transferred"
+
+# M16a: isadma(4), fdc(4) and fd(4) on QEMU's ISA floppy controller (`--floppy`,
+# tools/xtask/src/storage.rs: an `isa-fdc` on q35's LPC bus with a 1.44 MB drive B holding a
+# FAT12 image with M16A-FD.TXT), amd64 only (arm64 GENERIC has no ISA bus). OpenBSD 8.0 on the
+# same QEMU: `isadma0 at isa0`, `fdc0 at isa0 port 0x3f0/6 irq 6 drq 2`, `fd0 at fdc0 drive 1:
+# 1.44MB 80 cyl, 2 head, 18 sec`; mount_msdos(8) of /dev/fd0c lists and reads the note; a raw
+# read of 10 x 18 KB fails with `fd0c: hard error reading fsbn 32 of 0-35 (st0 21<seek_cmplt>
+# st1 0 st2 0 cyl 1 head 0 sec 1)` and dd's Input/output error, as there (an external bug:
+# QEMU's fdc sets SEEK END when a read ends a cylinder). Drive 0's probe fails on QEMU, so the
+# drive is drive 1. Part of `smoke`.
+smoke-fd: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-fd: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --floppy fd-amd64.img \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount_msdos /dev/fd0c /mnt && ls -l /mnt && cat /mnt/* && umount /mnt && echo fd-read-$((40+2))\n' \
+        --send-after '# ' --send 'dd if=/dev/rfd0c of=/dev/null bs=18k count=10; echo fd-dd-$((40+2))\n' \
+        --expect "isadma0 at isa0" \
+        --expect "fdc0 at isa0 port 0x3f0/6 irq 6 drq 2" \
+        --expect "fd0 at fdc0 drive 1: 1.44MB 80 cyl, 2 head, 18 sec" \
+        --expect "-rw-r--r--  1 root  wheel  11 Jan  1  1970 M16A-FD.TXT" \
+        --expect "m16a-fd-42" --expect "fd-read-42" \
+        --expect "fd0c: hard error reading fsbn 32 of 0-35 (st0 21<seek_cmplt> st1 0 st2 0 cyl 1 head 0 sec 1)" \
+        --expect "dd: /dev/rfd0c: Input/output error" --expect "0+0 records in" \
+        --expect "fd-dd-42"
 
 # M16a: mpi(4) on QEMU's LSI SAS1068 (`--mptsas`, `tools/xtask/src/storage.rs`: the adapter
 # after every other device and a fresh zeroed 64 MiB `scsi-hd` at target 0), both archs.

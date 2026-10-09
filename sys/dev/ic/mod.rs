@@ -51,6 +51,7 @@ pub mod mpivar;
 pub mod ne2000;
 pub mod ne2000reg;
 pub mod ne2000var;
+pub mod nec765reg;
 pub mod ns16550reg;
 pub mod nvme;
 pub mod nvmeio;
