@@ -137,6 +137,7 @@ use super::cryptodev::{
     CRYPTO_SHA2_512_HMAC, HMAC_MD5_BLOCK_LEN, HMAC_RIPEMD160_BLOCK_LEN, HMAC_SHA1_BLOCK_LEN,
     HMAC_SHA2_256_BLOCK_LEN, HMAC_SHA2_384_BLOCK_LEN, HMAC_SHA2_512_BLOCK_LEN,
 };
+use super::des_locl::DesKeySchedule;
 use super::ecb3_enc::des_ecb3_encrypt;
 use super::gmac::{
     AES_GMAC_Final, AES_GMAC_Init, AES_GMAC_Reinit, AES_GMAC_Setkey, AES_GMAC_Update, AesGmacCtx,
@@ -145,7 +146,6 @@ use super::gmac::{
 use super::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
 use super::rijndael::{RijndaelCtx, rijndael_decrypt, rijndael_encrypt, rijndael_set_key};
 use super::rmd160::{RMD160_DIGEST_LENGTH, Rmd160Ctx};
-use super::set_key::des_set_key;
 use super::sha1::{SHA1_DIGEST_LENGTH, Sha1Ctx};
 use super::sha2::{
     SHA256_DIGEST_LENGTH, SHA384_DIGEST_LENGTH, SHA512_DIGEST_LENGTH, Sha256Ctx, Sha384Ctx,
@@ -226,7 +226,7 @@ pub enum Kschedule {
     #[default]
     None,
     /// 3DES: the three DES key schedules (384 bytes in the C).
-    Des3([[u32; 32]; 3]),
+    Des3([DesKeySchedule; 3]),
     /// Blowfish (a 4 KiB context, boxed so that the enum stays small).
     Blf(Box<BlfCtx>),
     /// CAST-128.
@@ -330,7 +330,7 @@ fn digest_out<const N: usize>(digest: &mut [u8]) -> &mut [u8; N] {
 }
 
 impl Kschedule {
-    fn des3(&mut self) -> &mut [[u32; 32]; 3] {
+    fn des3(&mut self) -> &mut [DesKeySchedule; 3] {
         match self {
             Kschedule::Des3(c) => c,
             _ => bad_ctx("3des"),
@@ -386,9 +386,8 @@ impl Kschedule {
 fn des3_encrypt(key: &mut Kschedule, blk: &mut [u8]) {
     let ks = key.des3();
     let mut input = [0u8; 8];
-    let mut out = [0u8; 8];
     input.copy_from_slice(&blk[..8]);
-    des_ecb3_encrypt(&input, &mut out, &ks[0], &ks[1], &ks[2], true);
+    let out = des_ecb3_encrypt(&input, &ks[0], &ks[1], &ks[2], true);
     blk[..8].copy_from_slice(&out);
 }
 
@@ -396,9 +395,8 @@ fn des3_encrypt(key: &mut Kschedule, blk: &mut [u8]) {
 fn des3_decrypt(key: &mut Kschedule, blk: &mut [u8]) {
     let ks = key.des3();
     let mut input = [0u8; 8];
-    let mut out = [0u8; 8];
     input.copy_from_slice(&blk[..8]);
-    des_ecb3_encrypt(&input, &mut out, &ks[2], &ks[1], &ks[0], false);
+    let out = des_ecb3_encrypt(&input, &ks[2], &ks[1], &ks[0], false);
     blk[..8].copy_from_slice(&out);
 }
 
@@ -407,13 +405,12 @@ fn des3_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
     if key.len() < 24 {
         return Err(Errno::EINVAL);
     }
-    let mut ks = [[0u32; 32]; 3];
-    for (i, s) in ks.iter_mut().enumerate() {
+    let schedule = |i: usize| {
         let mut k = [0u8; 8];
         k.copy_from_slice(&key[8 * i..8 * i + 8]);
-        des_set_key(&k, s)?;
-    }
-    *sched = Kschedule::Des3(ks);
+        DesKeySchedule::new(&k)
+    };
+    *sched = Kschedule::Des3([schedule(0)?, schedule(1)?, schedule(2)?]);
     Ok(())
 }
 

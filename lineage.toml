@@ -1135,17 +1135,22 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/des_locl.rs"
 lz = ["sys/crypto/des_locl.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/crypto/ecb3_enc.rs"
 lz = ["sys/crypto/ecb3_enc.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/crypto/ecb_enc.rs"
 lz = ["sys/crypto/ecb_enc.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/ecb_enc.rs::des_encrypt2"
+native = ["DesKeySchedule::encrypt2"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/gmac.rs"
@@ -1220,7 +1225,12 @@ kind = "renamed"
 [[module]]
 rust = "sys/crypto/set_key.rs"
 lz = ["sys/crypto/set_key.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/set_key.rs::des_set_key"
+native = ["DesKeySchedule::new"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/sha1.rs"
@@ -1407,7 +1417,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"

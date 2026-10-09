@@ -69,49 +69,51 @@
 //! `xform.c`.
 //!
 //! Upstream: sys/crypto/ecb3_enc.c @ 3ce1f3f79392
+//! LZ: sys/crypto/ecb3_enc.rs@f5985f1d055a
 //!
 //! ## Deviations
-//! - The blocks are `&DesCblock` and `&mut DesCblock` (the in-place call of `xform.c` copies
-//!   the block first), the schedules `&DesKeySchedule`, and `encrypt` a `bool`.
+//! - `encrypt` is a `bool`.
+//!
+//! ## Redesign
+//! - [`des_ecb3_encrypt`] returns the output block (LZ: an `&mut DesCblock` out parameter; the
+//!   C's `input` and `output` may be one buffer, which a returned value makes moot).
 
 use super::des_locl::{DesCblock, DesKeySchedule, c2l, fp, ip, l2c};
-use super::ecb_enc::des_encrypt2;
 
-/// `des_ecb3_encrypt`: encrypts (or decrypts) one block under the three key schedules: the
-/// DES transform with `ks1`, the opposite with `ks2`, the first again with `ks3`.
+/// `des_ecb3_encrypt`: the encryption (or decryption) of one block under the three key
+/// schedules: the DES transform with `ks1`, the opposite with `ks2`, the first again with
+/// `ks3`.
 pub fn des_ecb3_encrypt(
     input: &DesCblock,
-    output: &mut DesCblock,
     ks1: &DesKeySchedule,
     ks2: &DesKeySchedule,
     ks3: &DesKeySchedule,
     encrypt: bool,
-) {
-    let mut l0 = c2l(&input[0..]);
-    let mut l1 = c2l(&input[4..]);
-    ip(&mut l0, &mut l1);
+) -> DesCblock {
+    let [l0, l1] = c2l(input);
+    let (l0, l1) = ip(l0, l1);
     let mut ll = [l0, l1];
-    des_encrypt2(&mut ll, ks1, encrypt);
-    des_encrypt2(&mut ll, ks2, !encrypt);
-    des_encrypt2(&mut ll, ks3, encrypt);
-    l0 = ll[0];
-    l1 = ll[1];
-    fp(&mut l1, &mut l0);
-    l2c(l0, &mut output[0..]);
-    l2c(l1, &mut output[4..]);
+    ll = ks1.encrypt2(ll, encrypt);
+    ll = ks2.encrypt2(ll, !encrypt);
+    ll = ks3.encrypt2(ll, encrypt);
+    let [l0, l1] = ll;
+    let (l1, l0) = fp(l1, l0);
+    l2c([l0, l1])
 }
 /* </CODE> */
 
 /* <TESTS> */
 #[cfg(test)]
 mod tests {
-    // Known-answer tests for DES and triple DES: the classic DES example (key 133457799BBCDFF1)
-    // as EDE with one key thrice, three-key vectors computed with `openssl`'s `des-ede3`, the
-    // decryption order `xform.c` uses (the schedules reversed, `encrypt` false), and a
-    // reference-backed comparison of the tables with the C files'.
+    // Known-answer tests for DES and triple DES: the classic DES example (key 133457799BBCDFF1),
+    // the FIPS 81 example and the first NIST SP 800-20 variable-plaintext vectors, each as EDE
+    // with one key thrice; three-key vectors computed with `openssl`'s `des-ede3`; the
+    // decryption order `xform.c` uses (the schedules reversed, `encrypt` false); a property
+    // test of the round trip over random keys and blocks; and a reference-backed comparison of
+    // the tables with the C files'.
 
     use super::*;
-    use crate::crypto::set_key::des_set_key;
+    use crate::crypto::podd::ODD_PARITY;
     use crate::crypto::testutil::{c_table, hex, hexn};
 
     extern crate std;
@@ -119,36 +121,40 @@ mod tests {
 
     fn schedule(key: &str) -> DesKeySchedule {
         let k: DesCblock = hexn(key);
-        let mut ks = [0u32; 32];
-        assert_eq!(des_set_key(&k, &mut ks), Ok(()));
-        ks
+        match DesKeySchedule::new(&k) {
+            Ok(ks) => ks,
+            Err(e) => panic!("key {key}: {e:?}"),
+        }
     }
 
     fn ede3(blk: &[u8], k1: &str, k2: &str, k3: &str, encrypt: bool) -> Vec<u8> {
         let (s1, s2, s3) = (schedule(k1), schedule(k2), schedule(k3));
         let mut input: DesCblock = [0; 8];
         input.copy_from_slice(blk);
-        let mut out = [0u8; 8];
         if encrypt {
-            des_ecb3_encrypt(&input, &mut out, &s1, &s2, &s3, true);
+            des_ecb3_encrypt(&input, &s1, &s2, &s3, true).to_vec()
         } else {
             // des3_decrypt: the schedules in the opposite order, encrypt false.
-            des_ecb3_encrypt(&input, &mut out, &s3, &s2, &s1, false);
+            des_ecb3_encrypt(&input, &s3, &s2, &s1, false).to_vec()
         }
-        out.to_vec()
     }
 
     #[test]
-    fn des_known_answer_as_ede_with_one_key() {
-        let k = "133457799bbcdff1";
-        assert_eq!(
-            ede3(&hex("0123456789abcdef"), k, k, k, true),
-            hex("85e813540f0ab405")
-        );
-        assert_eq!(
-            ede3(&hex("85e813540f0ab405"), k, k, k, false),
-            hex("0123456789abcdef")
-        );
+    fn des_known_answers_as_ede_with_one_key() {
+        let cases = [
+            // The textbook example.
+            ("133457799bbcdff1", "0123456789abcdef", "85e813540f0ab405"),
+            // FIPS 81, appendix B: "Now is t" under 0123456789abcdef.
+            ("0123456789abcdef", "4e6f772069732074", "3fa40e8a984d4815"),
+            // NIST SP 800-20, variable plaintext, key 0101010101010101.
+            ("0101010101010101", "8000000000000000", "95f8a5e5dd31d900"),
+            ("0101010101010101", "4000000000000000", "dd7f121ca5015619"),
+            ("0101010101010101", "2000000000000000", "2e8653104f3834ea"),
+        ];
+        for (k, pt, ct) in cases {
+            assert_eq!(ede3(&hex(pt), k, k, k, true), hex(ct), "key {k} pt {pt}");
+            assert_eq!(ede3(&hex(ct), k, k, k, false), hex(pt), "key {k} ct {ct}");
+        }
     }
 
     const K1: &str = "0123456789abcdef";
@@ -178,19 +184,45 @@ mod tests {
     fn encrypt_flag_false_is_the_inverse_with_the_same_schedule_order() {
         let (s1, s2, s3) = (schedule(K1), schedule(K2), schedule(K3));
         let pt: DesCblock = hexn("0011223344556677");
-        let mut ct = [0u8; 8];
-        des_ecb3_encrypt(&pt, &mut ct, &s1, &s2, &s3, true);
+        let ct = des_ecb3_encrypt(&pt, &s1, &s2, &s3, true);
         // Decryption runs ks1 backwards, ks2 forwards, ks3 backwards: undoing ks3, ks2, ks1 needs
         // the order reversed, as xform.c passes them.
-        let mut back = [0u8; 8];
-        des_ecb3_encrypt(&ct, &mut back, &s3, &s2, &s1, false);
-        assert_eq!(back, pt);
+        assert_eq!(des_ecb3_encrypt(&ct, &s3, &s2, &s1, false), pt);
+    }
+
+    /// xorshift64: the property tests' generator.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    #[test]
+    fn round_trips_over_random_keys_and_blocks() {
+        let mut st = 0x9e37_79b9_7f4a_7c15u64;
+        // Keys with odd parity, so that `set_key.rs`'s test of `des_check_key` (a global it
+        // turns on for a moment) cannot reject them; a weak key is a 2^-52 event.
+        let key = |st: &mut u64| {
+            let k = next(st).to_le_bytes().map(|b| ODD_PARITY[usize::from(b)]);
+            DesKeySchedule::new(&k).expect("odd parity")
+        };
+        for _ in 0..200 {
+            let (s1, s2, s3) = (key(&mut st), key(&mut st), key(&mut st));
+            let pt = next(&mut st).to_le_bytes();
+            let ct = des_ecb3_encrypt(&pt, &s1, &s2, &s3, true);
+            assert_eq!(des_ecb3_encrypt(&ct, &s3, &s2, &s1, false), pt);
+            // One key thrice is single DES, and the rounds alone invert each other.
+            let one = des_ecb3_encrypt(&pt, &s1, &s1, &s1, true);
+            assert_eq!(des_ecb3_encrypt(&one, &s1, &s1, &s1, false), pt);
+            let w = [next(&mut st) as u32, next(&mut st) as u32];
+            assert_eq!(s2.encrypt2(s2.encrypt2(w, true), false), w);
+        }
     }
 
     #[test]
     #[ignore = "reads the C tables from $OPENBSD_SRC (just test-ref)"]
     fn tables_match_the_c_files() {
-        use crate::crypto::podd::ODD_PARITY;
         use crate::crypto::sk::DES_SKB;
         use crate::crypto::spr::DES_SPTRANS;
 

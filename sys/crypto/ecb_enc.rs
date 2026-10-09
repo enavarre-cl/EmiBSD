@@ -69,43 +69,49 @@
 //! already put through the initial permutation, as `des_ecb3_encrypt` calls it.
 //!
 //! Upstream: sys/crypto/ecb_enc.c @ 3ce1f3f79392
+//! LZ: sys/crypto/ecb_enc.rs@f5985f1d055a
 //!
 //! ## Deviations
-//! - `des_encrypt2` takes the two words as `&mut [u32; 2]` and `encrypt` as a `bool`. The loops
-//!   run the sixteen rounds in pairs as the C does; `DES_USE_PTR` (an alternative way of
-//!   indexing `des_SPtrans`, undefined in the C) is not ported.
+//! - `encrypt` is a `bool`. `DES_USE_PTR` (an alternative way of indexing `des_SPtrans`,
+//!   undefined in the C) is not ported. The C's final `l = r = t = u = 0` (plain stores the
+//!   compiler may drop) has no counterpart.
+//!
+//! ## Redesign
+//! - `des_encrypt2` is the method [`DesKeySchedule::encrypt2`]: it takes the two words by value
+//!   and returns them (LZ: `&mut [u32; 2]` and the schedule as an argument). The rounds walk
+//!   the subkeys in pairs, forwards to encrypt and backwards to decrypt, as the C's loops over
+//!   the word index do.
 
 use super::des_locl::{DesKeySchedule, d_encrypt};
 
-/// `des_encrypt2`: runs the rounds on `data` (left word, right word) with the schedule `ks`;
-/// `encrypt` false walks it backwards.
-pub fn des_encrypt2(data: &mut [u32; 2], ks: &DesKeySchedule, encrypt: bool) {
-    let u = data[0];
-    let r = data[1];
+impl DesKeySchedule {
+    /// `des_encrypt2`: runs the sixteen rounds on `data` (left word, right word) with this
+    /// schedule; `encrypt` false walks it backwards. The result is the transformed pair.
+    pub fn encrypt2(&self, data: [u32; 2], encrypt: bool) -> [u32; 2] {
+        let [u, r] = data;
 
-    // Things have been modified so that the initial rotate is done outside the loop. This
-    // required the des_SPtrans values in sp.h to be rotated 1 bit to the right. One perl script
-    // later and things have a 5% speed up on a sparc2. Thanks to Richard Outerbridge
-    // <71755.204@CompuServe.COM> for pointing this out.
-    let mut l = r.rotate_left(1);
-    let mut r = u.rotate_left(1);
+        // Things have been modified so that the initial rotate is done outside the loop. This
+        // required the des_SPtrans values in sp.h to be rotated 1 bit to the right. One perl
+        // script later and things have a 5% speed up on a sparc2. Thanks to Richard Outerbridge
+        // <71755.204@CompuServe.COM> for pointing this out.
+        let mut l = r.rotate_left(1);
+        let mut r = u.rotate_left(1);
 
-    if encrypt {
-        for i in (0..32).step_by(4) {
-            d_encrypt(&mut l, r, ks, i); //  1
-            d_encrypt(&mut r, l, ks, i + 2); //  2
+        let pairs = self.ks.as_chunks::<2>().0;
+        if encrypt {
+            for [k1, k2] in pairs {
+                l ^= d_encrypt(r, k1); //  1
+                r ^= d_encrypt(l, k2); //  2
+            }
+        } else {
+            for [k15, k16] in pairs.iter().rev() {
+                l ^= d_encrypt(r, k16); // 16
+                r ^= d_encrypt(l, k15); // 15
+            }
         }
-    } else {
-        for i in (1..=30).rev().step_by(4) {
-            d_encrypt(&mut l, r, ks, i); // 16
-            d_encrypt(&mut r, l, ks, i - 2); // 15
-        }
+
+        [l.rotate_right(1), r.rotate_right(1)]
     }
-    l = l.rotate_right(1);
-    r = r.rotate_right(1);
-
-    data[0] = l;
-    data[1] = r;
 }
 /* </CODE> */
 
@@ -113,19 +119,15 @@ pub fn des_encrypt2(data: &mut [u32; 2], ks: &DesKeySchedule, encrypt: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::set_key::des_set_key;
 
     #[test]
     fn decrypting_with_the_schedule_walked_backwards_undoes_it() {
         let key = [0x13, 0x34, 0x57, 0x79, 0x9b, 0xbc, 0xdf, 0xf1];
-        let mut ks = [0u32; 32];
-        assert_eq!(des_set_key(&key, &mut ks), Ok(()));
+        let ks = DesKeySchedule::new(&key).expect("unchecked key");
         let orig = [0x0123_4567u32, 0x89ab_cdef];
-        let mut data = orig;
-        des_encrypt2(&mut data, &ks, true);
+        let data = ks.encrypt2(orig, true);
         assert_ne!(data, orig);
-        des_encrypt2(&mut data, &ks, false);
-        assert_eq!(data, orig);
+        assert_eq!(ks.encrypt2(data, false), orig);
     }
 }
 /* </TESTS> */
