@@ -122,6 +122,8 @@ pub const CPUID_APIC: u32 = 0x0000_0200;
 
 /// `CPUIDECX_MWAIT`: Monitor/Mwait.
 pub const CPUIDECX_MWAIT: u32 = 0x0000_0008;
+/// `CPUIDECX_RDRAND`: RDRAND instruction.
+pub const CPUIDECX_RDRAND: u32 = 0x4000_0000;
 /// `CPUIDECX_HV`: running on hypervisor.
 pub const CPUIDECX_HV: u32 = 0x8000_0000;
 
@@ -138,6 +140,8 @@ pub const SEV_STAT_SNP_ACTIVE: i32 = 0x0000_0004;
 
 /// `SEFF0EBX_TSC_ADJUST`: has IA32_TSC_ADJUST MSR.
 pub const SEFF0EBX_TSC_ADJUST: u32 = 0x0000_0002;
+/// `SEFF0EBX_RDSEED`: RDSEED instruction.
+pub const SEFF0EBX_RDSEED: u32 = 0x0004_0000;
 
 // Thermal and Power Management (CPUID function 0x6) EAX bits:
 
@@ -301,11 +305,13 @@ mod tests {
             ("MSR_KERNELGSBASE", i64::from(MSR_KERNELGSBASE)),
             ("CPUID_TSC", i64::from(CPUID_TSC)),
             ("CPUIDECX_HV", i64::from(CPUIDECX_HV)),
+            ("CPUIDECX_RDRAND", i64::from(CPUIDECX_RDRAND)),
             ("CPUIDECX_MWAIT", i64::from(CPUIDECX_MWAIT)),
             ("TPM_SENSOR", i64::from(TPM_SENSOR)),
             ("TPM_ARAT", i64::from(TPM_ARAT)),
             ("TPM_PTS", i64::from(TPM_PTS)),
             ("SEFF0EBX_TSC_ADJUST", i64::from(SEFF0EBX_TSC_ADJUST)),
+            ("SEFF0EBX_RDSEED", i64::from(SEFF0EBX_RDSEED)),
             ("CPUID_NXE", i64::from(CPUID_NXE)),
             ("CPUID_RDTSCP", i64::from(CPUID_RDTSCP)),
             ("MSR_TSC_ADJUST", i64::from(MSR_TSC_ADJUST)),

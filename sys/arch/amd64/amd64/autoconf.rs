@@ -83,12 +83,14 @@ use core::sync::atomic::Ordering;
 use libkern::StaticCell;
 
 use crate::arch::amd64::amd64::bus_dma::bus_dma_init;
+use crate::arch::amd64::amd64::cpu::{RDRAND_TMO, rdrand};
 use crate::arch::amd64::amd64::intr::intr_printconfig;
 use crate::arch::amd64::amd64::ioapic::ioapic_enable;
 use crate::arch::amd64::amd64::lapic::{lapic_calibrate_timer, lapic_enable, lapic_set_lvt};
 use crate::arch::amd64::amd64::machdep::x86_64_proc0_tss_ldt_init;
 use crate::arch::amd64::include::cpu::{CPUF_BSP, cpu_info_primary};
 use crate::arch::amd64::include::cpufunc::{intr_enable, lcr8};
+use crate::kern::kern_timeout::timeout_set;
 use crate::kern::subr_autoconf::config_rootfound;
 #[cfg(feature = "nfsclient")]
 use crate::kern::subr_disk::parsedisk;
@@ -227,8 +229,11 @@ pub fn cpu_configure() {
     COLD.store(false, Ordering::Relaxed);
 
     // At this point the RNG is running, and if FSXR is set we can use it. Here we setup a
-    // periodic timeout to collect the data: the viac3_rnd and rdrand timeouts.
-    let _ = unported!("viac3_rnd/rdrand timeouts (identcpu.c)");
+    // periodic timeout to collect the data.
+    let _ = unported!("viac3_rnd timeout (via.c; viac3_rnd_present is never set)");
+    let tmo = ptr::from_ref(&RDRAND_TMO).cast_mut().cast::<c_void>();
+    timeout_set(&RDRAND_TMO, rdrand, tmo);
+    rdrand(tmo);
     // CRYPTO: not configured.
 }
 
