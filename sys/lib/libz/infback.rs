@@ -693,7 +693,8 @@ mod tests {
 
     use super::*;
     use crate::inflate::{inflate, inflateEnd};
-    use crate::zlib::{Flush, inflateBackInit, inflateInit2};
+    use crate::zlib::{Flush, Strategy, inflateBackInit, inflateInit2};
+    use std::format;
     use std::vec;
     use std::vec::Vec;
 
@@ -900,6 +901,220 @@ mod tests {
             assert!(out == CORPUS);
         }
         assert_eq!(inflateBackEnd(&mut strm), Ok(()));
+    }
+
+    /// A raw deflate stream of `data` from this crate's compressor, flushing with `flush`
+    /// after every `chunk` bytes and finishing with `Flush::Finish`.
+    fn raw_deflate(
+        data: &[u8],
+        level: i32,
+        wbits: i32,
+        strategy: Strategy,
+        chunk: usize,
+        flush: Flush,
+    ) -> Vec<u8> {
+        use crate::deflate::{deflate, deflateEnd};
+        use crate::zlib::{Z_DEFLATED, deflateInit2};
+        let mut out = vec![0u8; data.len() * 2 + 1024];
+        let mut strm = ZStream::new();
+        assert_eq!(
+            deflateInit2(&mut strm, level, Z_DEFLATED, -wbits, 8, strategy),
+            Ok(())
+        );
+        strm.next_out = &mut out;
+        let pieces: Vec<&[u8]> = data.chunks(chunk).collect();
+        for (i, piece) in pieces.iter().enumerate() {
+            strm.next_in = piece;
+            let last = i + 1 == pieces.len();
+            let ret = deflate(&mut strm, if last { Flush::Finish } else { flush });
+            assert!(ret.is_ok());
+            assert_eq!(strm.avail_in(), 0);
+        }
+        let n = strm.total_out as usize;
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
+        out.truncate(n);
+        out
+    }
+
+    /// Raw streams of `data` with a `1 << wbits` window: one stored, one fixed and one dynamic
+    /// block (the first block's type is checked), Huffman-only and RLE blocks, and blocks of
+    /// every kind between sync flush markers.
+    fn block_streams(data: &[u8], wbits: i32) -> Vec<(&'static str, Vec<u8>)> {
+        let all = usize::MAX;
+        let mut v = Vec::new();
+        for (name, level, strategy, chunk, flush, btype) in [
+            ("stored", 0, Strategy::Default, all, Flush::NoFlush, Some(0)),
+            ("fixed", 6, Strategy::Fixed, all, Flush::NoFlush, Some(1)),
+            (
+                "dynamic",
+                9,
+                Strategy::Default,
+                all,
+                Flush::NoFlush,
+                Some(2),
+            ),
+            (
+                "huffman",
+                6,
+                Strategy::HuffmanOnly,
+                all,
+                Flush::NoFlush,
+                None,
+            ),
+            ("rle", 6, Strategy::Rle, all, Flush::NoFlush, None),
+            ("blocks", 6, Strategy::Default, 997, Flush::SyncFlush, None),
+        ] {
+            let s = raw_deflate(data, level, wbits, strategy, chunk, flush);
+            if let Some(btype) = btype {
+                assert_eq!((s[0] >> 1) & 3, btype, "{name}");
+            }
+            v.push((name, s));
+        }
+        v
+    }
+
+    /// Every kind of block through windows of 2^9, 2^12 and 2^15, the input in `next_in` or
+    /// handed out by `in_` one byte, 100 bytes or all at a time: the data comes back, written
+    /// a whole window at a time and then the rest, with no input left.
+    #[test]
+    fn decodes_every_block_type_through_every_window() {
+        let data = &CORPUS[..9000];
+        for wbits in [9, 12, 15] {
+            for (name, s) in block_streams(data, wbits) {
+                for slow in [true, false] {
+                    for (first, chunk) in [(0, 1), (0, 100), (s.len(), 1), (10, usize::MAX)] {
+                        let (ret, out, sizes, unused) = back(&s, wbits, first, chunk, slow);
+                        let at = format!("{name} wbits {wbits} {first}/{chunk} slow {slow}");
+                        assert_eq!(ret, Ok(ZStatus::StreamEnd), "{at}");
+                        assert!(out == data, "{at}");
+                        assert_eq!(unused, 0, "{at}");
+                        let wsize = 1 << wbits;
+                        assert!(sizes[..sizes.len() - 1].iter().all(|&n| n == wsize));
+                        assert_eq!(sizes.len(), data.len().div_ceil(wsize), "{at}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// An `out` that refuses the k-th buffer, for every k (whole windows, then the last
+    /// piece): `ZError::Buf` (zlib.h: "if out() returns non-zero, inflateBack() will return
+    /// with an error"), after exactly k calls, the k-1 accepted windows being the data's
+    /// start, and the input not used left in `next_in`.
+    #[test]
+    fn out_refusing_any_buffer_is_a_buffer_error() {
+        let data = &CORPUS[..6000];
+        let wbits = 9;
+        for (name, s) in block_streams(data, wbits) {
+            let calls = data.len().div_ceil(1 << wbits);
+            for slow in [true, false] {
+                for k in 1..=calls {
+                    let mut strm = ZStream::new();
+                    assert_eq!(
+                        inflateBackInit(&mut strm, wbits, vec![0u8; 1 << wbits]),
+                        Ok(())
+                    );
+                    strm.next_in = &s;
+                    let mut seen = 0;
+                    let mut accepted = Vec::new();
+                    let ret = inflate_back_impl(
+                        &mut strm,
+                        || &[],
+                        |buf| {
+                            seen += 1;
+                            if seen == k {
+                                return false;
+                            }
+                            accepted.extend_from_slice(buf);
+                            true
+                        },
+                        slow,
+                    );
+                    let at = format!("{name} refuse {k}/{calls} slow {slow}");
+                    assert_eq!(ret, Err(ZError::Buf), "{at}");
+                    assert_eq!(seen, k, "{at}");
+                    assert!(accepted == data[..(k - 1) << wbits], "{at}");
+                    assert!(s.ends_with(strm.next_in), "{at}");
+                    assert_eq!(strm.msg, None);
+                    assert_eq!(inflateBackEnd(&mut strm), Ok(()));
+                }
+            }
+        }
+    }
+
+    /// Every strict prefix of every kind of stream, with `in_` running dry: `ZError::Buf`
+    /// (no message), what was decoded written out and a prefix of the data, the same whether
+    /// the prefix sits in `next_in` or comes from `in_` a byte at a time.
+    #[test]
+    fn running_out_of_input_anywhere_is_a_buffer_error() {
+        let data = &CORPUS[..700];
+        for (name, s) in block_streams(data, 15) {
+            for cut in 0..s.len() {
+                let p = &s[..cut];
+                for slow in [true, false] {
+                    let at = format!("{name} cut {cut}/{} slow {slow}", s.len());
+                    let (ret, out, _, unused) = back(p, 15, cut, 1, slow);
+                    assert_eq!(ret, Err(ZError::Buf), "{at}");
+                    assert!(data.starts_with(&out), "{at}");
+                    assert_eq!(unused, 0, "{at}");
+                    let (ret, bytewise, _, _) = back(p, 15, 0, 1, slow);
+                    assert_eq!(ret, Err(ZError::Buf), "{at} bytewise");
+                    assert!(bytewise == out, "{at} bytewise");
+                }
+            }
+        }
+    }
+
+    /// Every bit of the first 128 bytes of each kind of stream, flipped: `inflateBack()`
+    /// gives the same result, message and output as `inflate()` on the same raw stream with
+    /// the same window, in both decoders.
+    #[test]
+    fn bit_flips_end_as_they_do_in_inflate() {
+        let data = &CORPUS[..700];
+        for (name, s) in block_streams(data, 15) {
+            for pos in 0..s.len().min(128) {
+                for bit in 0..8 {
+                    let mut c = s.clone();
+                    c[pos] ^= 1 << bit;
+                    for slow in [true, false] {
+                        let at = format!("{name} byte {pos} bit {bit} slow {slow}");
+                        let mut buf = vec![0u8; 1 << 17];
+                        let mut strm = ZStream::new();
+                        assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
+                        strm.next_in = &c;
+                        strm.next_out = &mut buf;
+                        let mut want =
+                            crate::inflate::inflate_impl(&mut strm, Flush::NoFlush, slow);
+                        if want == Ok(ZStatus::Ok) {
+                            // out of input: the next call cannot go on
+                            want = crate::inflate::inflate_impl(&mut strm, Flush::NoFlush, slow);
+                        }
+                        let (n, want_msg) = (strm.total_out as usize, strm.msg);
+                        assert_eq!(inflateEnd(&mut strm), Ok(()));
+
+                        let mut back_strm = ZStream::new();
+                        assert_eq!(
+                            inflateBackInit(&mut back_strm, 15, vec![0u8; 1 << 15]),
+                            Ok(())
+                        );
+                        back_strm.next_in = &c;
+                        let mut out = Vec::new();
+                        let ret = inflate_back_impl(
+                            &mut back_strm,
+                            || &[],
+                            |b| {
+                                out.extend_from_slice(b);
+                                true
+                            },
+                            slow,
+                        );
+                        assert_eq!((ret, back_strm.msg), (want, want_msg), "{at}");
+                        assert!(out == buf[..n], "{at}");
+                        assert_eq!(inflateBackEnd(&mut back_strm), Ok(()));
+                    }
+                }
+            }
+        }
     }
 }
 /* </TESTS> */
