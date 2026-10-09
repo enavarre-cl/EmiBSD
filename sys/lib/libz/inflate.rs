@@ -3586,5 +3586,53 @@ mod tests {
             }
         }
     }
+
+    /// One inflate stream reused for a run of streams of random wrappers and windows: an
+    /// `inflateReset2()` when the wrapper or window changes, an `inflateReset()` otherwise,
+    /// each time with the totals and the message cleared; every third stream damaged (a data
+    /// error, which the next reset clears).
+    #[test]
+    fn reset_and_reset2_reuse_the_stream() {
+        let mut rng = XorShift(0x2b99_2ddf_a232_49d6);
+        for slow in BOTH {
+            let mut strm = ZStream::new();
+            assert_eq!(inflateInit(&mut strm), Ok(()));
+            let mut current = 15;
+            for round in 0..40 {
+                let wbits = [15, 12, 9, -15, -12, -9][rng.below(6)];
+                let start = rng.below(CORPUS.len() - 5000);
+                let data = &CORPUS[start..start + rng.below(5000)];
+                let level = rng.below(10) as i32;
+                let mut z = deflate_all(data, level, wbits, 1 + rng.below(9) as i32);
+                let damaged = round % 3 == 2;
+                if damaged {
+                    // a bad header, or for a raw stream a bad block type
+                    z[0] = if wbits > 0 { z[0] ^ 1 } else { 0x07 };
+                }
+                // a zlib stream may also take its window from the header
+                let iw = if wbits > 0 && rng.below(2) == 0 {
+                    0
+                } else {
+                    wbits
+                };
+                if iw == current {
+                    assert_eq!(inflateReset(&mut strm), Ok(()));
+                } else {
+                    assert_eq!(inflateReset2(&mut strm, iw), Ok(()));
+                    current = iw;
+                }
+                assert_eq!((strm.total_in, strm.total_out, strm.msg), (0, 0, None));
+                let d = run(&mut strm, &z, slow, 4096, 4096, Flush::NoFlush);
+                if damaged {
+                    assert_eq!(d.ret, Err(ZError::Data), "round {round}");
+                } else {
+                    assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "round {round} {wbits}");
+                    assert!(d.out == data, "round {round}");
+                    assert_eq!(d.total_in as usize, z.len());
+                }
+            }
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
+        }
+    }
 }
 /* </TESTS> */

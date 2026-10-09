@@ -3427,5 +3427,328 @@ mod tests {
             );
         }
     }
+
+    /// `deflateInit2()` over a grid of levels, methods, windowBits, memLevels and strategy
+    /// values around every limit: it succeeds exactly when deflate.c's checks pass (level -1
+    /// is 6; a negative windowBits down to -15 asks for a raw stream; windowBits 8..15,
+    /// memLevel 1..9, method 8, level 0..9, strategy 0..4; windowBits 8 only with the zlib
+    /// wrapper; no gzip wrapper under `NO_GZIP`), and otherwise fails with `ZError::Stream`
+    /// and leaves no state. `deflateParams()` takes levels -1..9 only.
+    #[test]
+    fn init_and_params_check_every_limit() {
+        let levels = [i32::MIN, -3, -2, -1, 0, 1, 9, 10, 11, i32::MAX];
+        let methods = [0, 7, Z_DEFLATED, 9];
+        let wbits_values = [
+            i32::MIN,
+            -17,
+            -16,
+            -15,
+            -9,
+            -8,
+            -7,
+            -1,
+            0,
+            1,
+            7,
+            8,
+            9,
+            15,
+            16,
+            23,
+            24,
+            31,
+            32,
+            47,
+            i32::MAX,
+        ];
+        let mem_levels = [i32::MIN, -1, 0, 1, 2, 8, 9, 10, i32::MAX];
+        let strategies = [-1, 0, 1, 2, 3, 4, 5, 6];
+        let mut valid = 0;
+        for level in levels {
+            for method in methods {
+                for wbits in wbits_values {
+                    for mem in mem_levels {
+                        for strategy in strategies {
+                            let (raw, w) = if wbits < 0 {
+                                (true, wbits.checked_neg().unwrap_or(i32::MAX))
+                            } else {
+                                (false, wbits)
+                            };
+                            let want = (-1..=9).contains(&level)
+                                && method == Z_DEFLATED
+                                && !(raw && wbits < -15)
+                                && (8..=15).contains(&w)
+                                && !(raw && w == 8)
+                                && (1..=9).contains(&mem)
+                                && (0..=4).contains(&strategy);
+                            let mut strm = ZStream::new();
+                            let ret = Strategy::try_from(strategy).and_then(|s| {
+                                deflateInit2(&mut strm, level, method, wbits, mem, s)
+                            });
+                            let at = format!("{level} {method} {wbits} {mem} {strategy}");
+                            if want {
+                                valid += 1;
+                                assert_eq!(ret, Ok(()), "{at}");
+                                assert_eq!(deflateEnd(&mut strm), Ok(()));
+                            } else {
+                                assert_eq!(ret, Err(ZError::Stream), "{at}");
+                                assert!(matches!(strm.state, InternalState::None), "{at}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // levels -1, 0, 1, 9 x windowBits -15, -9, 8, 9, 15 x memLevels 1, 2, 8, 9 x 5
+        assert_eq!(valid, 4 * 5 * 4 * 5);
+
+        let mut strm = ZStream::new();
+        assert_eq!(deflateInit(&mut strm, 6), Ok(()));
+        for level in levels {
+            for strategy in STRATEGIES {
+                let want = if (-1..=9).contains(&level) {
+                    Ok(())
+                } else {
+                    Err(ZError::Stream)
+                };
+                assert_eq!(deflateParams(&mut strm, level, strategy), want, "{level}");
+            }
+        }
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
+    }
+
+    /// `deflateParams()` before any input is the same as asking for those parameters at
+    /// init: the stream is identical byte for byte, for every pair of levels and every
+    /// strategy.
+    #[test]
+    fn params_before_input_equal_init() {
+        let mut rng = XorShift(0x1f83_d9ab_fb41_bd6b);
+        let data = prng_data(&mut rng, 20_000);
+        for from in -1..=9 {
+            for to in -1..=9 {
+                let strategy = STRATEGIES[rng.below(5)];
+                let mut out = vec![0u8; 30_000];
+                let mut strm = ZStream::new();
+                assert_eq!(
+                    deflateInit2(&mut strm, from, Z_DEFLATED, 15, 8, Strategy::Default),
+                    Ok(())
+                );
+                assert_eq!(deflateParams(&mut strm, to, strategy), Ok(()));
+                strm.next_in = &data;
+                strm.next_out = &mut out;
+                assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+                let n = strm.total_out as usize;
+                assert_eq!(deflateEnd(&mut strm), Ok(()));
+                let direct = compress_once(&data, None, to, 15, 8, strategy);
+                assert!(out[..n] == direct[..], "{from} -> {to} {strategy:?}");
+            }
+        }
+    }
+
+    /// `deflateParams()` in the middle of a stream, between random pieces of input with
+    /// random levels and strategies: when the compression function changes, the input so far
+    /// is compressed first, and with too little output space for that the call is a buffer
+    /// error that changes nothing, to be repeated with more space. The stream decodes back.
+    #[test]
+    fn params_mid_stream() {
+        let mut rng = XorShift(0x5be0_cd19_137e_2179);
+        for round in 0..30 {
+            let data = prng_data(&mut rng, 30_000);
+            let wbits = if round % 2 == 0 {
+                15
+            } else {
+                -(9 + rng.below(7) as i32)
+            };
+            let mut out = vec![0u8; 100_000];
+            let mut strm = ZStream::new();
+            let level = rng.below(10) as i32;
+            assert_eq!(
+                deflateInit2(&mut strm, level, Z_DEFLATED, wbits, 8, Strategy::Default),
+                Ok(())
+            );
+            let mut rest_out: &mut [u8] = &mut out;
+            for piece in data.chunks(1 + rng.below(8000)) {
+                strm.next_in = piece;
+                while strm.avail_in() != 0 {
+                    if strm.avail_out() == 0 {
+                        let n = 1 + rng.below(64);
+                        let (o, r) = core::mem::take(&mut rest_out).split_at_mut(n);
+                        strm.next_out = o;
+                        rest_out = r;
+                    }
+                    assert!(matches!(
+                        deflate(&mut strm, Flush::NoFlush),
+                        Ok(ZStatus::Ok) | Err(ZError::Buf)
+                    ));
+                }
+                let level = rng.below(11) as i32 - 1;
+                let strategy = STRATEGIES[rng.below(5)];
+                loop {
+                    match deflateParams(&mut strm, level, strategy) {
+                        Ok(()) => break,
+                        Err(ZError::Buf) => {
+                            // the flush ran out of space, which is all a buffer error means
+                            assert_eq!(strm.avail_out(), 0);
+                            let n = 1 + rng.below(64);
+                            let (o, r) = core::mem::take(&mut rest_out).split_at_mut(n);
+                            strm.next_out = o;
+                            rest_out = r;
+                        }
+                        other => panic!("round {round}: {other:?}"),
+                    }
+                }
+            }
+            loop {
+                if strm.avail_out() == 0 {
+                    let (o, r) = core::mem::take(&mut rest_out).split_at_mut(64);
+                    strm.next_out = o;
+                    rest_out = r;
+                }
+                match deflate(&mut strm, Flush::Finish) {
+                    Ok(ZStatus::StreamEnd) => break,
+                    Ok(ZStatus::Ok) => {}
+                    other => panic!("round {round}: {other:?}"),
+                }
+            }
+            let n = strm.total_out as usize;
+            assert_eq!(deflateEnd(&mut strm), Ok(()));
+            assert!(
+                inflate_all(&out[..n], wbits, data.len()) == data,
+                "round {round}"
+            );
+        }
+    }
+
+    /// `deflateParams()` with input waiting and no output space: a buffer error that leaves
+    /// the level and strategy as they were; with space, the input so far is compressed with
+    /// the old parameters, then the new ones apply. Changing only the strategy is a change
+    /// too. The stream decodes back.
+    #[test]
+    fn params_without_output_space_is_a_buffer_error() {
+        let data = TEXT;
+        for (level, strategy) in [(9, Strategy::Default), (1, Strategy::Filtered)] {
+            let mut out = vec![0u8; 100_000];
+            let (first, rest) = out.split_at_mut(1);
+            let mut strm = ZStream::new();
+            assert_eq!(deflateInit(&mut strm, 1), Ok(()));
+            strm.next_in = data;
+            strm.next_out = first;
+            // the header fills the one byte; no input is taken
+            assert_eq!(deflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+            assert_eq!((strm.avail_out(), strm.avail_in()), (0, data.len()));
+            assert_eq!(deflateParams(&mut strm, level, strategy), Err(ZError::Buf));
+            let s = state_ref(&strm).unwrap();
+            assert_eq!((s.level, s.strategy), (1, Strategy::Default));
+            strm.next_out = rest;
+            assert_eq!(deflateParams(&mut strm, level, strategy), Ok(()));
+            assert_eq!(strm.avail_in(), 0);
+            let s = state_ref(&strm).unwrap();
+            assert_eq!((s.level, s.strategy), (level, strategy));
+            strm.next_in = data;
+            assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+            let n = strm.total_out as usize;
+            assert_eq!(deflateEnd(&mut strm), Ok(()));
+            let mut twice = data.to_vec();
+            twice.extend_from_slice(data);
+            assert!(inflate_all(&out[..n], 15, twice.len()) == twice);
+        }
+    }
+
+    /// `deflateBound()` is enough for one `Flush::Finish` call at every level and strategy,
+    /// raw and zlib (with a dictionary too), every window and memLevel, on incompressible
+    /// bytes and on structured data of sizes from 0 up: with exactly that much output space
+    /// the stream ends, and `compressBound()` holds for `compress2()`.
+    #[test]
+    fn bound_is_enough_for_one_finish_call() {
+        use crate::compress::{compress2, compressBound_z};
+        let mut rng = XorShift(0xcbbb_9d5d_c105_9ed8);
+        let mut sizes = vec![0, 1, 2, 3, 10, 100, 1000, 16_383, 16_384, 70_000];
+        for _ in 0..10 {
+            sizes.push(rng.below(100_000));
+        }
+        for (i, &len) in sizes.iter().enumerate() {
+            let noise: Vec<u8> = (0..len).map(|_| rng.next() as u8).collect();
+            let structured = prng_data(&mut rng, len);
+            for data in [&noise, &structured] {
+                for level in 0..=9 {
+                    let strategy = STRATEGIES[(i + level as usize) % 5];
+                    let wbits = [15, -15, 8, 9, 12, -9, -12][rng.below(7)];
+                    let mem = if (i + level as usize).is_multiple_of(3) {
+                        8
+                    } else {
+                        1 + rng.below(9) as i32
+                    };
+                    let dict_len = rng.below(3000);
+                    let dict = (dict_len < 1000).then(|| prng_data(&mut rng, 1 + dict_len));
+                    let mut strm = ZStream::new();
+                    assert_eq!(
+                        deflateInit2(&mut strm, level, Z_DEFLATED, wbits, mem, strategy),
+                        Ok(())
+                    );
+                    if let Some(dict) = &dict {
+                        assert_eq!(deflateSetDictionary(&mut strm, dict), Ok(()));
+                    }
+                    let bound = deflateBound_z(&strm, len);
+                    assert_eq!(deflateBound(&strm, len as u64), bound as u64);
+                    let mut out = vec![0u8; bound];
+                    strm.next_in = data;
+                    strm.next_out = &mut out;
+                    let at =
+                        format!("len {len} level {level} {strategy:?} wbits {wbits} mem {mem}");
+                    assert_eq!(
+                        deflate(&mut strm, Flush::Finish),
+                        Ok(ZStatus::StreamEnd),
+                        "{at}"
+                    );
+                    assert_eq!(deflateEnd(&mut strm), Ok(()));
+                    let mut dest = vec![0u8; compressBound_z(len)];
+                    let n = compress2(&mut dest, data, level).unwrap();
+                    assert!(n <= compressBound_z(len));
+                }
+            }
+        }
+    }
+
+    /// One stream reused with `deflateReset()` for random inputs: each output is the one a
+    /// fresh stream with the same parameters makes, and the totals and message start over.
+    #[test]
+    fn reset_reuses_the_stream() {
+        let mut rng = XorShift(0x6295_c58d_6a3e_5b31);
+        for (wbits, mem) in [(15, 8), (-15, 9), (9, 1), (-12, 4)] {
+            for level in [0, 1, 4, 6, 9] {
+                let strategy = STRATEGIES[rng.below(5)];
+                let mut strm = ZStream::new();
+                assert_eq!(
+                    deflateInit2(&mut strm, level, Z_DEFLATED, wbits, mem, strategy),
+                    Ok(())
+                );
+                for round in 0..4 {
+                    let len = rng.below(20_000);
+                    let data = prng_data(&mut rng, len);
+                    let mut out = vec![0u8; len * 2 + 1024];
+                    let mut s = ZStream::new();
+                    // lend the state to a stream over this round's buffers
+                    s.state = core::mem::take(&mut strm.state);
+                    s.total_in = 1;
+                    s.total_out = 1;
+                    s.msg = Some("stale");
+                    assert_eq!(deflateReset(&mut s), Ok(()));
+                    assert_eq!((s.total_in, s.total_out, s.msg), (0, 0, None));
+                    s.next_in = &data;
+                    s.next_out = &mut out;
+                    assert_eq!(deflate(&mut s, Flush::Finish), Ok(ZStatus::StreamEnd));
+                    let n = s.total_out as usize;
+                    strm.state = core::mem::take(&mut s.state);
+                    drop(s);
+                    out.truncate(n);
+                    let at = format!("wbits {wbits} level {level} round {round}");
+                    let fresh = compress_once(&data, None, level, wbits, mem, strategy);
+                    assert!(out == fresh, "{at}");
+                    assert!(inflate_all(&out, wbits, len) == data, "{at}");
+                }
+                assert_eq!(deflateEnd(&mut strm), Ok(()));
+            }
+        }
+    }
 }
 /* </TESTS> */
