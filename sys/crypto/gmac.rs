@@ -66,8 +66,8 @@
 //!   `Final` order is unchanged, so keying stays a method on an initialised context.
 //! - `ghash_gfmul` returns the product (LZ: an `&mut` out parameter); `update` returns nothing
 //!   (LZ: `Result<(), Errno>` for the C's `int` that is always 0, which `xform.rs` still
-//!   reports); `finalize` consumes the context and returns the tag (LZ: an `&mut [u8; 16]` out
-//!   parameter and the context kept), and the context is wiped as it drops.
+//!   reports); `finalize` returns the tag and wipes the context in place, keys included (LZ:
+//!   an `&mut [u8; 16]` out parameter and the context kept as it was).
 //! - [`GhashCtx`] (the hash subkey `H = E(K, 0)` and the running hash) zeroes itself when
 //!   dropped, as the AES key in [`AesGmacCtx`] does (`docs/IDIOMS.md`); neither is `Copy` or
 //!   `PartialEq` any more.
@@ -104,13 +104,18 @@ impl Drop for GhashCtx {
     /// Wipes the subkey and the state (`docs/IDIOMS.md`: a key schedule is zeroed when
     /// dropped).
     fn drop(&mut self) {
-        explicit_bzero(&mut self.h);
-        explicit_bzero(&mut self.s);
-        explicit_bzero(&mut self.z);
+        self.zeroize();
     }
 }
 
 impl GhashCtx {
+    /// Zeroes the subkey and the state with `explicit_bzero`.
+    pub(crate) fn zeroize(&mut self) {
+        explicit_bzero(&mut self.h);
+        explicit_bzero(&mut self.s);
+        explicit_bzero(&mut self.z);
+    }
+
     /// `ghash_update_mi`: the machine independent GHASH update: absorbs the whole blocks of
     /// `x` (a trailing partial block is ignored).
     pub fn update_mi(&mut self, x: &[u8]) {
@@ -194,8 +199,8 @@ impl AesGmacCtx {
     }
 
     /// `AES_GMAC_Final`: the 16-byte tag: the hash xor the encryption of the counter block 1.
-    /// The context, keys included, is wiped as it drops.
-    pub fn finalize(mut self) -> [u8; GMAC_DIGEST_LEN] {
+    /// The context, keys included, is wiped in place.
+    pub fn finalize(&mut self) -> [u8; GMAC_DIGEST_LEN] {
         // do one round of GCTR
         self.j[GMAC_BLOCK_LEN - 1] = 1;
         let mut keystream = self.k.encrypt(&self.j);
@@ -204,7 +209,15 @@ impl AesGmacCtx {
             *d = s ^ k;
         }
         explicit_bzero(&mut keystream);
+        self.zeroize();
         digest
+    }
+
+    /// Zeroes the hash state, the AES key and the counter block.
+    pub(crate) fn zeroize(&mut self) {
+        self.ghash.zeroize();
+        self.k.zeroize();
+        explicit_bzero(&mut self.j);
     }
 }
 
@@ -465,6 +478,22 @@ mod tests {
                 assert_ne!(tag(&key, &iv, &d2, &[]), whole);
             }
         }
+    }
+
+    #[test]
+    fn finalize_wipes_the_context_in_place() {
+        let mut ctx = AesGmacCtx::default();
+        ctx.init();
+        assert_eq!(ctx.setkey(&[0x11u8; 20]), Ok(()));
+        ctx.reinit(&[0x22; 8]);
+        ctx.update(b"some additional data");
+        let _ = ctx.finalize();
+        assert_eq!(
+            (ctx.ghash.h, ctx.ghash.s, ctx.ghash.z, ctx.j),
+            ([0; 16], [0; 16], [0; 16], [0; 16])
+        );
+        assert!(ctx.k.sk.iter().all(|w| *w == 0));
+        assert!(ctx.k.sk_exp.iter().flatten().all(|w| *w == 0));
     }
 }
 /* </TESTS> */

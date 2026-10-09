@@ -48,11 +48,12 @@
 //!   functions with the state first): `poly1305_init` is the constructor
 //!   [`Poly1305State::new`], which returns the started MAC (LZ: it filled an `&mut`);
 //!   `poly1305_update` is [`Poly1305State::update`], `poly1305_blocks` the private `blocks`,
-//!   and `poly1305_finish` is [`Poly1305State::finalize`], which consumes the state and
-//!   returns the tag (LZ: an `&mut [u8; 16]` out parameter and the state kept).
+//!   and `poly1305_finish` is [`Poly1305State::finalize`], which returns the tag (LZ: an
+//!   `&mut [u8; 16]` out parameter).
 //! - The C clears `h`, `r` and `pad` at the end of `poly1305_finish` with plain stores; here
-//!   the whole state (the partial block included) is zeroed as it drops (`docs/IDIOMS.md`),
-//!   with stores the compiler keeps. [`Poly1305State`] is therefore not `Copy` or `PartialEq`.
+//!   `finalize` zeroes the whole state in place (the partial block included) with stores the
+//!   compiler keeps, and so does dropping it (`docs/IDIOMS.md`). [`Poly1305State`] is
+//!   therefore not `Copy` or `PartialEq`.
 //! - `final` is a `bool` (LZ: a `u8`); the tag's words are the low four bytes of each
 //!   reduced limb instead of an `as u32` cast.
 //! - Constant time: the block function is the same multiply-and-carry chain, and the final
@@ -213,8 +214,8 @@ impl Poly1305State {
     }
 
     /// `poly1305_finish`: pads and absorbs the last block and returns the 16-byte tag; the
-    /// state, key included, is wiped as it drops.
-    pub fn finalize(mut self) -> [u8; 16] {
+    /// state, key included, is wiped in place.
+    pub fn finalize(&mut self) -> [u8; 16] {
         // process the remaining block
         if self.leftover != 0 {
             let i = self.leftover;
@@ -293,6 +294,9 @@ impl Poly1305State {
         for (out, h) in mac.as_chunks_mut::<4>().0.iter_mut().zip([h0, h1, h2, h3]) {
             out.copy_from_slice(&h.to_le_bytes()[..4]);
         }
+
+        // zero out the state
+        self.zeroize();
         mac
     }
 }
@@ -399,11 +403,11 @@ mod tests {
     }
 
     #[test]
-    fn zeroize_clears_the_key_material() {
-        // What `Drop` runs when `finalize` consumes the state (the C clears r, h and pad).
+    fn finalize_clears_the_key_material() {
+        // In place, as the C clears r, h and pad (and what `Drop` runs).
         let mut st = Poly1305State::new(&key());
         st.update(b"abc");
-        st.zeroize();
+        assert_eq!(st.finalize(), mac(&key(), b"abc"));
         assert_eq!((st.r, st.h, st.pad), ([0; 5], [0; 5], [0; 4]));
         assert_eq!((st.buffer, st.leftover, st.final_), ([0; 16], 0, false));
     }

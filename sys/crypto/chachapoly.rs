@@ -68,8 +68,8 @@
 //!   framework's Init/Setkey/Reinit/Update/Final protocol is unchanged.
 //! - The lengths the C reads are types: the key material of `Setkey` is `&[u8; 36]`, the IVs
 //!   `&[u8; 8]`, the block of `crypt` `&mut [u8; 64]` (LZ: slices indexed for those lengths).
-//!   `update` returns nothing (LZ: `Result` for the C's constant 0); `finalize` consumes the
-//!   context and returns the tag (LZ: an out parameter, and the context wiped in place).
+//!   `update` returns nothing (LZ: `Result` for the C's constant 0); `finalize` returns the
+//!   tag (LZ: an out parameter) and wipes the context in place, as the C does.
 //! - Both contexts zero their secrets when they drop (`docs/IDIOMS.md`): the ChaCha and
 //!   Poly1305 states do it themselves, and the contexts' own drops wipe the one-time Poly1305
 //!   key and the counter and salt words. The C's `explicit_bzero(ctx)` at the end of `Final` is
@@ -134,8 +134,9 @@ impl Drop for Chacha20Ctx {
 }
 
 impl Chacha20Ctx {
-    /// Zeroes the counter and salt words (the ChaCha state zeroes itself as it drops).
+    /// Zeroes the ChaCha state and the counter and salt words.
     pub(crate) fn zeroize(&mut self) {
+        self.block.zeroize();
         explicit_bzero(&mut self.nonce);
     }
 
@@ -192,11 +193,13 @@ impl Drop for Chacha20Poly1305Ctx {
 }
 
 impl Chacha20Poly1305Ctx {
-    /// Zeroes the one-time Poly1305 key and the counter and salt words (the ChaCha and
-    /// Poly1305 states zero themselves as they drop).
+    /// Zeroes the whole context: the one-time Poly1305 key, the counter and salt words, the
+    /// ChaCha and the Poly1305 states (the C's `explicit_bzero(ctx, sizeof(*ctx))`).
     pub(crate) fn zeroize(&mut self) {
         explicit_bzero(&mut self.key);
         explicit_bzero(&mut self.nonce);
+        self.chacha.zeroize();
+        self.poly.zeroize();
     }
 
     /// `Chacha20_Poly1305_Init`: every field zero (the old contents wiped as they drop).
@@ -234,9 +237,11 @@ impl Chacha20Poly1305Ctx {
         }
     }
 
-    /// `Chacha20_Poly1305_Final`: the tag; the context is wiped as it drops.
-    pub fn finalize(mut self) -> [u8; POLY1305_TAGLEN] {
-        core::mem::take(&mut self.poly).finalize()
+    /// `Chacha20_Poly1305_Final`: the tag; the whole context is wiped in place.
+    pub fn finalize(&mut self) -> [u8; POLY1305_TAGLEN] {
+        let tag = self.poly.finalize();
+        self.zeroize();
+        tag
     }
 }
 
@@ -519,10 +524,17 @@ mod tests {
         blk[8..12].copy_from_slice(&(ct.len() as u32).to_le_bytes());
         auth.update(&blk);
 
-        // The drop that ends `finalize` is the C's explicit_bzero(ctx); `zeroize_*` below
-        // checks what each part's drop clears.
         let tag = auth.finalize();
         assert_eq!(tag.to_vec(), hex("1ae10b594f09e26a7e902ecbd0600691"));
+        // Final wipes the context.
+        assert_eq!(auth.key, [0; POLY1305_KEYLEN]);
+        assert_eq!(auth.nonce, [0; CHACHA20_NONCE]);
+        assert_eq!(auth.chacha.block.input, [0; 16]);
+        assert_eq!(auth.chacha.nonce, [0; CHACHA20_NONCE]);
+        assert_eq!(
+            (auth.poly.r, auth.poly.h, auth.poly.pad),
+            ([0; 5], [0; 5], [0; 4])
+        );
     }
 
     #[test]
@@ -769,7 +781,7 @@ mod tests {
         material[32..].copy_from_slice(&[1, 2, 3, 4]);
         let mut enc = Chacha20Ctx::new(&material).expect("key and salt");
         enc.zeroize();
-        assert_eq!(enc.nonce, [0; CHACHA20_NONCE]);
+        assert_eq!((enc.nonce, enc.block.input), ([0; CHACHA20_NONCE], [0; 16]));
 
         let mut auth = Chacha20Poly1305Ctx::default();
         auth.setkey(&material);

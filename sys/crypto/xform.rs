@@ -785,7 +785,7 @@ fn gmac_update(c: &mut AuthCtx, data: &[u8]) -> Result<(), Errno> {
 fn gmac_final(digest: &mut [u8], c: &mut AuthCtx) {
     match c {
         AuthCtx::AesGmac(x) => {
-            *digest_out::<GMAC_DIGEST_LEN>(digest) = core::mem::take(x).finalize();
+            *digest_out::<GMAC_DIGEST_LEN>(digest) = x.finalize();
         }
         _ => bad_ctx("gmac"),
     }
@@ -840,7 +840,7 @@ fn chachapoly_update(c: &mut AuthCtx, data: &[u8]) -> Result<(), Errno> {
 fn chachapoly_final(digest: &mut [u8], c: &mut AuthCtx) {
     match c {
         AuthCtx::Chacha20Poly1305(x) => {
-            *digest_out::<POLY1305_TAGLEN>(digest) = core::mem::take(x).finalize();
+            *digest_out::<POLY1305_TAGLEN>(digest) = x.finalize();
         }
         _ => bad_ctx("chacha20-poly1305"),
     }
