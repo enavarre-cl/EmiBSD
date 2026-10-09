@@ -1236,7 +1236,7 @@ kind = "renamed"
 rust = "sys/crypto/chachapoly.rs"
 lz = ["sys/crypto/chachapoly.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/chacha_private.rs"]
+adapted_by = ["sys/crypto/chacha_private.rs", "sys/crypto/poly1305.rs"]
 
 [[module]]
 rust = "sys/crypto/criov.rs"
@@ -1362,7 +1362,27 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/poly1305.rs"
 lz = ["sys/crypto/poly1305.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/poly1305.rs::poly1305_init"
+native = ["Poly1305State::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/poly1305.rs::poly1305_blocks"
+native = ["Poly1305State::blocks"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/poly1305.rs::poly1305_update"
+native = ["Poly1305State::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/poly1305.rs::poly1305_finish"
+native = ["Poly1305State::finalize"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/rijndael.rs"

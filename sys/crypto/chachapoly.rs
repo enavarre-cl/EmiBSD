@@ -62,9 +62,7 @@
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
 use super::chacha_private::{ChachaCtx, hchacha20};
-use super::poly1305::{
-    Poly1305State, poly1305_block_size, poly1305_finish, poly1305_init, poly1305_update,
-};
+use super::poly1305::{Poly1305State, poly1305_block_size};
 use super::wipe;
 use crate::sys::errno::Errno;
 
@@ -178,7 +176,7 @@ pub fn Chacha20_Poly1305_Reinit(ctx: &mut Chacha20Poly1305Ctx, iv: &[u8]) {
     v.copy_from_slice(&iv[..8]);
     ctx.chacha.block.ivsetup(&v, Some(&ctx.nonce));
     ctx.chacha.block.encrypt_bytes_inplace(&mut ctx.key);
-    poly1305_init(&mut ctx.poly, &ctx.key);
+    ctx.poly = Poly1305State::new(&ctx.key);
 }
 
 /// `Chacha20_Poly1305_Update`: authenticates `data`, then zero-pads to a 16-byte boundary.
@@ -186,12 +184,12 @@ pub fn Chacha20_Poly1305_Reinit(ctx: &mut Chacha20Poly1305Ctx, iv: &[u8]) {
 pub fn Chacha20_Poly1305_Update(ctx: &mut Chacha20Poly1305Ctx, data: &[u8]) -> Result<(), Errno> {
     const ZEROES: [u8; POLY1305_BLOCK_LEN] = [0; POLY1305_BLOCK_LEN];
 
-    poly1305_update(&mut ctx.poly, data);
+    ctx.poly.update(data);
 
     // number of bytes in the last 16 byte block
     let rem = (data.len() + POLY1305_BLOCK_LEN) & (POLY1305_BLOCK_LEN - 1);
     if rem > 0 {
-        poly1305_update(&mut ctx.poly, &ZEROES[..POLY1305_BLOCK_LEN - rem]);
+        ctx.poly.update(&ZEROES[..POLY1305_BLOCK_LEN - rem]);
     }
     Ok(())
 }
@@ -199,7 +197,7 @@ pub fn Chacha20_Poly1305_Update(ctx: &mut Chacha20Poly1305Ctx, data: &[u8]) -> R
 /// `Chacha20_Poly1305_Final`: the tag; the context is wiped.
 #[allow(non_snake_case)] // the C name
 pub fn Chacha20_Poly1305_Final(tag: &mut [u8; POLY1305_TAGLEN], ctx: &mut Chacha20Poly1305Ctx) {
-    poly1305_finish(&mut ctx.poly, tag);
+    *tag = core::mem::take(&mut ctx.poly).finalize();
     wipe(ctx);
 }
 
@@ -214,39 +212,36 @@ fn chacha20poly1305_setup(
     nonce: u64,
     key: &[u8; CHACHA20POLY1305_KEY_SIZE],
 ) -> (ChachaCtx, Poly1305State) {
-    let mut poly1305_ctx = Poly1305State::default();
     let mut b0 = [0u8; CHACHA20POLY1305_KEY_SIZE];
     let le_nonce = nonce.to_le_bytes();
 
     let mut chacha_ctx = ChachaCtx::new(key);
     chacha_ctx.ivsetup(&le_nonce, None);
     chacha_ctx.encrypt_bytes_inplace(&mut b0);
-    poly1305_init(&mut poly1305_ctx, &b0);
+    let poly1305_ctx = Poly1305State::new(&b0);
     explicit_bzero(&mut b0);
     (chacha_ctx, poly1305_ctx)
 }
 
 /// The tag over `ad` and `ct` (RFC 8439 section 2.8).
 fn chacha20poly1305_mac(
-    poly1305_ctx: &mut Poly1305State,
+    mut poly1305_ctx: Poly1305State,
     ad: &[u8],
     ct: &[u8],
 ) -> [u8; CHACHA20POLY1305_AUTHTAG_SIZE] {
     let mut lens = [0u8; 16];
 
-    poly1305_update(poly1305_ctx, ad);
-    poly1305_update(poly1305_ctx, pad(ad.len()));
+    poly1305_ctx.update(ad);
+    poly1305_ctx.update(pad(ad.len()));
 
-    poly1305_update(poly1305_ctx, ct);
-    poly1305_update(poly1305_ctx, pad(ct.len()));
+    poly1305_ctx.update(ct);
+    poly1305_ctx.update(pad(ct.len()));
 
     lens[..8].copy_from_slice(&(ad.len() as u64).to_le_bytes());
     lens[8..].copy_from_slice(&(ct.len() as u64).to_le_bytes());
-    poly1305_update(poly1305_ctx, &lens);
+    poly1305_ctx.update(&lens);
 
-    let mut mac = [0u8; CHACHA20POLY1305_AUTHTAG_SIZE];
-    poly1305_finish(poly1305_ctx, &mut mac);
-    mac
+    poly1305_ctx.finalize()
 }
 
 /// `chacha20poly1305_encrypt`: `dst` (`src.len() + 16` bytes) gets the ciphertext of `src`
@@ -271,14 +266,13 @@ pub fn chacha20poly1305_encrypt_inplace(
     nonce: u64,
     key: &[u8; CHACHA20POLY1305_KEY_SIZE],
 ) {
-    let (mut chacha_ctx, mut poly1305_ctx) = chacha20poly1305_setup(nonce, key);
+    let (mut chacha_ctx, poly1305_ctx) = chacha20poly1305_setup(nonce, key);
 
     let (data, tag) = buf[..src_len + CHACHA20POLY1305_AUTHTAG_SIZE].split_at_mut(src_len);
     chacha_ctx.encrypt_bytes_inplace(data);
-    tag.copy_from_slice(&chacha20poly1305_mac(&mut poly1305_ctx, ad, data));
+    tag.copy_from_slice(&chacha20poly1305_mac(poly1305_ctx, ad, data));
 
     wipe(&mut chacha_ctx);
-    wipe(&mut poly1305_ctx);
 }
 
 /// `chacha20poly1305_decrypt`: checks the tag at the end of `src` and, when it is authentic,
@@ -296,8 +290,8 @@ pub fn chacha20poly1305_decrypt(
     }
     let dst_len = src.len() - CHACHA20POLY1305_AUTHTAG_SIZE;
 
-    let (mut chacha_ctx, mut poly1305_ctx) = chacha20poly1305_setup(nonce, key);
-    let mut mac = chacha20poly1305_mac(&mut poly1305_ctx, ad, &src[..dst_len]);
+    let (mut chacha_ctx, poly1305_ctx) = chacha20poly1305_setup(nonce, key);
+    let mut mac = chacha20poly1305_mac(poly1305_ctx, ad, &src[..dst_len]);
 
     let ret = timingsafe_bcmp(&mac, &src[dst_len..]);
     if !ret {
@@ -306,7 +300,6 @@ pub fn chacha20poly1305_decrypt(
     }
 
     wipe(&mut chacha_ctx);
-    wipe(&mut poly1305_ctx);
     explicit_bzero(&mut mac);
 
     !ret
@@ -325,8 +318,8 @@ pub fn chacha20poly1305_decrypt_inplace(
     }
     let dst_len = buf.len() - CHACHA20POLY1305_AUTHTAG_SIZE;
 
-    let (mut chacha_ctx, mut poly1305_ctx) = chacha20poly1305_setup(nonce, key);
-    let mut mac = chacha20poly1305_mac(&mut poly1305_ctx, ad, &buf[..dst_len]);
+    let (mut chacha_ctx, poly1305_ctx) = chacha20poly1305_setup(nonce, key);
+    let mut mac = chacha20poly1305_mac(poly1305_ctx, ad, &buf[..dst_len]);
 
     let ret = timingsafe_bcmp(&mac, &buf[dst_len..]);
     if !ret {
@@ -334,7 +327,6 @@ pub fn chacha20poly1305_decrypt_inplace(
     }
 
     wipe(&mut chacha_ctx);
-    wipe(&mut poly1305_ctx);
     explicit_bzero(&mut mac);
 
     !ret
@@ -494,7 +486,10 @@ mod tests {
         assert_eq!(auth.nonce, [0; CHACHA20_NONCE]);
         assert_eq!(auth.chacha.block.input, [0; 16]);
         assert_eq!(auth.chacha.nonce, [0; CHACHA20_NONCE]);
-        assert_eq!(auth.poly, Poly1305State::default());
+        assert_eq!(
+            (auth.poly.r, auth.poly.h, auth.poly.pad),
+            ([0; 5], [0; 5], [0; 4])
+        );
     }
 
     #[test]

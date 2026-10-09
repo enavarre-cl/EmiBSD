@@ -34,23 +34,40 @@
 //! form with 26-bit limbs: 32 bit by 32 bit multiplications into 64 bit sums.
 //!
 //! Upstream: sys/crypto/poly1305.h @ 3ce1f3f79392, sys/crypto/poly1305.c @ 3ce1f3f79392
+//! LZ: sys/crypto/poly1305.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module.
 //! - The limbs are `u64` where the C has `unsigned long`: both are 64 bits on the two LP64
-//!   targets, and the code relies on that width (the sign test in [`poly1305_finish`] reads
-//!   bit 63). Arithmetic that wraps in C (`g4 - (1 << 26)`) is spelled `wrapping_*`.
-//! - The key is `&[u8; 32]`, the tag `&mut [u8; 16]`, the message a slice.
-//! - [`poly1305_finish`] clears the limbs by assignment, as the C does one by one; `buffer`
-//!   keeps its last block (as in C).
+//!   targets, and the code relies on that width (the sign test in
+//!   [`Poly1305State::finalize`] reads bit 63). Arithmetic that wraps in C (`g4 - (1 << 26)`)
+//!   is spelled `wrapping_*`.
+//!
+//! ## Redesign
+//! - The functions over a `poly1305_state` are methods of [`Poly1305State`] (LZ: free
+//!   functions with the state first): `poly1305_init` is the constructor
+//!   [`Poly1305State::new`], which returns the started MAC (LZ: it filled an `&mut`);
+//!   `poly1305_update` is [`Poly1305State::update`], `poly1305_blocks` the private `blocks`,
+//!   and `poly1305_finish` is [`Poly1305State::finalize`], which consumes the state and
+//!   returns the tag (LZ: an `&mut [u8; 16]` out parameter and the state kept).
+//! - The C clears `h`, `r` and `pad` at the end of `poly1305_finish` with plain stores; here
+//!   the whole state (the partial block included) is zeroed as it drops (`docs/IDIOMS.md`),
+//!   with stores the compiler keeps. [`Poly1305State`] is therefore not `Copy` or `PartialEq`.
+//! - `final` is a `bool` (LZ: a `u8`); the tag's words are the low four bytes of each
+//!   reduced limb instead of an `as u32` cast.
+//! - Constant time: the block function is the same multiply-and-carry chain, and the final
+//!   reduction still selects `h` or `h - p` with a mask from bit 63, without a branch; the
+//!   only branches test the public `final` flag and the lengths of the data.
+
+use super::wipe;
 
 /// `poly1305_block_size`.
 #[allow(non_upper_case_globals)] // the C's lower-case macro name, verbatim
 pub const poly1305_block_size: usize = 16;
 
 /// `poly1305_state`: the clamped key `r`, the accumulator `h`, the final pad, and the partial
-/// block waiting for more input.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// block waiting for more input. Started by [`Poly1305State::new`]; zeroed when dropped.
+#[derive(Clone, Debug, Default)]
 pub struct Poly1305State {
     /// `r`: the clamped first half of the key, five 26-bit limbs.
     pub r: [u64; 5],
@@ -63,205 +80,226 @@ pub struct Poly1305State {
     /// `buffer`: the partial block.
     pub buffer: [u8; poly1305_block_size],
     /// `final`: set while the last, padded block is processed (it has no high bit).
-    pub final_: u8,
+    pub final_: bool,
+}
+
+impl Drop for Poly1305State {
+    /// Wipes the key, the accumulator and the partial block (`docs/IDIOMS.md`: a key
+    /// schedule is zeroed when dropped).
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl Poly1305State {
+    /// Zeroes the whole state, with stores the compiler keeps (`crate::crypto::wipe`).
+    pub(crate) fn zeroize(&mut self) {
+        self.r
+            .iter_mut()
+            .chain(self.h.iter_mut())
+            .chain(self.pad.iter_mut())
+            .for_each(wipe);
+        self.buffer.iter_mut().for_each(wipe);
+        wipe(&mut self.leftover);
+        wipe(&mut self.final_);
+    }
+
+    /// `poly1305_init`: a MAC started under `key` (`r` clamped, the pad saved).
+    pub fn new(key: &[u8; 32]) -> Self {
+        Self {
+            // r &= 0xffffffc0ffffffc0ffffffc0fffffff
+            r: [
+                u8to32(&key[0..]) & 0x3ffffff,
+                (u8to32(&key[3..]) >> 2) & 0x3ffff03,
+                (u8to32(&key[6..]) >> 4) & 0x3ffc0ff,
+                (u8to32(&key[9..]) >> 6) & 0x3f03fff,
+                (u8to32(&key[12..]) >> 8) & 0x00fffff,
+            ],
+            // h = 0
+            h: [0; 5],
+            // save pad for later
+            pad: [
+                u8to32(&key[16..]),
+                u8to32(&key[20..]),
+                u8to32(&key[24..]),
+                u8to32(&key[28..]),
+            ],
+            leftover: 0,
+            buffer: [0; poly1305_block_size],
+            final_: false,
+        }
+    }
+
+    /// `poly1305_blocks`: absorbs `m`, a whole number of 16-byte blocks (a trailing partial
+    /// block is ignored, as the C's loop does).
+    fn blocks(&mut self, m: &[u8]) {
+        let hibit: u64 = if self.final_ { 0 } else { 1 << 24 }; // 1 << 128
+        let [r0, r1, r2, r3, r4] = self.r;
+        let s1 = r1 * 5;
+        let s2 = r2 * 5;
+        let s3 = r3 * 5;
+        let s4 = r4 * 5;
+        let [mut h0, mut h1, mut h2, mut h3, mut h4] = self.h;
+
+        for blk in m.as_chunks::<poly1305_block_size>().0 {
+            // h += m[i]
+            h0 += u8to32(&blk[0..]) & 0x3ffffff;
+            h1 += (u8to32(&blk[3..]) >> 2) & 0x3ffffff;
+            h2 += (u8to32(&blk[6..]) >> 4) & 0x3ffffff;
+            h3 += (u8to32(&blk[9..]) >> 6) & 0x3ffffff;
+            h4 += (u8to32(&blk[12..]) >> 8) | hibit;
+
+            // h *= r
+            let d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1;
+            let mut d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2;
+            let mut d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3;
+            let mut d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4;
+            let mut d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0;
+
+            // (partial) h %= p
+            let mut c = d0 >> 26;
+            h0 = d0 & 0x3ffffff;
+            d1 += c;
+            c = d1 >> 26;
+            h1 = d1 & 0x3ffffff;
+            d2 += c;
+            c = d2 >> 26;
+            h2 = d2 & 0x3ffffff;
+            d3 += c;
+            c = d3 >> 26;
+            h3 = d3 & 0x3ffffff;
+            d4 += c;
+            c = d4 >> 26;
+            h4 = d4 & 0x3ffffff;
+            h0 += c * 5;
+            c = h0 >> 26;
+            h0 &= 0x3ffffff;
+            h1 += c;
+        }
+
+        self.h = [h0, h1, h2, h3, h4];
+    }
+
+    /// `poly1305_update`: adds `m` to the message.
+    pub fn update(&mut self, m: &[u8]) {
+        let mut m = m;
+
+        // handle leftover
+        if self.leftover != 0 {
+            let want = (poly1305_block_size - self.leftover).min(m.len());
+            self.buffer[self.leftover..self.leftover + want].copy_from_slice(&m[..want]);
+            m = &m[want..];
+            self.leftover += want;
+            if self.leftover < poly1305_block_size {
+                return;
+            }
+            let buffer = self.buffer;
+            self.blocks(&buffer);
+            self.leftover = 0;
+        }
+
+        // process full blocks
+        if m.len() >= poly1305_block_size {
+            let want = m.len() & !(poly1305_block_size - 1);
+            self.blocks(&m[..want]);
+            m = &m[want..];
+        }
+
+        // store leftover
+        if !m.is_empty() {
+            self.buffer[self.leftover..self.leftover + m.len()].copy_from_slice(m);
+            self.leftover += m.len();
+        }
+    }
+
+    /// `poly1305_finish`: pads and absorbs the last block and returns the 16-byte tag; the
+    /// state, key included, is wiped as it drops.
+    pub fn finalize(mut self) -> [u8; 16] {
+        // process the remaining block
+        if self.leftover != 0 {
+            let i = self.leftover;
+            self.buffer[i] = 1;
+            self.buffer[i + 1..].fill(0);
+            self.final_ = true;
+            let buffer = self.buffer;
+            self.blocks(&buffer);
+        }
+
+        // fully carry h
+        let [mut h0, mut h1, mut h2, mut h3, mut h4] = self.h;
+
+        let mut c = h1 >> 26;
+        h1 &= 0x3ffffff;
+        h2 += c;
+        c = h2 >> 26;
+        h2 &= 0x3ffffff;
+        h3 += c;
+        c = h3 >> 26;
+        h3 &= 0x3ffffff;
+        h4 += c;
+        c = h4 >> 26;
+        h4 &= 0x3ffffff;
+        h0 += c * 5;
+        c = h0 >> 26;
+        h0 &= 0x3ffffff;
+        h1 += c;
+
+        // compute h + -p
+        let mut g0 = h0 + 5;
+        c = g0 >> 26;
+        g0 &= 0x3ffffff;
+        let mut g1 = h1 + c;
+        c = g1 >> 26;
+        g1 &= 0x3ffffff;
+        let mut g2 = h2 + c;
+        c = g2 >> 26;
+        g2 &= 0x3ffffff;
+        let mut g3 = h3 + c;
+        c = g3 >> 26;
+        g3 &= 0x3ffffff;
+        let mut g4 = (h4 + c).wrapping_sub(1 << 26);
+
+        // select h if h < p, or h + -p if h >= p
+        let mut mask = (g4 >> (u64::BITS - 1)).wrapping_sub(1);
+        g0 &= mask;
+        g1 &= mask;
+        g2 &= mask;
+        g3 &= mask;
+        g4 &= mask;
+        mask = !mask;
+        h0 = (h0 & mask) | g0;
+        h1 = (h1 & mask) | g1;
+        h2 = (h2 & mask) | g2;
+        h3 = (h3 & mask) | g3;
+        h4 = (h4 & mask) | g4;
+
+        // h = h % (2^128)
+        h0 = (h0 | (h1 << 26)) & 0xffffffff;
+        h1 = ((h1 >> 6) | (h2 << 20)) & 0xffffffff;
+        h2 = ((h2 >> 12) | (h3 << 14)) & 0xffffffff;
+        h3 = ((h3 >> 18) | (h4 << 8)) & 0xffffffff;
+
+        // mac = (h + pad) % (2^128)
+        let mut f = h0 + self.pad[0];
+        h0 = f & 0xffffffff;
+        f = h1 + self.pad[1] + (f >> 32);
+        h1 = f & 0xffffffff;
+        f = h2 + self.pad[2] + (f >> 32);
+        h2 = f & 0xffffffff;
+        f = h3 + self.pad[3] + (f >> 32);
+        h3 = f & 0xffffffff;
+
+        let mut mac = [0u8; 16];
+        for (out, h) in mac.as_chunks_mut::<4>().0.iter_mut().zip([h0, h1, h2, h3]) {
+            out.copy_from_slice(&h.to_le_bytes()[..4]);
+        }
+        mac
+    }
 }
 
 /// `U8TO32`: the little-endian 32-bit word at the start of `p`.
 fn u8to32(p: &[u8]) -> u64 {
     u64::from(u32::from_le_bytes([p[0], p[1], p[2], p[3]]))
-}
-
-/// `poly1305_init`: starts a MAC under `key` (`r` clamped, the pad saved).
-pub fn poly1305_init(st: &mut Poly1305State, key: &[u8; 32]) {
-    // r &= 0xffffffc0ffffffc0ffffffc0fffffff
-    st.r[0] = u8to32(&key[0..]) & 0x3ffffff;
-    st.r[1] = (u8to32(&key[3..]) >> 2) & 0x3ffff03;
-    st.r[2] = (u8to32(&key[6..]) >> 4) & 0x3ffc0ff;
-    st.r[3] = (u8to32(&key[9..]) >> 6) & 0x3f03fff;
-    st.r[4] = (u8to32(&key[12..]) >> 8) & 0x00fffff;
-
-    // h = 0
-    st.h = [0; 5];
-
-    // save pad for later
-    st.pad[0] = u8to32(&key[16..]);
-    st.pad[1] = u8to32(&key[20..]);
-    st.pad[2] = u8to32(&key[24..]);
-    st.pad[3] = u8to32(&key[28..]);
-
-    st.leftover = 0;
-    st.final_ = 0;
-}
-
-/// `poly1305_blocks`: absorbs `m`, a whole number of 16-byte blocks (a trailing partial block
-/// is ignored, as the C's loop does).
-fn poly1305_blocks(st: &mut Poly1305State, m: &[u8]) {
-    let hibit: u64 = if st.final_ != 0 { 0 } else { 1 << 24 }; // 1 << 128
-    let [r0, r1, r2, r3, r4] = st.r;
-    let s1 = r1 * 5;
-    let s2 = r2 * 5;
-    let s3 = r3 * 5;
-    let s4 = r4 * 5;
-    let [mut h0, mut h1, mut h2, mut h3, mut h4] = st.h;
-
-    for blk in m.as_chunks::<poly1305_block_size>().0 {
-        // h += m[i]
-        h0 += u8to32(&blk[0..]) & 0x3ffffff;
-        h1 += (u8to32(&blk[3..]) >> 2) & 0x3ffffff;
-        h2 += (u8to32(&blk[6..]) >> 4) & 0x3ffffff;
-        h3 += (u8to32(&blk[9..]) >> 6) & 0x3ffffff;
-        h4 += (u8to32(&blk[12..]) >> 8) | hibit;
-
-        // h *= r
-        let d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1;
-        let mut d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2;
-        let mut d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3;
-        let mut d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4;
-        let mut d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0;
-
-        // (partial) h %= p
-        let mut c = d0 >> 26;
-        h0 = d0 & 0x3ffffff;
-        d1 += c;
-        c = d1 >> 26;
-        h1 = d1 & 0x3ffffff;
-        d2 += c;
-        c = d2 >> 26;
-        h2 = d2 & 0x3ffffff;
-        d3 += c;
-        c = d3 >> 26;
-        h3 = d3 & 0x3ffffff;
-        d4 += c;
-        c = d4 >> 26;
-        h4 = d4 & 0x3ffffff;
-        h0 += c * 5;
-        c = h0 >> 26;
-        h0 &= 0x3ffffff;
-        h1 += c;
-    }
-
-    st.h = [h0, h1, h2, h3, h4];
-}
-
-/// `poly1305_update`: adds `m` to the message.
-pub fn poly1305_update(st: &mut Poly1305State, m: &[u8]) {
-    let mut m = m;
-
-    // handle leftover
-    if st.leftover != 0 {
-        let want = (poly1305_block_size - st.leftover).min(m.len());
-        st.buffer[st.leftover..st.leftover + want].copy_from_slice(&m[..want]);
-        m = &m[want..];
-        st.leftover += want;
-        if st.leftover < poly1305_block_size {
-            return;
-        }
-        let buffer = st.buffer;
-        poly1305_blocks(st, &buffer);
-        st.leftover = 0;
-    }
-
-    // process full blocks
-    if m.len() >= poly1305_block_size {
-        let want = m.len() & !(poly1305_block_size - 1);
-        poly1305_blocks(st, &m[..want]);
-        m = &m[want..];
-    }
-
-    // store leftover
-    if !m.is_empty() {
-        st.buffer[st.leftover..st.leftover + m.len()].copy_from_slice(m);
-        st.leftover += m.len();
-    }
-}
-
-/// `poly1305_finish`: pads and absorbs the last block, writes the 16-byte tag and clears the
-/// key material from the state.
-pub fn poly1305_finish(st: &mut Poly1305State, mac: &mut [u8; 16]) {
-    // process the remaining block
-    if st.leftover != 0 {
-        let mut i = st.leftover;
-        st.buffer[i] = 1;
-        i += 1;
-        st.buffer[i..].fill(0);
-        st.final_ = 1;
-        let buffer = st.buffer;
-        poly1305_blocks(st, &buffer);
-    }
-
-    // fully carry h
-    let [mut h0, mut h1, mut h2, mut h3, mut h4] = st.h;
-
-    let mut c = h1 >> 26;
-    h1 &= 0x3ffffff;
-    h2 += c;
-    c = h2 >> 26;
-    h2 &= 0x3ffffff;
-    h3 += c;
-    c = h3 >> 26;
-    h3 &= 0x3ffffff;
-    h4 += c;
-    c = h4 >> 26;
-    h4 &= 0x3ffffff;
-    h0 += c * 5;
-    c = h0 >> 26;
-    h0 &= 0x3ffffff;
-    h1 += c;
-
-    // compute h + -p
-    let mut g0 = h0 + 5;
-    c = g0 >> 26;
-    g0 &= 0x3ffffff;
-    let mut g1 = h1 + c;
-    c = g1 >> 26;
-    g1 &= 0x3ffffff;
-    let mut g2 = h2 + c;
-    c = g2 >> 26;
-    g2 &= 0x3ffffff;
-    let mut g3 = h3 + c;
-    c = g3 >> 26;
-    g3 &= 0x3ffffff;
-    let mut g4 = (h4 + c).wrapping_sub(1 << 26);
-
-    // select h if h < p, or h + -p if h >= p
-    let mut mask = (g4 >> (u64::BITS - 1)).wrapping_sub(1);
-    g0 &= mask;
-    g1 &= mask;
-    g2 &= mask;
-    g3 &= mask;
-    g4 &= mask;
-    mask = !mask;
-    h0 = (h0 & mask) | g0;
-    h1 = (h1 & mask) | g1;
-    h2 = (h2 & mask) | g2;
-    h3 = (h3 & mask) | g3;
-    h4 = (h4 & mask) | g4;
-
-    // h = h % (2^128)
-    h0 = (h0 | (h1 << 26)) & 0xffffffff;
-    h1 = ((h1 >> 6) | (h2 << 20)) & 0xffffffff;
-    h2 = ((h2 >> 12) | (h3 << 14)) & 0xffffffff;
-    h3 = ((h3 >> 18) | (h4 << 8)) & 0xffffffff;
-
-    // mac = (h + pad) % (2^128)
-    let mut f = h0 + st.pad[0];
-    h0 = f & 0xffffffff;
-    f = h1 + st.pad[1] + (f >> 32);
-    h1 = f & 0xffffffff;
-    f = h2 + st.pad[2] + (f >> 32);
-    h2 = f & 0xffffffff;
-    f = h3 + st.pad[3] + (f >> 32);
-    h3 = f & 0xffffffff;
-
-    mac[0..4].copy_from_slice(&(h0 as u32).to_le_bytes());
-    mac[4..8].copy_from_slice(&(h1 as u32).to_le_bytes());
-    mac[8..12].copy_from_slice(&(h2 as u32).to_le_bytes());
-    mac[12..16].copy_from_slice(&(h3 as u32).to_le_bytes());
-
-    // zero out the state
-    st.h = [0; 5];
-    st.r = [0; 5];
-    st.pad = [0; 4];
 }
 /* </CODE> */
 
@@ -275,13 +313,12 @@ mod tests {
     use super::*;
     use crate::crypto::testutil::{hex, hexn};
 
+    extern crate std;
+
     fn mac(key: &[u8; 32], msg: &[u8]) -> [u8; 16] {
-        let mut st = Poly1305State::default();
-        let mut tag = [0u8; 16];
-        poly1305_init(&mut st, key);
-        poly1305_update(&mut st, msg);
-        poly1305_finish(&mut st, &mut tag);
-        tag
+        let mut st = Poly1305State::new(key);
+        st.update(msg);
+        st.finalize()
     }
 
     #[test]
@@ -351,26 +388,66 @@ mod tests {
         let d = data();
         for (n, want) in CASES {
             for chunk in [1usize, 3, 7, 15, 16, 17, 31, 64] {
-                let mut st = Poly1305State::default();
-                let mut tag = [0u8; 16];
-                poly1305_init(&mut st, &key());
+                let mut st = Poly1305State::new(&key());
                 for piece in d[..*n].chunks(chunk) {
-                    poly1305_update(&mut st, piece);
+                    st.update(piece);
                 }
-                poly1305_finish(&mut st, &mut tag);
+                let tag = st.finalize();
                 assert_eq!(tag.to_vec(), hex(want), "length {n} in chunks of {chunk}");
             }
         }
     }
 
     #[test]
-    fn finish_clears_the_key_material() {
-        let mut st = Poly1305State::default();
-        let mut tag = [0u8; 16];
-        poly1305_init(&mut st, &key());
-        poly1305_update(&mut st, b"abc");
-        poly1305_finish(&mut st, &mut tag);
+    fn zeroize_clears_the_key_material() {
+        // What `Drop` runs when `finalize` consumes the state (the C clears r, h and pad).
+        let mut st = Poly1305State::new(&key());
+        st.update(b"abc");
+        st.zeroize();
         assert_eq!((st.r, st.h, st.pad), ([0; 5], [0; 5], [0; 4]));
+        assert_eq!((st.buffer, st.leftover, st.final_), ([0; 16], 0, false));
+    }
+
+    /// xorshift64: the property tests' generator.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    #[test]
+    fn random_splits_and_flipped_bits() {
+        // Random messages fed in random pieces give the one-call tag; one flipped bit of the
+        // message or the key changes it.
+        let mut st = 0x0bad_5eed_dead_beefu64;
+        for _ in 0..100 {
+            let mut k = [0u8; 32];
+            k.iter_mut().for_each(|b| *b = next(&mut st) as u8);
+            let len = (next(&mut st) % 200) as usize;
+            let msg: std::vec::Vec<u8> = (0..len).map(|_| next(&mut st) as u8).collect();
+            let whole = mac(&k, &msg);
+
+            let mut s = Poly1305State::new(&k);
+            let mut rest = &msg[..];
+            while !rest.is_empty() {
+                let n = 1 + (next(&mut st) as usize % rest.len());
+                s.update(&rest[..n]);
+                rest = &rest[n..];
+            }
+            assert_eq!(s.finalize(), whole);
+
+            let bit = next(&mut st) as usize;
+            if len > 0 {
+                let mut m2 = msg.clone();
+                m2[(bit / 8) % len] ^= 1 << (bit % 8);
+                assert_ne!(mac(&k, &m2), whole);
+            }
+            // Any bit of the pad (the key's second half) changes the tag.
+            let mut k2 = k;
+            k2[16 + (bit / 8) % 16] ^= 1 << (bit % 8);
+            assert_ne!(mac(&k2, &msg), whole);
+        }
     }
 }
 /* </TESTS> */
