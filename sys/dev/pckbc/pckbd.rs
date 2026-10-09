@@ -97,6 +97,11 @@
 //! The console keyboard path ([`pckbd_cnattach`] and the console operations) is ported but
 //! unused: `pckbc_cnattach` is never called (`pckbc.rs`), the console is the serial port.
 //!
+//! `pckbd_enable` sends `KBC_ENABLE` with `pckbc_poll_cmd` while the keyboard's interrupt is
+//! live; when the caller runs on the CPU that takes the interrupt, `pckbcintr` may read the
+//! ACK first and the poll times out (EIO, "pckbd_enable: command error"). The race is the
+//! C's, reproduced on OpenBSD 8.0 in QEMU (docs/EXTERNAL_BUGS.md), and kept.
+//!
 //! ## Deviations
 //! - `WSDISPLAY_COMPAT_RAWKBD` is on in the GENERIC of both architectures, so its code is
 //!   compiled in unconditionally (as in `hidkbd.rs`): `rawkbd`, `sc_rawcnt`, `sc_rawbuf`,
