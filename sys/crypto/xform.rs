@@ -144,7 +144,7 @@ use super::gmac::{
     GMAC_BLOCK_LEN, GMAC_DIGEST_LEN,
 };
 use super::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
-use super::rijndael::{RijndaelCtx, rijndael_decrypt, rijndael_encrypt, rijndael_set_key};
+use super::rijndael::RijndaelCtx;
 use super::rmd160::{RMD160_DIGEST_LENGTH, Rmd160Ctx};
 use super::sha1::{SHA1_DIGEST_LENGTH, Sha1Ctx};
 use super::sha2::{
@@ -205,7 +205,7 @@ pub struct AesCtrCtx {
 }
 
 /// `struct aes_xts_ctx`: the key schedule of AES-XTS.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct AesXtsCtx {
     /// `key1`: the data key.
     pub key1: RijndaelCtx,
@@ -566,24 +566,22 @@ fn aes_xts_reinit(key: &mut Kschedule, iv: &[u8]) {
     // Last 64 bits of IV are always zero
     ctx.tweak[AES_XTS_IVSIZE..].fill(0);
 
-    let tweak = ctx.tweak;
-    rijndael_encrypt(&ctx.key2, &tweak, &mut ctx.tweak);
+    ctx.tweak = ctx.key2.encrypt(&ctx.tweak);
 }
 
 /// `aes_xts_crypt`.
 fn aes_xts_crypt(ctx: &mut AesXtsCtx, data: &mut [u8], do_encrypt: bool) {
     let mut block = [0u8; AES_XTS_BLOCKSIZE];
-    let mut out = [0u8; AES_XTS_BLOCKSIZE];
 
     for i in 0..AES_XTS_BLOCKSIZE {
         block[i] = data[i] ^ ctx.tweak[i];
     }
 
-    if do_encrypt {
-        rijndael_encrypt(&ctx.key1, &block, &mut out);
+    let mut out = if do_encrypt {
+        ctx.key1.encrypt(&block)
     } else {
-        rijndael_decrypt(&ctx.key1, &block, &mut out);
-    }
+        ctx.key1.decrypt(&block)
+    };
 
     for i in 0..AES_XTS_BLOCKSIZE {
         data[i] = out[i] ^ ctx.tweak[i];
@@ -620,9 +618,11 @@ fn aes_xts_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
         return Err(Errno::EINVAL);
     }
 
-    let mut ctx = AesXtsCtx::default();
-    rijndael_set_key(&mut ctx.key1, key, len as i32 * 4)?;
-    rijndael_set_key(&mut ctx.key2, &key[len / 2..], len as i32 * 4)?;
+    let ctx = AesXtsCtx {
+        key1: RijndaelCtx::new(&key[..len / 2])?,
+        key2: RijndaelCtx::new(&key[len / 2..])?,
+        tweak: [0; AES_XTS_BLOCKSIZE],
+    };
     *sched = Kschedule::AesXts(ctx);
     Ok(())
 }

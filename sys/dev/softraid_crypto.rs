@@ -116,10 +116,7 @@ use crate::crypto::cryptodev::{
     Cryptodesc, Cryptoini, Cryptop, RIJNDAEL128_BLOCK_LEN,
 };
 use crate::crypto::hmac::HmacSha1Ctx;
-use crate::crypto::rijndael::{
-    AES_MAXKEYBYTES, RijndaelCtx, rijndael_decrypt, rijndael_encrypt, rijndael_set_key,
-    rijndael_set_key_enc_only,
-};
+use crate::crypto::rijndael::{AES_MAXKEYBYTES, RijndaelCtx};
 use crate::crypto::sha1::{SHA1_DIGEST_LENGTH, Sha1Ctx};
 use crate::dev::biovar::{
     BIOC_SCNOAUTOASSEMBLE, BIOC_SDINVALID, BIOC_SDOFFLINE, BIOC_SDONLINE, BIOC_SOIN,
@@ -630,14 +627,14 @@ pub fn sr_crypto_encrypt(
     let mut ctx = RijndaelCtx::default();
 
     let rv = match alg {
-        SR_CRYPTOM_AES_ECB_256 => {
-            if rijndael_set_key_enc_only(&mut ctx, key, 256).is_err() {
-                Err(Errno::EIO)
-            } else {
-                ecb_blocks(p, c, |src, dst| rijndael_encrypt(&ctx, src, dst));
+        SR_CRYPTOM_AES_ECB_256 => match RijndaelCtx::new_enc_only(&key[..AES_MAXKEYBYTES]) {
+            Err(_) => Err(Errno::EIO),
+            Ok(keyed) => {
+                ctx = keyed;
+                ecb_blocks(p, c, |src, dst| *dst = ctx.encrypt(src));
                 Ok(())
             }
-        }
+        },
         _ => {
             // DNPRINTF(SR_D_DIS, "%s: unsupported encryption algorithm %d\n")
             Err(Errno::EINVAL)
@@ -658,14 +655,14 @@ pub fn sr_crypto_decrypt(
     let mut ctx = RijndaelCtx::default();
 
     let rv = match alg {
-        SR_CRYPTOM_AES_ECB_256 => {
-            if rijndael_set_key(&mut ctx, key, 256).is_err() {
-                Err(Errno::EIO)
-            } else {
-                ecb_blocks(c, p, |src, dst| rijndael_decrypt(&ctx, src, dst));
+        SR_CRYPTOM_AES_ECB_256 => match RijndaelCtx::new(&key[..AES_MAXKEYBYTES]) {
+            Err(_) => Err(Errno::EIO),
+            Ok(keyed) => {
+                ctx = keyed;
+                ecb_blocks(c, p, |src, dst| *dst = ctx.decrypt(src));
                 Ok(())
             }
-        }
+        },
         _ => {
             // DNPRINTF(SR_D_DIS, "%s: unsupported encryption algorithm %d\n")
             Err(Errno::EINVAL)

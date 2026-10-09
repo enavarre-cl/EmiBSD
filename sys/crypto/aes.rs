@@ -781,9 +781,7 @@ mod tests {
     // `rijndael.rs`, the multi-block ECB paths, and the key schedules against `rijndael.rs`'s.
 
     use super::*;
-    use crate::crypto::rijndael::{
-        RijndaelCtx, rijndael_set_key, rijndaelKeySetupDec, rijndaelKeySetupEnc,
-    };
+    use crate::crypto::rijndael::{RijndaelCtx, rijndaelKeySetupDec, rijndaelKeySetupEnc};
     use crate::crypto::testutil::{hex, hexn};
 
     extern crate std;
@@ -922,23 +920,20 @@ mod tests {
 
             let mut rek = [0u32; 60];
             let mut rdk = [0u32; 60];
-            let bits = len as i32 * 8;
-            assert_eq!(rijndaelKeySetupEnc(&mut rek, &k, bits), Ok(r as i32));
-            assert_eq!(rijndaelKeySetupDec(&mut rdk, &k, bits), Ok(r as i32));
+            assert_eq!(rijndaelKeySetupEnc(&mut rek, &k), Ok(r as usize));
+            assert_eq!(rijndaelKeySetupDec(&mut rdk, &k), Ok(r as usize));
             let n = 4 * (r as usize + 1);
             assert_eq!(ek[..n], rek[..n], "encrypt schedule {len}");
             assert_eq!(dk[..n], rdk[..n], "decrypt schedule {len}");
 
             // And both ciphers agree on a block.
-            let mut rctx = RijndaelCtx::default();
-            assert_eq!(rijndael_set_key(&mut rctx, &k, bits), Ok(()));
+            let rctx = RijndaelCtx::new(&k).expect("AES key size");
             let mut a = AesCtx::default();
             assert_eq!(AES_Setkey(&mut a, &k), Ok(()));
             let pt: [u8; 16] = hexn("00112233445566778899aabbccddeeff");
-            let (mut x, mut y) = ([0u8; 16], [0u8; 16]);
+            let mut x = [0u8; 16];
             AES_Encrypt(&a, &pt, &mut x);
-            crate::crypto::rijndael::rijndael_encrypt(&rctx, &pt, &mut y);
-            assert_eq!(x, y);
+            assert_eq!(x, rctx.encrypt(&pt));
         }
     }
 

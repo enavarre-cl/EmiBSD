@@ -1030,7 +1030,8 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/aes.rs"
 lz = ["sys/crypto/aes.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/rijndael.rs"]
 
 [[module]]
 rust = "sys/crypto/blake2s.rs"
@@ -1275,7 +1276,32 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/rijndael.rs"
 lz = ["sys/crypto/rijndael.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/rijndael.rs::getu32"
+native = ["words"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/rijndael.rs::rijndael_set_key_enc_only"
+native = ["RijndaelCtx::new_enc_only"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/rijndael.rs::rijndael_set_key"
+native = ["RijndaelCtx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/rijndael.rs::rijndael_decrypt"
+native = ["RijndaelCtx::decrypt"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/rijndael.rs::rijndael_encrypt"
+native = ["RijndaelCtx::encrypt"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/rmd160.rs"
@@ -1492,7 +1518,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs", "sys/crypto/rijndael.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
@@ -2406,7 +2432,7 @@ status = "inherited"
 rust = "sys/dev/softraid_crypto.rs"
 lz = ["sys/dev/softraid_crypto.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/sha1.rs", "sys/crypto/hmac.rs"]
+adapted_by = ["sys/crypto/sha1.rs", "sys/crypto/hmac.rs", "sys/crypto/rijndael.rs"]
 
 [[module]]
 rust = "sys/dev/softraid_raid0.rs"
