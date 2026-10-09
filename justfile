@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-vmwpvs smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-mpi smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-vmwpvs smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
@@ -1541,6 +1541,33 @@ smoke-siop: (build-amd64 "--features qemu,multiprocessor")
         --expect '*3: A6' --expect '/dev/rsd1a: ' --expect "siop-written-42" --expect "m13-siop-42" \
         --expect "siop-cmp-42" --expect "1048576 bytes transferred" --expect "m13-raw-42" \
         --expect "m10c-iso-42"
+
+# M16a: mpi(4) on QEMU's LSI SAS1068 (`--mptsas`, `tools/xtask/src/storage.rs`: the adapter
+# after every other device and a fresh zeroed 64 MiB `scsi-hd` at target 0), both archs.
+# The kernel must attach mpi0 on the PCI bus with MSI (OpenBSD 8.0 on the same QEMU:
+# `mpi0 at pci0 dev 4 function 0 "Symbios Logic SAS1068" rev 0x00: msi`, `mpi0: QEMU MPT
+# Fusion, firmware 1.50.146.0`, `scsibusN at mpi0: 8 targets`, `sdM at scsibusN targ 0 lun 0:
+# <QEMU, QEMU HARDDISK, 2.5+>`, `sdM: 64MB, 512 bytes/sector, 131072 sectors, thin`). The
+# session runs fdisk(8), disklabel(8) and newfs(8) on the disk, writes a file and a copy of
+# /bin/ksh, unmounts, mounts read-only and reads both back (cmp(1)), and reads 1 MiB raw with
+# dd(1). Part of `smoke`.
+smoke-mpi: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-mpi: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --mptsas mpi-amd64.img \
+        {{disk_login}} \
+        --send-after '# ' --send 'fdisk -iy -f /dev/rsd1c sd1 && fdisk -f /dev/rsd1c sd1\n' \
+        --send-after '# ' --send 'disklabel -w -A sd1 && disklabel sd1\n' \
+        --send-after '# ' --send 'newfs sd1a\n' \
+        --send-after '# ' --send 'mount /dev/sd1a /mnt && echo m16a-mpi-$((40+2)) >/mnt/mpi.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo mpi-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/sd1a /mnt && cat /mnt/mpi.txt && cmp /bin/ksh /mnt/ksh && echo mpi-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rsd1c of=/dev/null bs=64k count=16\n' \
+        --expect "mpi0 at pci0 dev "
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --mptsas mpi-arm64.img \
+        {{disk_login}} \
+        --expect "mpi0 at pci0 dev "
 
 # M13: em(4), the exit criterion's "em(4) on e1000e answers the M7+ ping". `--nic e1000e`
 # (`tools/xtask/src/hwopts.rs`) puts QEMU's 82574L on the user network in vio0's place, so
