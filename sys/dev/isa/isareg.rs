@@ -73,6 +73,8 @@ pub const IO_ICUSIZE: u16 = 16;
 pub const IO_TIMER1: u16 = 0x040;
 /// `IO_KBD`: 8042 Keyboard.
 pub const IO_KBD: u16 = 0x060;
+/// `IO_PPI`: Programmable Peripheral Interface.
+pub const IO_PPI: u16 = 0x061;
 /// RTC.
 pub const IO_RTC: u16 = 0x070;
 /// NMI Control.
@@ -106,6 +108,7 @@ mod tests {
         assert_eq!(crate::reftest::int(&defs, "IO_ICU1"), Some(IO_ICU1 as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_ICU2"), Some(IO_ICU2 as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_KBD"), Some(IO_KBD as i64));
+        assert_eq!(crate::reftest::int(&defs, "IO_PPI"), Some(IO_PPI as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_RTC"), Some(IO_RTC as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_NMI"), Some(IO_NMI as i64));
         assert_eq!(

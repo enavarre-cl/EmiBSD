@@ -17,21 +17,31 @@
 /* </LICENSES> */
 
 /* <CODE> */
-//! The ISA bus: OpenBSD `sys/dev/isa/`: the bus itself (`isa.c`, `isavar.h`), the register
-//! map amd64's timer code needs (`isareg.h`) and `com(4)`'s attachment (`com_isa.c`),
-//! `pckbc(4)`'s (`pckbc_isa.c`).
+//! `<dev/isa/pcppireg.h>`: PPI speaker control values (port B of the PC's 8255 at
+//! `IO_PPI`).
+//!
+//! Upstream: sys/dev/isa/pcppireg.h @ 3ce1f3f79392
 
-pub mod com_isa;
-#[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/isa/isa.c
-pub mod isa;
-pub mod isareg;
-pub mod isavar;
-pub mod lpt_isa;
-pub mod pckbc_isa;
-pub mod pcppi;
-pub mod pcppireg;
-pub mod pcppivar;
-pub mod spkr;
-pub mod spkrio;
-pub mod vga_isa;
+/// `PIT_ENABLETMR2`: Enable timer/counter 2.
+pub const PIT_ENABLETMR2: u8 = 0x01;
+/// `PIT_SPKRDATA`: Direct to speaker.
+pub const PIT_SPKRDATA: u8 = 0x02;
+
+/// `PIT_SPKR`: the timer's gate and the speaker together.
+pub const PIT_SPKR: u8 = PIT_ENABLETMR2 | PIT_SPKRDATA;
 /* </CODE> */
+
+/* <TESTS> */
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn values_match_the_c_header() {
+        let defs = crate::reftest::defines("sys/dev/isa/pcppireg.h");
+        let ours = crate::reftest::assert_defines!(defs; PIT_ENABLETMR2, PIT_SPKRDATA, PIT_SPKR);
+        crate::reftest::assert_complete(&defs, "PIT_", &ours);
+    }
+}
+/* </TESTS> */

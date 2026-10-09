@@ -2347,6 +2347,40 @@ status = "inherited"
 notes = "M16d: the whole file: match (self test at IO_KBD unless console, claims port 0x60/5, irq 1 and 12), activate (suspend/resume), attach (two IST_EDGE IPL_TTY interrupts, the malloc'ed PckbcInternal or the console's, pckbc_attach with cf_flags)"
 
 [[module]]
+rust = "sys/dev/isa/pcppi.rs"
+lz = ["sys/dev/isa/pcppi.rs"]
+status = "inherited"
+license = "Carnegie Mellon notice"
+notes = "M16d: the whole file: pcppi_match (port B's bit-0 toggle test), pcppi_attach (maps the i8254 and port B, hooks pcppi_kbd_bell into pckbd and hidkbd, NPCKBD and NHIDKBD > 0, attaches spkr), pcppi_bell (counter 2 square wave, PIT_SPKR, timeout or poll or sleep on pcppi_bell_stop's address), pcppi_bell_stop, pcppi_kbd_bell; IO_PPI added to isareg.rs; pcppi0 at isa? in amd64's ioconf (amd64 GENERIC only); license: Carnegie Mellon notice, kept whole; smoke-bell: the console bell reaches pcspk-audiodev"
+
+[[module]]
+rust = "sys/dev/isa/pcppireg.rs"
+lz = ["sys/dev/isa/pcppireg.rs"]
+status = "inherited"
+license = "none"
+notes = "M16d: PIT_ENABLETMR2, PIT_SPKRDATA, PIT_SPKR (u8, port B's bits); no licence text in the C; reference-backed test"
+
+[[module]]
+rust = "sys/dev/isa/pcppivar.rs"
+lz = ["sys/dev/isa/pcppivar.rs"]
+status = "inherited"
+license = "Carnegie Mellon notice"
+notes = "M16d: pcppi_tag_t (PcppiTag), struct pcppi_attach_args, PCPPI_BELL_SLEEP/POLL; pcppi_bell lives in pcppi.rs; license: Carnegie Mellon notice, kept whole; reference-backed test"
+
+[[module]]
+rust = "sys/dev/isa/spkr.rs"
+lz = ["sys/dev/isa/spkr.rs"]
+status = "inherited"
+notes = "M16d: the whole file: tone, rest, the play string interpreter (playinit, playtone, playstring) over a copy of the play state with a Sound call-back (host-tested), spkrprobe/spkrattach, spkropen/close/write/ioctl (SPKRTONE, SPKRTUNE with copyin); the file-scope state is one StaticCell under the kernel lock; number and length arithmetic wraps where the C's int overflow is undefined, a division by zero after 26+ dots panics where the C traps (OpenBSD 8.0: integer divide fault in playtone, EXTERNAL_BUGS); SPKRDEBUG not carried; cdevsw 27 on amd64 (NSPKR 1); spkr0 at pcppi? in amd64's ioconf; license: BSD-4 (Eric S. Raymond), kept whole"
+
+[[module]]
+rust = "sys/dev/isa/spkrio.rs"
+lz = ["sys/dev/isa/spkrio.rs"]
+status = "inherited"
+license = "none"
+notes = "M16d: SPKRTONE, SPKRTUNE, tone_t (ToneT, AbiPod); the C's comment says duration is in 1/100 s, spkr.c passes milliseconds; no licence text in the C; host test of the ioctl numbers"
+
+[[module]]
 rust = "sys/dev/isa/vga_isa.rs"
 lz = ["sys/dev/isa/vga_isa.rs"]
 status = "inherited"

@@ -84,6 +84,7 @@ use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
 use crate::dev::ic::lpt::{lptclose, lptopen, lptwrite};
 use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
+use crate::dev::isa::spkr::{spkrclose, spkrioctl, spkropen, spkrwrite};
 use crate::dev::midi::{NMIDI, midiclose, midiioctl, midikqfilter, midiopen, midiread, midiwrite};
 use crate::dev::pv::viocon::{
     vioconclose, vioconioctl, vioconopen, vioconread, vioconstop, viocontty, vioconwrite,
@@ -136,7 +137,7 @@ use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
     cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_gpio_init, cdev_ipmi_init,
     cdev_lpt_init, cdev_midi_init, cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init,
-    cdev_ptc_init, cdev_ptm_init, cdev_tty_init, cdev_usb_init, cdev_usbdev_init,
+    cdev_ptc_init, cdev_ptm_init, cdev_spkr_init, cdev_tty_init, cdev_usb_init, cdev_usbdev_init,
     cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
@@ -147,6 +148,9 @@ pub const NCOM: i32 = 4;
 
 /// `NLPT`: `lpt0 at isa?` in GENERIC (M16d; `lpt* at puc?` waits for `lpt_puc.c`).
 pub const NLPT: i32 = 1;
+
+/// `NSPKR`: `spkr0 at pcppi?` in GENERIC (M16d).
+pub const NSPKR: i32 = 1;
 
 /// `NVIOCON`: GENERIC's `#viocon* at virtio?` is commented out, so 0 (the entry points answer
 /// `ENXIO`); 1 with the cargo feature `viocon`, which stands for uncommenting it (M16d).
@@ -294,7 +298,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 24
     cnotdef(), // 25
     cnotdef(), // 26
-    cnotdef(), // 27: PC speaker (spkr: not ported)
+    // 27: PC speaker
+    Cell::new(cdev_spkr_init(
+        NSPKR, spkropen, spkrclose, spkrwrite, spkrioctl,
+    )),
     cnotdef(), // 28 was LKM
     cnotdef(), // 29
     cnotdef(), // 30: dynamic tracer (dt: not ported)

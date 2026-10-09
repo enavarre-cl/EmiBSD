@@ -122,7 +122,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm smoke-virtio smoke-viogpu " + \
     "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom " + \
-    "smoke-pckbc smoke-eap smoke-lpt"
+    "smoke-pckbc smoke-eap smoke-lpt smoke-bell"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2254,6 +2254,28 @@ smoke-lpt: (build-amd64 "--features qemu,multiprocessor")
         --parallel lpt.txt --expect-parallel 'lpt-hello-42' \
         {{disk_login}} --send-after '# ' --send '{{lpt_session}}' \
         --expect 'lpt0 at isa0 port 0x378/4 irq 7' --expect 'lpt-rc-0'
+
+# M16d: pcppi(4) and spkr(4), amd64 (the only GENERIC with them). QEMU's PC speaker is heard
+# through the `wav` backend (`--pcspk`, devices.rs: `-machine pcspk-audiodev`). First boot: the
+# shell writes BEL to /dev/ttyC0; wsdisplay's bell goes to the keyboard on its mux, pckbd(4),
+# whose bell pcppi hooked up (pcppi_kbd_bell): counter 2 of the i8254 at the bell's pitch, gated
+# to the speaker for its period (400 Hz, 100 ms), and `--expect-tone` finds it in the file, as
+# OpenBSD 8.0 does on the same machine (diff-openbsd probe: 8170 loud samples). Second boot:
+# spkr(4) plays a scale written to /dev/speaker (`cdefgab`), each note pcppi_bell slept through.
+# QEMU's `wav` backend writes through a 16 kB stdio buffer and the smoke kills QEMU once the
+# lines are seen, so the shell rings the bell ten times, 0.2 s apart, to have more than a buffer
+# of it in the file. Part of `smoke`.
+bell_session := 'for i in 1 2 3 4 5 6 7 8 9 10; do printf "\\007" > /dev/ttyC0; sleep 0.2; done; sleep 1; echo bell-$((40+2))\n'
+spkr_session := 'echo cdefgab > /dev/speaker; echo spkr-rc-$?; sleep 1; echo spkr-$((40+2))\n'
+smoke-bell: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-bell: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --pcspk --expect-tone {{disk_login}} --send-after '# ' --send '{{bell_session}}' \
+        --expect 'pcppi0 at isa0 port 0x61' --expect 'spkr0 at pcppi0' --expect 'bell-42'
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --pcspk --expect-tone {{disk_login}} --send-after '# ' --send '{{spkr_session}}' \
+        --expect 'spkr0 at pcppi0' --expect 'spkr-rc-0' --expect 'spkr-42'
 
 # `smoke-audio`'s session: the parameters and the mixer, then the tone.
 audio_play := disk_login + " " + \
