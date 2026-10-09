@@ -263,8 +263,15 @@ fn git_raw(repo: &Path, args: &[&str]) -> Result<String> {
 
 /// `src` without the RCS ident lines (`/* $OpenBSD: ... $ */`, `$NetBSD`, `$FreeBSD`): CVS
 /// keyword expansions, not licence text, dropped from this tree and kept in LZ (decision 20).
+///
+/// Dropping an ident line at the top of a file, or one between two blank lines, leaves a
+/// leading blank line or two blank lines in a row, which rustfmt removes; the commit that
+/// dropped the lines (`6b5304c`) removed them too. So the blank line that follows a dropped
+/// ident goes with it when the text kept so far is empty or ends in a blank line. No other
+/// blank line is touched.
 pub(crate) fn strip_ident_lines(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
+    let mut drop_next_blank = false;
     for line in src.split_inclusive('\n') {
         let t = line.trim();
         let ident = t.starts_with("/*")
@@ -272,9 +279,16 @@ pub(crate) fn strip_ident_lines(src: &str) -> String {
             && ["$OpenBSD:", "$NetBSD:", "$FreeBSD:"]
                 .iter()
                 .any(|k| t.contains(k));
-        if !ident {
-            out.push_str(line);
+        if ident {
+            drop_next_blank |= out.is_empty() || out.ends_with("\n\n");
+            continue;
         }
+        if drop_next_blank && t.is_empty() {
+            drop_next_blank = false;
+            continue;
+        }
+        drop_next_blank = false;
+        out.push_str(line);
     }
     out
 }
@@ -1409,6 +1423,21 @@ mod tests {
             strip_ident_lines(src),
             "/* <LICENSES> */\n/*\n * Copyright\n */\n"
         );
+    }
+
+    #[test]
+    fn strips_the_blank_line_a_dropped_ident_leaves_behind() {
+        // At the top of a file without a licence block: the blank line under the ident goes.
+        let top = "/*\t$OpenBSD: a.h,v 1.1 x $\t*/\n\npub const A: u32 = 1;\n";
+        assert_eq!(strip_ident_lines(top), "pub const A: u32 = 1;\n");
+        // Between two blank lines (a second header merged in): one blank line stays.
+        let mid = "a\n\n/*\t$OpenBSD: _types.h,v 1.10 x $\t*/\n\nb\n";
+        assert_eq!(strip_ident_lines(mid), "a\n\nb\n");
+        // Right after code: the blank line under it is real separation and stays.
+        let after_code = "a\n/*\t$NetBSD: b.h,v 1.2 x $\t*/\n\nb\n";
+        assert_eq!(strip_ident_lines(after_code), "a\n\nb\n");
+        // The native side, already without the ident, is unchanged.
+        assert_eq!(strip_ident_lines("a\n\nb\n"), "a\n\nb\n");
     }
 
     #[test]
