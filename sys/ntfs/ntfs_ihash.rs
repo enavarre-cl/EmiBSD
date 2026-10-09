@@ -96,9 +96,7 @@
 
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
-use crate::crypto::siphash::{
-    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SipHash24Ctx, SiphashKey};
 use crate::dev::rnd::arc4random_buf;
 use crate::kern::kern_subr::{hashfree, hashinit};
 use crate::kern::subr_prf::panic;
@@ -174,12 +172,11 @@ pub fn ntfs_hash(dev: Dev, inum: Ntfsino) -> u32 {
         k0: NTFS_NTHASHKEY[0].load(Ordering::Relaxed),
         k1: NTFS_NTHASHKEY[1].load(Ordering::Relaxed),
     };
-    let mut ctx = SiphashCtx::default();
-    SipHash24_Init(&mut ctx, &key);
-    SipHash24_Update(&mut ctx, &dev.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &inum.to_ne_bytes());
+    let mut ctx = SipHash24Ctx::new(&key);
+    ctx.update(&dev.to_ne_bytes());
+    ctx.update(&inum.to_ne_bytes());
 
-    (SipHash24_End(&mut ctx) & NTFS_NTHASH.load(Ordering::Relaxed)) as u32
+    (ctx.end() & NTFS_NTHASH.load(Ordering::Relaxed)) as u32
 }
 
 /// `&ntfs_nthashtbl[NTNOHASH(device, inum)]`.

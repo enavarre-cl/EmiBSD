@@ -148,7 +148,7 @@ use core::ptr;
 #[cfg(feature = "diagnostic")]
 use core::sync::atomic::Ordering;
 
-use crate::crypto::siphash::{SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx};
+use crate::crypto::siphash::SipHash24Ctx;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::subr_prf::panic;
@@ -232,16 +232,15 @@ pub fn in6_pcbhash(
     laddr: &In6Addr,
     lport: u16,
 ) -> u64 {
-    let mut ctx = SiphashCtx::default();
+    let mut ctx = SipHash24Ctx::new(&table.inpt_key.get());
     let nrdom = rdomain.to_be_bytes();
 
-    SipHash24_Init(&mut ctx, &table.inpt_key.get());
-    SipHash24_Update(&mut ctx, &nrdom);
-    SipHash24_Update(&mut ctx, &faddr.s6_addr);
-    SipHash24_Update(&mut ctx, &fport.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &laddr.s6_addr);
-    SipHash24_Update(&mut ctx, &lport.to_ne_bytes());
-    SipHash24_End(&mut ctx)
+    ctx.update(&nrdom);
+    ctx.update(&faddr.s6_addr);
+    ctx.update(&fport.to_ne_bytes());
+    ctx.update(&laddr.s6_addr);
+    ctx.update(&lport.to_ne_bytes());
+    ctx.end()
 }
 
 /// `in6_pcbaddrisavail_lock`: whether `inp` may bind to `sin6` (an address of ours, not

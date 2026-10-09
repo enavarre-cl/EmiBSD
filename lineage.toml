@@ -1266,7 +1266,82 @@ kind = "split"
 [[module]]
 rust = "sys/crypto/siphash.rs"
 lz = ["sys/crypto/siphash.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash_Init"
+native = ["SiphashCtx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash_Update"
+native = ["SiphashCtx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash_Final"
+native = ["SiphashCtx::finalize"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash_End"
+native = ["SiphashCtx::end"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash"
+native = ["SiphashCtx::hash"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash_Rounds"
+native = ["SiphashCtx::rounds"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash_CRounds"
+native = ["SiphashCtx::crounds"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash24_Init"
+native = ["SiphashCtx::new"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash24_Update"
+native = ["SiphashCtx::update"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash24_End"
+native = ["SiphashCtx::end"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash24_Final"
+native = ["SiphashCtx::finalize"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash48_Init"
+native = ["SiphashCtx::new"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash48_Update"
+native = ["SiphashCtx::update"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash48_End"
+native = ["SiphashCtx::end"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/crypto/siphash.rs::SipHash48_Final"
+native = ["SiphashCtx::finalize"]
+kind = "merged"
 
 [[module]]
 rust = "sys/crypto/sk.rs"
@@ -2682,7 +2757,8 @@ status = "inherited"
 [[module]]
 rust = "sys/isofs/cd9660/cd9660_node.rs"
 lz = ["sys/isofs/cd9660/cd9660_node.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/isofs/cd9660/cd9660_rrip.rs"
@@ -3612,7 +3688,8 @@ status = "inherited"
 [[module]]
 rust = "sys/miscfs/fuse/fuse_ihash.rs"
 lz = ["sys/miscfs/fuse/fuse_ihash.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/miscfs/fuse/fuse_lookup.rs"
@@ -3677,7 +3754,8 @@ status = "inherited"
 [[module]]
 rust = "sys/msdosfs/msdosfs_denode.rs"
 lz = ["sys/msdosfs/msdosfs_denode.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/msdosfs/msdosfs_fat.rs"
@@ -3855,7 +3933,8 @@ status = "inherited"
 [[module]]
 rust = "sys/net/pf_syncookies.rs"
 lz = ["sys/net/pf_syncookies.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/net/pf_table.rs"
@@ -3967,7 +4046,8 @@ status = "inherited"
 [[module]]
 rust = "sys/netinet/in_pcb.rs"
 lz = ["sys/netinet/in_pcb.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/netinet/in_proto.rs"
@@ -4047,7 +4127,8 @@ status = "inherited"
 [[module]]
 rust = "sys/netinet/ip_ipsp.rs"
 lz = ["sys/netinet/ip_ipsp.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/netinet/ip_output.rs"
@@ -4178,7 +4259,8 @@ status = "inherited"
 [[module]]
 rust = "sys/netinet6/in6_pcb.rs"
 lz = ["sys/netinet6/in6_pcb.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/netinet6/in6_proto.rs"
@@ -4408,7 +4490,8 @@ status = "inherited"
 [[module]]
 rust = "sys/ntfs/ntfs_ihash.rs"
 lz = ["sys/ntfs/ntfs_ihash.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/ntfs/ntfs_inode.rs"
@@ -5367,7 +5450,8 @@ status = "inherited"
 [[module]]
 rust = "sys/ufs/ufs/ufs_ihash.rs"
 lz = ["sys/ufs/ufs/ufs_ihash.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/ufs/ufs/ufs_inode.rs"
@@ -5382,7 +5466,8 @@ status = "inherited"
 [[module]]
 rust = "sys/ufs/ufs/ufs_quota.rs"
 lz = ["sys/ufs/ufs/ufs_quota.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/siphash.rs"]
 
 [[module]]
 rust = "sys/ufs/ufs/ufs_vfsops.rs"

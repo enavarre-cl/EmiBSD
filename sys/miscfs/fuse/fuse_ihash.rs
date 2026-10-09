@@ -71,9 +71,7 @@ use core::sync::atomic::Ordering;
 use libkern::StaticCell;
 
 use crate::conf::param::INITIALVNODES;
-use crate::crypto::siphash::{
-    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SipHash24Ctx, SiphashKey};
 use crate::dev::rnd::arc4random_buf;
 use crate::kern::kern_subr::hashinit;
 use crate::kern::subr_prf::panic;
@@ -122,12 +120,11 @@ pub fn fuse_ihash(fmp: &FusefsMnt, inum: Ino) -> &'static ListHead<FusefsIHash> 
     }
 
     let fmp_addr = ptr::from_ref(fmp) as usize;
-    let mut ctx = SiphashCtx::default();
-    SipHash24_Init(&mut ctx, key);
-    SipHash24_Update(&mut ctx, &fmp_addr.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &inum.to_ne_bytes());
+    let mut ctx = SipHash24Ctx::new(key);
+    ctx.update(&fmp_addr.to_ne_bytes());
+    ctx.update(&inum.to_ne_bytes());
 
-    &tbl[(SipHash24_End(&mut ctx) & mask) as usize]
+    &tbl[(ctx.end() & mask) as usize]
 }
 
 /// `fuse_ihashinit`: initialize inode hash table.

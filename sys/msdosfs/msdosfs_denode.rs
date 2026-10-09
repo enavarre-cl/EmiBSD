@@ -95,9 +95,7 @@
 
 use core::ptr::{self, NonNull};
 
-use crate::crypto::siphash::{
-    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SipHash24Ctx, SiphashKey};
 use crate::dev::rnd::arc4random_buf;
 use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc};
@@ -207,13 +205,12 @@ pub fn msdosfs_dehash(dev: Dev, dirclust: u32, diroff: u32) -> u32 {
     // mounted, and read-only afterwards.
     let (mask, key) = unsafe { (*DEHASH.get(), DEHASHKEY.get()) };
 
-    let mut ctx = SiphashCtx::default();
-    SipHash24_Init(&mut ctx, key);
-    SipHash24_Update(&mut ctx, &dev.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &dirclust.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &diroff.to_ne_bytes());
+    let mut ctx = SipHash24Ctx::new(key);
+    ctx.update(&dev.to_ne_bytes());
+    ctx.update(&dirclust.to_ne_bytes());
+    ctx.update(&diroff.to_ne_bytes());
 
-    (SipHash24_End(&mut ctx) & mask) as u32
+    (ctx.end() & mask) as u32
 }
 
 /// `&dehashtbl[DEHASH(dev, dcl, doff)]`.

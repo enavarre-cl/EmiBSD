@@ -78,11 +78,13 @@
 
 /* <CODE> */
 //! SipHash, a family of pseudorandom functions (keyed hashes) optimised for speed on short
-//! messages, returning a 64-bit value: `SipHash24_*` for the fast and reasonably strong
-//! version, `SipHash48_*` for the strong one. The kernel uses it to spread keys over hash
-//! tables an attacker cannot predict (`ufs_ihash`).
+//! messages, returning a 64-bit value: SipHash-2-4 ([`SipHash24Ctx`], [`SipHash24`]) for the
+//! fast and reasonably strong version, SipHash-4-8 ([`SipHash48Ctx`], [`SipHash48`]) for the
+//! strong one. The kernel uses it to spread keys over hash tables an attacker cannot predict
+//! (`ufs_ihash`).
 //!
 //! Upstream: sys/crypto/siphash.h @ 3ce1f3f79392, sys/crypto/siphash.c @ 3ce1f3f79392
+//! LZ: sys/crypto/siphash.rs@f5985f1d055a
 //!
 //! Implemented, as the C is, from the paper "SipHash: a fast short-input PRF" by Jean-Philippe
 //! Aumasson and Daniel J. Bernstein.
@@ -90,11 +92,26 @@
 //! ## Deviations
 //! - The header and the file share this module (one name, as `docs/C_TO_RUST.md` does for
 //!   `.h`/`.c` pairs).
-//! - `SIPHASH_CTX`/`SIPHASH_KEY` are [`SiphashCtx`]/[`SiphashKey`]; the input is a byte slice
-//!   (`src`, `len` in C) and `SipHash_Final` writes into an 8-byte array.
-//! - `SipHash_End` wipes the state by assigning a zeroed one through the `&mut` (a store the
-//!   caller can observe, so it is not elided) instead of `explicit_bzero` over its bytes.
-//! - The `SipHash24_*`/`SipHash48_*` macros are functions with the same names.
+//! - `SIPHASH_CTX`/`SIPHASH_KEY` are [`SiphashCtx`]/[`SiphashKey`].
+//!
+//! ## Redesign
+//! - The context and its functions are a type with methods (`docs/IDIOMS.md`, "a hash
+//!   context"): `SipHash_Init(ctx, key)` is [`SiphashCtx::new`], `SipHash_Update` is
+//!   [`SiphashCtx::update`] over a slice, `SipHash_End` is [`SiphashCtx::end`] and
+//!   `SipHash_Final(dst, ctx)` is [`SiphashCtx::finalize`], which returns the bytes; both
+//!   wipe the context in place (the C's `explicit_bzero(ctx, ..)`). The one-call
+//!   `SipHash(key, rc, rf, src)` is [`SiphashCtx::hash`].
+//! - The C passes the compression and finalisation round counts (`rc`, `rf`) to every call,
+//!   and the `SipHash24_*`/`SipHash48_*` macros fix them; nothing stops an `Update` with one
+//!   count and an `End` with another. Here they are the context's const parameters,
+//!   `SiphashCtx<C, D>`, and [`SipHash24Ctx`] and [`SipHash48Ctx`] are the two the kernel
+//!   uses: the macros' `Init`/`Update`/`End`/`Final` merge into the generic methods, and a
+//!   context cannot change its rounds midway.
+//! - [`SipHash24`] and [`SipHash48`] keep their names and signatures (six callers across
+//!   fs and net use the one-call form).
+//! - The fields are private; the block loop of `update` walks `as_chunks`.
+
+use super::wipe;
 
 /// `SIPHASH_BLOCK_LENGTH`.
 pub const SIPHASH_BLOCK_LENGTH: usize = 8;
@@ -103,16 +120,149 @@ pub const SIPHASH_KEY_LENGTH: usize = 16;
 /// `SIPHASH_DIGEST_LENGTH`.
 pub const SIPHASH_DIGEST_LENGTH: usize = 8;
 
-/// `SIPHASH_CTX`: the state of a hash in progress.
-#[derive(Clone, Copy, Default)]
-pub struct SiphashCtx {
+/// `SIPHASH_CTX`: the state of a SipHash-`C`-`D` hash in progress (`C` compression rounds per
+/// block, `D` finalisation rounds), from [`SiphashCtx::new`] to [`SiphashCtx::end`] or
+/// [`SiphashCtx::finalize`].
+///
+/// `Default` is the wiped, all-zero context the end leaves behind, not a hash under any key.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SiphashCtx<const C: usize, const D: usize> {
     /// `v`: the four state words.
-    pub v: [u64; 4],
+    v: [u64; 4],
     /// `buf`: the bytes of the block not yet compressed.
-    pub buf: [u8; SIPHASH_BLOCK_LENGTH],
-    /// `bytes`: the message length so far.
-    pub bytes: u32,
+    buf: [u8; SIPHASH_BLOCK_LENGTH],
+    /// `bytes`: the message length so far, mod 2^32 (the C's `uint32_t`).
+    bytes: u32,
 }
+
+impl<const C: usize, const D: usize> SiphashCtx<C, D> {
+    /// `SipHash_Init`: starts a hash under `key`.
+    pub fn new(key: &SiphashKey) -> Self {
+        // lemtoh64: the key words are stored little-endian.
+        let k0 = u64::from_le(key.k0);
+        let k1 = u64::from_le(key.k1);
+
+        Self {
+            v: [
+                0x736f_6d65_7073_6575 ^ k0,
+                0x646f_7261_6e64_6f6d ^ k1,
+                0x6c79_6765_6e65_7261 ^ k0,
+                0x7465_6462_7974_6573 ^ k1,
+            ],
+            buf: [0; SIPHASH_BLOCK_LENGTH],
+            bytes: 0,
+        }
+    }
+
+    /// The bytes waiting in `buf`: the message length mod 8.
+    fn used(&self) -> usize {
+        usize::from(self.bytes.to_le_bytes()[0]) % SIPHASH_BLOCK_LENGTH
+    }
+
+    /// `SipHash_Update`: adds `src` to the message, compressing each full block with `C`
+    /// rounds.
+    pub fn update(&mut self, src: &[u8]) {
+        let mut ptr = src;
+        if ptr.is_empty() {
+            return;
+        }
+
+        let used = self.used();
+        // The C adds the `size_t` length to a `uint32_t`: the count is mod 2^32, so the
+        // truncation of the length is the arithmetic the C does.
+        self.bytes = self.bytes.wrapping_add(ptr.len() as u32);
+
+        if used > 0 {
+            let left = SIPHASH_BLOCK_LENGTH - used;
+
+            if ptr.len() >= left {
+                let (head, rest) = ptr.split_at(left);
+                self.buf[used..].copy_from_slice(head);
+                self.crounds();
+                ptr = rest;
+            } else {
+                self.buf[used..used + ptr.len()].copy_from_slice(ptr);
+                return;
+            }
+        }
+
+        let (blocks, rest) = ptr.as_chunks::<SIPHASH_BLOCK_LENGTH>();
+        for block in blocks {
+            self.buf = *block;
+            self.crounds();
+        }
+
+        self.buf[..rest.len()].copy_from_slice(rest);
+    }
+
+    /// `SipHash_Final`: the hash as little-endian bytes; the state is wiped.
+    pub fn finalize(&mut self) -> [u8; SIPHASH_DIGEST_LENGTH] {
+        self.end().to_le_bytes()
+    }
+
+    /// `SipHash_End`: pads the last block with the length, finalises with `D` rounds and
+    /// returns the hash; the state is wiped.
+    pub fn end(&mut self) -> u64 {
+        let used = self.used();
+        self.buf[used..SIPHASH_BLOCK_LENGTH - 1].fill(0);
+        // The low byte of the length, as the C's `ctx->buf[7] = ctx->bytes`.
+        self.buf[SIPHASH_BLOCK_LENGTH - 1] = self.bytes.to_le_bytes()[0];
+
+        self.crounds();
+        self.v[2] ^= 0xff;
+        self.rounds(D);
+
+        let r = (self.v[0] ^ self.v[1]) ^ (self.v[2] ^ self.v[3]);
+        wipe(self);
+        r
+    }
+
+    /// `SipHash`: the hash of `src` under `key`, in one call.
+    pub fn hash(key: &SiphashKey, src: &[u8]) -> u64 {
+        let mut ctx = Self::new(key);
+        ctx.update(src);
+        ctx.end()
+    }
+
+    /// `SipHash_Rounds`: `rounds` SipRounds over the state.
+    fn rounds(&mut self, rounds: usize) {
+        let v = &mut self.v;
+        for _ in 0..rounds {
+            v[0] = v[0].wrapping_add(v[1]);
+            v[2] = v[2].wrapping_add(v[3]);
+            v[1] = v[1].rotate_left(13);
+            v[3] = v[3].rotate_left(16);
+
+            v[1] ^= v[0];
+            v[3] ^= v[2];
+            v[0] = v[0].rotate_left(32);
+
+            v[2] = v[2].wrapping_add(v[1]);
+            v[0] = v[0].wrapping_add(v[3]);
+            v[1] = v[1].rotate_left(17);
+            v[3] = v[3].rotate_left(21);
+
+            v[1] ^= v[2];
+            v[3] ^= v[0];
+            v[2] = v[2].rotate_left(32);
+        }
+    }
+
+    /// `SipHash_CRounds`: compresses the buffered block with `C` rounds.
+    fn crounds(&mut self) {
+        let m = u64::from_le_bytes(self.buf);
+
+        self.v[3] ^= m;
+        self.rounds(C);
+        self.v[0] ^= m;
+    }
+}
+
+/// SipHash-2-4, the `SipHash24_*` macros' context.
+pub type SipHash24Ctx = SiphashCtx<2, 4>;
+
+/// SipHash-4-8, the `SipHash48_*` macros' context.
+pub type SipHash48Ctx = SiphashCtx<4, 8>;
 
 /// `SIPHASH_KEY`: the 128-bit key, two words stored little-endian.
 #[repr(C)]
@@ -124,197 +274,30 @@ pub struct SiphashKey {
     pub k1: u64,
 }
 
-/// `SipHash_Init`: starts a hash under `key`.
-#[allow(non_snake_case)] // the C name
-pub fn SipHash_Init(ctx: &mut SiphashCtx, key: &SiphashKey) {
-    // lemtoh64: the key words are stored little-endian.
-    let k0 = u64::from_le(key.k0);
-    let k1 = u64::from_le(key.k1);
-
-    ctx.v[0] = 0x736f_6d65_7073_6575 ^ k0;
-    ctx.v[1] = 0x646f_7261_6e64_6f6d ^ k1;
-    ctx.v[2] = 0x6c79_6765_6e65_7261 ^ k0;
-    ctx.v[3] = 0x7465_6462_7974_6573 ^ k1;
-
-    ctx.buf = [0; SIPHASH_BLOCK_LENGTH];
-    ctx.bytes = 0;
-}
-
-/// `SipHash_Update`: adds `src` to the message, compressing each full block with `rc`
-/// rounds.
-#[allow(non_snake_case)] // the C name
-pub fn SipHash_Update(ctx: &mut SiphashCtx, rc: i32, _rf: i32, src: &[u8]) {
-    let mut ptr = src;
-    if ptr.is_empty() {
-        return;
-    }
-
-    let used = ctx.bytes as usize % SIPHASH_BLOCK_LENGTH;
-    ctx.bytes = ctx.bytes.wrapping_add(ptr.len() as u32);
-
-    if used > 0 {
-        let left = SIPHASH_BLOCK_LENGTH - used;
-
-        if ptr.len() >= left {
-            ctx.buf[used..].copy_from_slice(&ptr[..left]);
-            SipHash_CRounds(ctx, rc);
-            ptr = &ptr[left..];
-        } else {
-            ctx.buf[used..used + ptr.len()].copy_from_slice(ptr);
-            return;
-        }
-    }
-
-    while ptr.len() >= SIPHASH_BLOCK_LENGTH {
-        ctx.buf.copy_from_slice(&ptr[..SIPHASH_BLOCK_LENGTH]);
-        SipHash_CRounds(ctx, rc);
-        ptr = &ptr[SIPHASH_BLOCK_LENGTH..];
-    }
-
-    if !ptr.is_empty() {
-        ctx.buf[..ptr.len()].copy_from_slice(ptr);
-    }
-}
-
-/// `SipHash_Final`: the digest, as little-endian bytes.
-#[allow(non_snake_case)] // the C name
-pub fn SipHash_Final(
-    dst: &mut [u8; SIPHASH_DIGEST_LENGTH],
-    ctx: &mut SiphashCtx,
-    rc: i32,
-    rf: i32,
-) {
-    *dst = SipHash_End(ctx, rc, rf).to_le_bytes();
-}
-
-/// `SipHash_End`: pads the last block with the length, finalises with `rf` rounds and
-/// returns the hash; the state is wiped.
-#[allow(non_snake_case)] // the C name
-pub fn SipHash_End(ctx: &mut SiphashCtx, rc: i32, rf: i32) -> u64 {
-    let used = ctx.bytes as usize % SIPHASH_BLOCK_LENGTH;
-    let left = SIPHASH_BLOCK_LENGTH - used;
-    ctx.buf[used..used + left - 1].fill(0);
-    ctx.buf[7] = ctx.bytes as u8;
-
-    SipHash_CRounds(ctx, rc);
-    ctx.v[2] ^= 0xff;
-    SipHash_Rounds(ctx, rf);
-
-    let r = (ctx.v[0] ^ ctx.v[1]) ^ (ctx.v[2] ^ ctx.v[3]);
-    *ctx = SiphashCtx::default();
-    r
-}
-
-/// `SipHash`: the hash of `src` under `key`, in one call.
-#[allow(non_snake_case)] // the C name
-pub fn SipHash(key: &SiphashKey, rc: i32, rf: i32, src: &[u8]) -> u64 {
-    let mut ctx = SiphashCtx::default();
-
-    SipHash_Init(&mut ctx, key);
-    SipHash_Update(&mut ctx, rc, rf, src);
-    SipHash_End(&mut ctx, rc, rf)
-}
-
-/// `SipHash_Rounds`: `rounds` SipRounds over the state.
-#[allow(non_snake_case)] // the C name
-fn SipHash_Rounds(ctx: &mut SiphashCtx, rounds: i32) {
-    let v = &mut ctx.v;
-    for _ in 0..rounds {
-        v[0] = v[0].wrapping_add(v[1]);
-        v[2] = v[2].wrapping_add(v[3]);
-        v[1] = v[1].rotate_left(13);
-        v[3] = v[3].rotate_left(16);
-
-        v[1] ^= v[0];
-        v[3] ^= v[2];
-        v[0] = v[0].rotate_left(32);
-
-        v[2] = v[2].wrapping_add(v[1]);
-        v[0] = v[0].wrapping_add(v[3]);
-        v[1] = v[1].rotate_left(17);
-        v[3] = v[3].rotate_left(21);
-
-        v[1] ^= v[2];
-        v[3] ^= v[0];
-        v[2] = v[2].rotate_left(32);
-    }
-}
-
-/// `SipHash_CRounds`: compresses the buffered block.
-#[allow(non_snake_case)] // the C name
-fn SipHash_CRounds(ctx: &mut SiphashCtx, rounds: i32) {
-    let m = u64::from_le_bytes(ctx.buf);
-
-    ctx.v[3] ^= m;
-    SipHash_Rounds(ctx, rounds);
-    ctx.v[0] ^= m;
-}
-
-/// `SipHash24_Init`.
-#[allow(non_snake_case)] // the C macro's name
-pub fn SipHash24_Init(ctx: &mut SiphashCtx, key: &SiphashKey) {
-    SipHash_Init(ctx, key);
-}
-
-/// `SipHash24_Update`.
-#[allow(non_snake_case)] // the C macro's name
-pub fn SipHash24_Update(ctx: &mut SiphashCtx, src: &[u8]) {
-    SipHash_Update(ctx, 2, 4, src);
-}
-
-/// `SipHash24_End`.
-#[allow(non_snake_case)] // the C macro's name
-pub fn SipHash24_End(ctx: &mut SiphashCtx) -> u64 {
-    SipHash_End(ctx, 2, 4)
-}
-
-/// `SipHash24_Final`.
-#[allow(non_snake_case)] // the C macro's name
-pub fn SipHash24_Final(dst: &mut [u8; SIPHASH_DIGEST_LENGTH], ctx: &mut SiphashCtx) {
-    SipHash_Final(dst, ctx, 2, 4);
-}
-
-/// `SipHash24`.
+/// `SipHash24`: SipHash-2-4 of `src` under `key`, in one call.
 #[allow(non_snake_case)] // the C macro's name
 pub fn SipHash24(key: &SiphashKey, src: &[u8]) -> u64 {
-    SipHash(key, 2, 4, src)
+    SipHash24Ctx::hash(key, src)
 }
 
-/// `SipHash48_Init`.
-#[allow(non_snake_case)] // the C macro's name
-pub fn SipHash48_Init(ctx: &mut SiphashCtx, key: &SiphashKey) {
-    SipHash_Init(ctx, key);
-}
-
-/// `SipHash48_Update`.
-#[allow(non_snake_case)] // the C macro's name
-pub fn SipHash48_Update(ctx: &mut SiphashCtx, src: &[u8]) {
-    SipHash_Update(ctx, 4, 8, src);
-}
-
-/// `SipHash48_End`.
-#[allow(non_snake_case)] // the C macro's name
-pub fn SipHash48_End(ctx: &mut SiphashCtx) -> u64 {
-    SipHash_End(ctx, 4, 8)
-}
-
-/// `SipHash48_Final`.
-#[allow(non_snake_case)] // the C macro's name
-pub fn SipHash48_Final(dst: &mut [u8; SIPHASH_DIGEST_LENGTH], ctx: &mut SiphashCtx) {
-    SipHash_Final(dst, ctx, 4, 8);
-}
-
-/// `SipHash48`.
+/// `SipHash48`: SipHash-4-8 of `src` under `key`, in one call.
 #[allow(non_snake_case)] // the C macro's name
 pub fn SipHash48(key: &SiphashKey, src: &[u8]) -> u64 {
-    SipHash(key, 4, 8, src)
+    SipHash48Ctx::hash(key, src)
 }
 /* </CODE> */
 
 /* <TESTS> */
 #[cfg(test)]
 mod tests {
+    // Known-answer tests: the paper's appendix A and the reference implementation's
+    // SipHash-2-4 vectors (key 00..0f, messages 00, 00 01, ... of 0 to 15 bytes); SipHash-4-8
+    // has no published vectors, so its values come from an independent implementation of the
+    // paper's algorithm (Python) that reproduces the 2-4 vectors. Property tests: random
+    // splits give the one-call hash; the end wipes the context.
+
     use super::*;
+    use crate::crypto::testutil::XorShift;
 
     /// The key of the paper's test vectors: the bytes 0, 1, ..., 15 in memory.
     fn paper_key() -> SiphashKey {
@@ -330,6 +313,26 @@ mod tests {
         }
     }
 
+    /// SipHash-2-4 and SipHash-4-8 of the messages 00..(n-1) under [`paper_key`], n = 0..15.
+    const VECTORS: [(u64, u64); 16] = [
+        (0x726fdb47dd0e0e31, 0xc879052b9938da41),
+        (0x74f839c593dc67fd, 0xc85914f95295b851),
+        (0x0d6c8009d9a94f5a, 0x33c3ddbef0163792),
+        (0x85676696d7fb7e2d, 0x05c147657dd4466a),
+        (0xcf2794e0277187b7, 0x48fac14a2b5938c2),
+        (0x18765564cd99a68d, 0xe14752cfd9d7c2f6),
+        (0xcbc9466e58fee3ce, 0x8e5535c834bcb66b),
+        (0xab0200f58b01d137, 0x4efdbe5a713fd747),
+        (0x93f5f5799a932462, 0x50db2f079c8bb520),
+        (0x9e0082df0ba9e4b0, 0x5312e15ef39a3136),
+        (0x7a5dbbc594ddb9f3, 0x8f848d0adbd0a948),
+        (0xf4b32f46226bada7, 0x810a0436603969cc),
+        (0x751e8fbc860ee5fb, 0x6197a77a53686d4b),
+        (0x14ea5627c0843d90, 0x6950c9f2e9963729),
+        (0xf723ca908e7af2ee, 0x689a62a7ea1b4388),
+        (0xa129ca6149be45e5, 0x83d389d57da9a6e0),
+    ];
+
     #[test]
     fn matches_the_reference_vectors() {
         let key = paper_key();
@@ -342,23 +345,59 @@ mod tests {
     }
 
     #[test]
+    fn every_length_up_to_two_blocks() {
+        let key = paper_key();
+        let msg: [u8; 16] = core::array::from_fn(|i| i as u8);
+        for (n, (want24, want48)) in VECTORS.iter().enumerate() {
+            assert_eq!(SipHash24(&key, &msg[..n]), *want24, "2-4, {n} bytes");
+            assert_eq!(SipHash48(&key, &msg[..n]), *want48, "4-8, {n} bytes");
+            let mut ctx = SipHash24Ctx::new(&key);
+            ctx.update(&msg[..n]);
+            assert_eq!(ctx.finalize(), want24.to_le_bytes(), "2-4 bytes, {n}");
+        }
+    }
+
+    #[test]
     fn incremental_updates_agree_with_one_call() {
         let key = paper_key();
         let msg: [u8; 37] = core::array::from_fn(|i| (i * 7) as u8);
         let whole = SipHash24(&key, &msg);
         for split in [0, 1, 3, 8, 9, 20, 37] {
-            let mut ctx = SiphashCtx::default();
-            SipHash24_Init(&mut ctx, &key);
-            SipHash24_Update(&mut ctx, &msg[..split]);
-            SipHash24_Update(&mut ctx, &msg[split..]);
-            assert_eq!(SipHash24_End(&mut ctx), whole, "split at {split}");
+            let mut ctx = SipHash24Ctx::new(&key);
+            ctx.update(&msg[..split]);
+            ctx.update(&msg[split..]);
+            assert_eq!(ctx.end(), whole, "split at {split}");
+            // The end wipes the context.
+            assert_eq!(ctx, SipHash24Ctx::default());
         }
-        let mut d = [0u8; 8];
-        let mut ctx = SiphashCtx::default();
-        SipHash48_Init(&mut ctx, &key);
-        SipHash48_Update(&mut ctx, &msg);
-        SipHash48_Final(&mut d, &mut ctx);
+        let mut ctx = SipHash48Ctx::new(&key);
+        ctx.update(&msg);
+        let d = ctx.finalize();
         assert_eq!(u64::from_le_bytes(d), SipHash48(&key, &msg));
+        assert_eq!(ctx, SipHash48Ctx::default());
+    }
+
+    #[test]
+    fn random_keys_and_splits_give_the_one_call_hash() {
+        let mut rng = XorShift::new(0x7369_7068_6173_6824);
+        for _ in 0..300 {
+            let key = SiphashKey {
+                k0: rng.next_u64(),
+                k1: rng.next_u64(),
+            };
+            let len = rng.below(100);
+            let msg = rng.bytes(len);
+            let mut c24 = SipHash24Ctx::new(&key);
+            for piece in rng.split(&msg) {
+                c24.update(piece);
+            }
+            let mut c48 = SipHash48Ctx::new(&key);
+            for piece in rng.split(&msg) {
+                c48.update(piece);
+            }
+            assert_eq!(c24.end(), SipHash24(&key, &msg), "2-4, {len} bytes");
+            assert_eq!(c48.end(), SipHash48(&key, &msg), "4-8, {len} bytes");
+        }
     }
 }
 /* </TESTS> */

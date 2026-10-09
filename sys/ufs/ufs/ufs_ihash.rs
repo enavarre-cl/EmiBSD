@@ -66,9 +66,7 @@
 //! - The `EXT2FS` branch of `ufs_ihashget` (`IS_EXT2_VNODE`: an ext2fs inode's link count is
 //!   `i_e2fs_nlink`, an unsigned 16 bits, so `<= 0` is `== 0`) is under feature `ext2fs`.
 
-use crate::crypto::siphash::{
-    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SipHash24Ctx, SiphashKey};
 use crate::dev::rnd::arc4random_buf;
 use crate::kern::kern_subr::hashinit;
 use crate::kern::sched_bsd::r#yield;
@@ -112,12 +110,11 @@ pub fn ufs_ihash(dev: Dev, inum: Ufsino) -> &'static ListHead<IHash> {
         panic(format_args!("ufs_ihash: no table"));
     }
 
-    let mut ctx = SiphashCtx::default();
-    SipHash24_Init(&mut ctx, key);
-    SipHash24_Update(&mut ctx, &dev.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &inum.to_ne_bytes());
+    let mut ctx = SipHash24Ctx::new(key);
+    ctx.update(&dev.to_ne_bytes());
+    ctx.update(&inum.to_ne_bytes());
 
-    &tbl[(SipHash24_End(&mut ctx) & mask) as usize]
+    &tbl[(ctx.end() & mask) as usize]
 }
 
 /// `ufs_ihashinit`: initialize inode hash table.

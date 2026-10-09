@@ -222,9 +222,7 @@ use core::mem::size_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
-use crate::crypto::siphash::{
-    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SipHash24Ctx, SiphashKey};
 use crate::dev::rnd::{arc4random_buf, arc4random_uniform};
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
@@ -899,27 +897,25 @@ pub fn in_pcbhash(
     laddr: &InAddr,
     lport: u16,
 ) -> u64 {
-    let mut ctx = SiphashCtx::default();
+    let mut ctx = SipHash24Ctx::new(&table.inpt_key.get());
     let nrdom = rdomain.to_be_bytes();
 
-    SipHash24_Init(&mut ctx, &table.inpt_key.get());
-    SipHash24_Update(&mut ctx, &nrdom);
-    SipHash24_Update(&mut ctx, &faddr.s_addr.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &fport.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &laddr.s_addr.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &lport.to_ne_bytes());
-    SipHash24_End(&mut ctx)
+    ctx.update(&nrdom);
+    ctx.update(&faddr.s_addr.to_ne_bytes());
+    ctx.update(&fport.to_ne_bytes());
+    ctx.update(&laddr.s_addr.to_ne_bytes());
+    ctx.update(&lport.to_ne_bytes());
+    ctx.end()
 }
 
 /// `in_pcblhash`: the hash of local port `lport` in routing domain `rdomain`.
 pub fn in_pcblhash(table: &Inpcbtable, rdomain: u32, lport: u16) -> u64 {
-    let mut ctx = SiphashCtx::default();
+    let mut ctx = SipHash24Ctx::new(&table.inpt_lkey.get());
     let nrdom = rdomain.to_be_bytes();
 
-    SipHash24_Init(&mut ctx, &table.inpt_lkey.get());
-    SipHash24_Update(&mut ctx, &nrdom);
-    SipHash24_Update(&mut ctx, &lport.to_ne_bytes());
-    SipHash24_End(&mut ctx)
+    ctx.update(&nrdom);
+    ctx.update(&lport.to_ne_bytes());
+    ctx.end()
 }
 
 /// A fresh random hash key.

@@ -167,9 +167,7 @@ use core::ptr::{self, NonNull};
 use core::slice;
 use core::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
-use crate::crypto::siphash::{
-    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SipHash24Ctx, SiphashKey};
 use crate::crypto::xform::{AuthHash, CompAlgo, EncXform};
 use crate::dev::rnd::{arc4random_buf, arc4random_uniform};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
@@ -1824,14 +1822,13 @@ impl TdbTables {
     /// `tdb_hash`: our hashing function needs to stir things with a non-zero random
     /// multiplier so we cannot be DoS-attacked via choosing of the data to hash.
     fn tdb_hash(&self, spi: u32, dst: &SockaddrUnion, proto: u8) -> u32 {
-        let mut ctx = SiphashCtx::default();
+        let mut ctx = SipHash24Ctx::new(&self.tdbkey);
 
-        SipHash24_Init(&mut ctx, &self.tdbkey);
-        SipHash24_Update(&mut ctx, &spi.to_ne_bytes());
-        SipHash24_Update(&mut ctx, &[proto]);
-        SipHash24_Update(&mut ctx, dst.sa_bytes());
+        ctx.update(&spi.to_ne_bytes());
+        ctx.update(&[proto]);
+        ctx.update(dst.sa_bytes());
 
-        (SipHash24_End(&mut ctx) as u32) & self.tdb_hashmask
+        (ctx.end() as u32) & self.tdb_hashmask
     }
 }
 

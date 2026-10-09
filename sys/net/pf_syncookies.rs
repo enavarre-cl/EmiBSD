@@ -82,10 +82,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::crypto::siphash::{
-    SIPHASH_DIGEST_LENGTH, SIPHASH_KEY_LENGTH, SipHash24_Final, SipHash24_Init, SipHash24_Update,
-    SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SIPHASH_KEY_LENGTH, SipHash24Ctx, SiphashKey};
 use crate::dev::rnd::arc4random_buf;
 use crate::kassert;
 use crate::kern::kern_timeout::{timeout_add_sec, timeout_set};
@@ -400,11 +397,7 @@ pub fn pf_syncookie_newkey() {
 pub fn pf_syncookie_mac(pd: &mut PfPdesc, cookie: PfSyncookie, seq: u32) -> u32 {
     kassert!(i32::from(pd.proto) == IPPROTO_TCP);
 
-    let mut ctx = SiphashCtx::default();
-    SipHash24_Init(
-        &mut ctx,
-        &PF_SYNCOOKIE_STATUS.key[usize::from(cookie.oddeven())].get(),
-    );
+    let mut ctx = SipHash24Ctx::new(&PF_SYNCOOKIE_STATUS.key[usize::from(cookie.oddeven())].get());
 
     let alen = match pd.af {
         AF_INET => 4,
@@ -413,17 +406,16 @@ pub fn pf_syncookie_mac(pd: &mut PfPdesc, cookie: PfSyncookie, seq: u32) -> u32 
     };
     let src = pd.ld_addr_n(pd.src, alen);
     let dst = pd.ld_addr_n(pd.dst, alen);
-    SipHash24_Update(&mut ctx, &src.addr8[..alen]);
-    SipHash24_Update(&mut ctx, &dst.addr8[..alen]);
+    ctx.update(&src.addr8[..alen]);
+    ctx.update(&dst.addr8[..alen]);
 
     let sport = pd.ld16(pd.sport);
     let dport = pd.ld16(pd.dport);
-    SipHash24_Update(&mut ctx, &sport.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &dport.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &seq.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &[cookie.cookie]);
-    let mut siphash = [0u8; SIPHASH_DIGEST_LENGTH];
-    SipHash24_Final(&mut siphash, &mut ctx);
+    ctx.update(&sport.to_ne_bytes());
+    ctx.update(&dport.to_ne_bytes());
+    ctx.update(&seq.to_ne_bytes());
+    ctx.update(&[cookie.cookie]);
+    let siphash = ctx.finalize();
 
     let w0 = u32::from_ne_bytes([siphash[0], siphash[1], siphash[2], siphash[3]]);
     let w1 = u32::from_ne_bytes([siphash[4], siphash[5], siphash[6], siphash[7]]);

@@ -102,9 +102,7 @@ use core::mem::size_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI64, Ordering};
 
-use crate::crypto::siphash::{
-    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SipHash24Ctx, SiphashKey};
 use crate::dev::rnd::arc4random_buf;
 use crate::kern::kern_malloc::malloc;
 use crate::kern::kern_prot::{crfree, crhold, suser};
@@ -1029,11 +1027,10 @@ fn dqhash(dqvp: &Vnode, id: u32) -> &'static ListHead<DqHash> {
         panic(format_args!("dqget: no table"));
     }
 
-    let mut ctx = SiphashCtx::default();
-    SipHash24_Init(&mut ctx, key);
-    SipHash24_Update(&mut ctx, &(ptr::from_ref(dqvp) as usize).to_ne_bytes());
-    SipHash24_Update(&mut ctx, &u64::from(id).to_ne_bytes());
-    &tbl[(SipHash24_End(&mut ctx) & mask) as usize]
+    let mut ctx = SipHash24Ctx::new(key);
+    ctx.update(&(ptr::from_ref(dqvp) as usize).to_ne_bytes());
+    ctx.update(&u64::from(id).to_ne_bytes());
+    &tbl[(ctx.end() & mask) as usize]
 }
 
 /// Whether `vp` is `dqvp` (the caller already holds the quota file's lock).

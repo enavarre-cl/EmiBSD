@@ -118,9 +118,7 @@ use core::cell::Cell;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
-use crate::crypto::siphash::{
-    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
-};
+use crate::crypto::siphash::{SipHash24Ctx, SiphashKey};
 use crate::dev::rnd::arc4random_buf;
 use crate::isofs::cd9660::cd9660_extern::IsoMnt;
 use crate::isofs::cd9660::cd9660_lookup::cd9660_bufatoff;
@@ -362,11 +360,10 @@ fn cd9660_isohash(device: Dev, inum: Cdino) -> &'static ListHead<IsoHash> {
         panic(format_args!("cd9660_isohash: no table"));
     }
 
-    let mut ctx = SiphashCtx::default();
-    SipHash24_Init(&mut ctx, key);
-    SipHash24_Update(&mut ctx, &device.to_ne_bytes());
-    SipHash24_Update(&mut ctx, &inum.to_ne_bytes());
-    &tbl[(SipHash24_End(&mut ctx) & mask) as usize]
+    let mut ctx = SipHash24Ctx::new(key);
+    ctx.update(&device.to_ne_bytes());
+    ctx.update(&inum.to_ne_bytes());
+    &tbl[(ctx.end() & mask) as usize]
 }
 
 /// `cd9660_ihashget(dev, inum)`: use the device/inum pair to find the incore inode, and
