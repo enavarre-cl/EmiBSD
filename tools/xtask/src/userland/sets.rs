@@ -222,7 +222,7 @@ const REASONS: &[(&str, &str)] = &[
     ),
     (
         "./etc/firmware",
-        "firmware is fetched by fw_update(8), not built",
+        "firmware is fetched by fw_update(8), not built (only fxp's is: firmware.rs)",
     ),
     (
         "./var/www",
@@ -885,6 +885,24 @@ fn gather(
             );
         }
     }
+    // `/etc/firmware`: the fxp(4) microcode `sys/dev/microcode/fxp/build.c` writes and its
+    // licence, installed by that directory's Makefile (644, BINOWN:BINGRP) and named by the
+    // `base` list; the other firmware is fetched by fw_update(8) (`firmware.rs`).
+    for (name, bytes) in super::firmware::fxp_firmware(src)? {
+        tree.insert(
+            format!("./etc/firmware/{name}"),
+            ent(Kind::Text(bytes), 0o644, "root", "bin"),
+        );
+    }
+    tree.insert(
+        "./etc/firmware/fxp-license".to_string(),
+        ent(
+            Kind::File(src.join("sys/dev/microcode/fxp/fxp-license")),
+            0o644,
+            "root",
+            "bin",
+        ),
+    );
     for (path, mode, u, g) in EMPTY_FILES {
         tree.insert(
             (*path).to_string(),

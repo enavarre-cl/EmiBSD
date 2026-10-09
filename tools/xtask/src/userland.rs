@@ -2217,6 +2217,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
 }
 
 pub(crate) mod comp;
+mod firmware;
 mod images;
 mod libraries;
 pub(crate) mod miniroot;
