@@ -287,6 +287,14 @@ static HOST_CPU_INFO: HostCpuInfo = HostCpuInfo {
 /// The host's `proc0paddr`.
 static HOST_PROC0PADDR: User = User::new();
 
+/// The host's kernel text for `etext`: 128 KB plus a page, zeroed (`random_start` reads the
+/// 8 KB that start 128 KB before `etext`).
+static HOST_TEXT: [u8; 136 * 1024] = [0; 136 * 1024];
+
+/// The host's time origin for `cpu_rnd_messybits`.
+static HOST_EPOCH: std::sync::LazyLock<std::time::Instant> =
+    std::sync::LazyLock::new(std::time::Instant::now);
+
 /// The host's `struct mdproc`: nothing.
 #[derive(Default)]
 pub struct HostMdproc;
@@ -411,6 +419,16 @@ impl Cpu for Machine {
 
     fn proc0paddr() -> &'static User {
         &HOST_PROC0PADDR
+    }
+
+    /// The host has no cycle counter to read; the monotonic clock's nanoseconds stand in.
+    fn cpu_rnd_messybits() -> u32 {
+        HOST_EPOCH.elapsed().as_nanos() as u32
+    }
+
+    /// The end of [`HOST_TEXT`], a zeroed stand-in for the kernel text `random_start` reads.
+    fn etext() -> usize {
+        HOST_TEXT.as_ptr() as usize + HOST_TEXT.len()
     }
 
     fn ci_idepth(_ci: &HostCpuInfo) -> u32 {

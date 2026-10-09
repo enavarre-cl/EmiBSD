@@ -15,6 +15,8 @@ PHDRS
     text    PT_LOAD;
     rodata  PT_LOAD;
     data    PT_LOAD;
+    /* boot(8) fills this segment with random data (loadfile_elf's PT_OPENBSD_RANDOMIZE). */
+    openbsd_randomize PT_OPENBSD_RANDOMIZE;
 }
 
 __kernel_base = 0xffffffff80000000;
@@ -30,11 +32,21 @@ SECTIONS
         *(.text .text.*)
     } :text
 
+    PROVIDE(_etext = .);
+    PROVIDE(etext = .);
+
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
     .rodata : AT(ADDR(.rodata) - __kernel_base) {
         *(.rodata .rodata.*)
     } :rodata
+
+    /* dev/rnd.c's boot seed (entropy_pool0, rs_buf0) and init_main.c's __guard_local, which
+     * boot(8) fills; read-only, inside the rodata segment, as in OpenBSD's kern.ldscript. */
+    . = ALIGN(0x1000);
+    .openbsd.randomdata : AT(ADDR(.openbsd.randomdata) - __kernel_base) {
+        *(.openbsd.randomdata .openbsd.randomdata.*)
+    } :openbsd_randomize :rodata
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 

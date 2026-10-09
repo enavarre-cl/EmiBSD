@@ -171,6 +171,14 @@ impl Cpu for Machine {
         arm64::machdep::proc0paddr()
     }
 
+    fn cpu_rnd_messybits() -> u32 {
+        include::cpu::cpu_rnd_messybits()
+    }
+
+    fn etext() -> usize {
+        arm64::machdep::etext()
+    }
+
     fn ci_idepth(ci: &include::cpu::CpuInfo) -> u32 {
         ci.ci_idepth.get()
     }

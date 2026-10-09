@@ -158,6 +158,12 @@ and `#[unsafe(link_section)]` are stable; `core` and `alloc` ship precompiled fo
 from 0 and the entry at `_start`'s offset, from M14; amd64: OpenBSD's layout from
 M14, `KERNTEXTOFF` with physical addresses from `0x1000000`, "Boot loaders"),
 `PHDRS` text/rodata/data, Limine request sections kept, `.eh_frame`/`.note` discarded.
+M16d: both scripts add OpenBSD's `openbsd_randomize` header (`PT_OPENBSD_RANDOMIZE`) over
+`.openbsd.randomdata`, page-aligned inside the rodata segment, which boot(8)'s loadfile fills
+with its seed (`dev/rnd.c`'s `entropy_pool0`/`rs_buf0`, `__guard_local`); Limine fills nothing
+there, so a Limine boot starts the generator from a zero seed and says so (`random_start`'s
+"warning: no entropy supplied by boot loader", the boot glue's `unported:` line). arm64's
+script provides `etext` too.
 `sys/build.rs` passes it with `cargo:rustc-link-arg-bins` only when `target_os = "none"`.
 
 Per-target rustflags in `.cargo/config.toml`: `relocation-model=static` (non-PIE higher-half kernel)
@@ -1759,9 +1765,9 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   with their locks reduced to assertion flags (M5), no sleeping (`PR_WAITOK`/`M_WAITOK` fail
   where the C would wait), no idle-page timestamps (`getnsecuptime` is in `kern_tc.c`, whose
   beerware licence needs the user's decision) and the freelist poison (`subr_poison.c`) reported.
-  `dev/rnd.rs` is a placeholder stream (SplitMix64, constant seed, NOT random) behind
-  `arc4random`, which pools and `XSIMPLEQ` need for their cookies, until the entropy pool and
-  ChaCha20 land (M5). `kern/rust_alloc.rs` is the Rust `GlobalAlloc` over `malloc(9)`
+  `dev/rnd.rs` was a placeholder stream (SplitMix64, constant seed, NOT random) behind
+  `arc4random`, which pools and `XSIMPLEQ` need for their cookies, until M16d ported `rnd.c`
+  whole (the entropy pool, ChaCha20, `random_start`, `/dev/random`). `kern/rust_alloc.rs` is the Rust `GlobalAlloc` over `malloc(9)`
   (`M_TEMP`, `M_NOWAIT`); feature `alloc` is on by default. `physmem` lives in `sys/systm.rs`
   (the C defines it per arch) and `<machine/intr.h>`'s `IPL_*` are the `machine::Intr` contract.
 - `uvmexp` is a static of atomics (exported under its C name so the amd64 interrupt stubs can

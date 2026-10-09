@@ -58,7 +58,9 @@
 //!   `pmapvp1` (so they have the software shadow the vp walks need), points `TTBR1_EL1` at the
 //!   copy, and leaves the level-2/3 tables of the kernel image and of the direct map as the
 //!   bootloader built them: those pages have no `pte_desc`, so `pmap_extract` answers for
-//!   them through the direct map or not at all. The C builds the kernel tables from scratch
+//!   them through the direct map, or, for the kernel image (`_rs_clearseed` in `dev/rnd.c`
+//!   asks for its seed pages), through the image's virtual-to-physical offset that `initarm`
+//!   records (the bootloader loads the image physically contiguous). The C builds the kernel tables from scratch
 //!   (`pmap_setup_avail`, `pmap_map_stolen`, `switch_mmu_kernel`) and pre-populates the first
 //!   GiB in `pmap_bootstrap`; here `initarm`'s `pmap_growkernel` populates it, so
 //!   `pmap_maxkvaddr` starts at `VM_MIN_KERNEL_ADDRESS`. `initarm` therefore loads the memory
@@ -248,6 +250,13 @@ vp_table!(
 pub static PMAP_DIRECT_BASE: AtomicUsize = AtomicUsize::new(0);
 /// The end of the direct map.
 pub static PMAP_DIRECT_END: AtomicUsize = AtomicUsize::new(0);
+/// The kernel image's first virtual address (see the module's deviations).
+pub static PMAP_KERNEL_IMAGE_START: AtomicUsize = AtomicUsize::new(0);
+/// The end of the kernel image (`_end`).
+pub static PMAP_KERNEL_IMAGE_END: AtomicUsize = AtomicUsize::new(0);
+/// The kernel image's physical address minus its virtual one (the bootloader loads it
+/// physically contiguous).
+pub static PMAP_KERNEL_IMAGE_PHYS_OFF: AtomicUsize = AtomicUsize::new(0);
 /// `virtual_avail`: the first free kernel virtual address.
 static VIRTUAL_AVAIL: AtomicUsize = AtomicUsize::new(0);
 /// `pmap_virtual_space_called`: prevent further KVA stealing.
@@ -1375,6 +1384,16 @@ pub fn pmap_purge(p: &Proc) {
 pub fn pmap_extract(pm: &Pmap, va: Vaddr) -> Option<Paddr> {
     if ptr::eq(pm, pmap_kernel()) && pmap_direct_mapped(va) {
         return Some(pmap_direct_unmap(va));
+    }
+    if ptr::eq(pm, pmap_kernel()) {
+        let (start, end) = (
+            PMAP_KERNEL_IMAGE_START.load(Ordering::Relaxed),
+            PMAP_KERNEL_IMAGE_END.load(Ordering::Relaxed),
+        );
+        if start <= va.as_usize() && va.as_usize() < end {
+            let off = PMAP_KERNEL_IMAGE_PHYS_OFF.load(Ordering::Relaxed);
+            return Some(Paddr::new(va.as_usize().wrapping_add(off)));
+        }
     }
 
     pmap_lock(pm);

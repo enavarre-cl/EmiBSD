@@ -490,6 +490,21 @@ pub fn cpu_busy_cycle() {
     unsafe { asm!("yield", options(nomem, nostack, preserves_flags)) };
 }
 
+/// `cpu_rnd_messybits()`: the virtual counter XORed with its own bit reversal, the timing
+/// noise `dev/rnd.c` mixes into each entropy event (the C returns the 64-bit value as an
+/// `unsigned int`: its low 32 bits).
+#[inline]
+pub fn cpu_rnd_messybits() -> u32 {
+    let (val, rval): (u64, u64);
+    // SAFETY: reading CNTVCT_EL0 (accessible at EL1) and reversing its bits touch no memory,
+    // no stack and no flags.
+    unsafe {
+        asm!("mrs {v}, CNTVCT_EL0", "rbit {r}, {v}", v = out(reg) val, r = out(reg) rval,
+            options(nomem, nostack, preserves_flags));
+    }
+    (val ^ rval) as u32
+}
+
 /// `CLKF_USERMODE(frame)`: return TRUE/FALSE (1/0) depending on whether the frame came from
 /// USR mode or not.
 #[inline]

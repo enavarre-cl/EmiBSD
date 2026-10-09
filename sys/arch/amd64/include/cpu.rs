@@ -511,6 +511,19 @@ pub fn cpu_busy_cycle() {
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
+/// `cpu_rnd_messybits()`: the time stamp counter's two halves folded together, the timing
+/// noise `dev/rnd.c` mixes into each entropy event.
+#[inline]
+pub fn cpu_rnd_messybits() -> u32 {
+    let (hi, lo): (u32, u32);
+    // SAFETY: `rdtsc` only reads the time stamp counter into %edx:%eax; it touches no memory
+    // and no flags.
+    unsafe {
+        asm!("rdtsc", out("edx") hi, out("eax") lo, options(nomem, nostack, preserves_flags));
+    }
+    hi ^ lo
+}
+
 /// `CLKF_USERMODE(frame)`.
 #[inline]
 pub fn clkf_usermode(frame: &Clockframe) -> bool {

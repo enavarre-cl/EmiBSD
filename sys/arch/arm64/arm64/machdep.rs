@@ -129,7 +129,8 @@ use crate::arch::arm64::arm64::fpu::{fpu_drop, fpu_save};
 use crate::arch::arm64::arm64::intr::delay;
 use crate::arch::arm64::arm64::locore0::DIRECT_BASE;
 use crate::arch::arm64::arm64::pmap::{
-    PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
+    PMAP_DIRECT_BASE, PMAP_DIRECT_END, PMAP_KERNEL_IMAGE_END, PMAP_KERNEL_IMAGE_PHYS_OFF,
+    PMAP_KERNEL_IMAGE_START, pmap_bootstrap, pmap_growkernel,
 };
 #[cfg(feature = "multiprocessor")]
 use crate::arch::arm64::include::armreg::{MPIDR_AFF, read_specialreg};
@@ -286,6 +287,15 @@ pub fn cpu_info_list() -> &'static CpuInfo {
 /// `proc0paddr`: proc0's `struct user`, at the bottom of its u-area.
 pub fn proc0paddr() -> &'static User {
     &PROC0_UAREA.u
+}
+
+/// `etext` (`conf/kernel.ld`): the address of the end of the kernel text.
+pub fn etext() -> usize {
+    unsafe extern "C" {
+        /// `etext` (`conf/kernel.ld`, `PROVIDE(etext = .)` after `.text`).
+        static etext: [u8; 0];
+    }
+    core::ptr::addr_of!(etext) as usize
 }
 /// `proc0tf`: dummy trapframe for proc0.
 static PROC0TF: StaticCell<Trapframe> = StaticCell::new(Trapframe::new());
@@ -497,6 +507,15 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
         .map(|r| r.base.as_usize() + r.length.as_usize())
         .max()
         .unwrap_or(0);
+    // The kernel image, for pmap_extract (arm64/pmap.rs, deviations).
+    PMAP_KERNEL_IMAGE_START.store(boot.kernel_virt.as_usize(), Ordering::Relaxed);
+    PMAP_KERNEL_IMAGE_END.store(ptr::addr_of!(_end) as usize, Ordering::Relaxed);
+    PMAP_KERNEL_IMAGE_PHYS_OFF.store(
+        boot.kernel_phys
+            .as_usize()
+            .wrapping_sub(boot.kernel_virt.as_usize()),
+        Ordering::Relaxed,
+    );
     PMAP_DIRECT_BASE.store(boot.hhdm_offset, Ordering::Relaxed);
     PMAP_DIRECT_END.store(
         boot.hhdm_offset + roundup(map_end, 1 << 30).max(DIRECT_MAP_MIN_SIZE),

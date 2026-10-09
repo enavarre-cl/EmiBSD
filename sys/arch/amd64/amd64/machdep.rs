@@ -416,6 +416,15 @@ pub static PROC0_UAREA: Uarea = Uarea::new();
 pub fn proc0paddr() -> &'static User {
     &PROC0_UAREA.u
 }
+
+/// `etext` (`conf/kernel.ld`): the address of the end of the kernel text.
+pub fn etext() -> usize {
+    unsafe extern "C" {
+        /// `etext` (`conf/kernel.ld`, `PROVIDE(etext = .)` after `.text`).
+        static etext: [u8; 0];
+    }
+    core::ptr::addr_of!(etext) as usize
+}
 /// `cpu_set_vendor`: records `ci`'s cpuid level and maps the vendor string to an integer.
 pub fn cpu_set_vendor(ci: &CpuInfo, level: u32, vendor: &[u8]) {
     ci.ci_cpuid_level.set(level);

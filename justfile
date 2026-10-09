@@ -2889,8 +2889,8 @@ smoke-tpm: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
 # (`--virtio-rng --balloon`, hwopts.rs; virtio-*-pci on amd64, virtio-mmio on arm64, found
 # there before the disks, so the virtioN numbers differ per arch). viornd asks for 16 bytes one
 # tick after its attach and gets one interrupt (as OpenBSD 8.0: `irq69/viornd0:1 1` on amd64;
-# the next request is 15 << 5 s away); its words reach enqueue_randomness, still rnd.c's M3
-# placeholder (dev/rnd.rs). The balloon is driven from QEMU's monitor (`--monitor-after`):
+# the next request is 15 << 5 s away); its words go to enqueue_randomness, rnd(4)'s entropy
+# input ring (dev/rnd.rs; OpenBSD shows no count of them to userland). The balloon is driven from QEMU's monitor (`--monitor-after`):
 # `balloon 384` of the smokes' 512 MB, then `balloon 512`; ten seconds after each,
 # hw.sensors.viomb0 shows what OpenBSD 8.0 shows on the same machine (the C's sensors lag the
 # last 1 MB request: 128 MB desired, 127 MB current; then 0 and 1 MB), and `vmstat -s`'s

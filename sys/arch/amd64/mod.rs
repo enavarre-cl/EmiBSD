@@ -170,6 +170,14 @@ impl Cpu for Machine {
         amd64::machdep::proc0paddr()
     }
 
+    fn cpu_rnd_messybits() -> u32 {
+        include::cpu::cpu_rnd_messybits()
+    }
+
+    fn etext() -> usize {
+        amd64::machdep::etext()
+    }
+
     fn ci_idepth(ci: &include::cpu::CpuInfo) -> u32 {
         ci.ci_idepth.get().max(0) as u32
     }

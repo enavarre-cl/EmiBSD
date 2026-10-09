@@ -53,10 +53,6 @@
 //!   [`viornd_nwords`], host-tested; the C computes them inline.
 //! - `VIORND_DEBUG` is the constant 0 as in C; its messages are compiled behind
 //!   `if VIORND_DEBUG > 0`.
-//! - `enqueue_randomness` is `dev/rnd.rs`'s, which is still the M3 placeholder: the entropy
-//!   pool is not ported, so the words reach its visible `unported!` gap (`ports.toml`,
-//!   `sys/dev/rnd.c`), not a pool. The driver's own path (request, interrupt, the words
-//!   handed over, the next request scheduled) is the C's.
 
 use core::cell::Cell;
 use core::ffi::c_void;
