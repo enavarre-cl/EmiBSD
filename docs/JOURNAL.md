@@ -971,3 +971,64 @@ acpidmar one, merged into the coordinator's branch.
 Effort: _(user)_
 
 Time: _(user)_
+
+## M16b USB drivers
+
+Boundary: the commit that marks M16b met ("docs: M16b met"). The M16b branch started on
+12e9da2 (M16f's close) and merged main at c2198a9 (M16e's close, 2466c22); its own work is
+`main..` that commit: 26 commits (with this one; `git rev-list --count --no-merges main..`,
+two of them early cherry-picks of M16e commits that main then brought, df8d198 and 2fd4e5f)
+besides 7 merges, `git diff --shortstat main HEAD`: 57 files changed, 36050 insertions(+),
+235 deletions(-) before this commit. Seven subagents in harness worktrees (ehci, the HID
+group, uaudio, cdce/ucom/uftdi, the ehci check against OpenBSD, uhci, ohci), two or three at a
+time, merged into the coordinator's branch.
+
+- Went well: the pipeline. The mechanical HID group (Sonnet) and the first host controller
+  (Opus) started together; uaudio and the serial/network group took the free slots; uhci and
+  ohci waited for ehci's port and for the answer on its QEMU behaviour, and copied its shape
+  (`usbd_bus_methods`, never-freed DMA chunks for the soft descriptors, `--usb-hc` with one
+  arm per controller), so neither needed a new idiom.
+- Went well: real OpenBSD 8.0 as the referee, a third time. ehci did not mount the stick:
+  on amd64 the INTx `ehci_init` raises while cold is dropped by QEMU's masked edge I/O APIC
+  pin, on arm64 the C's 16-bit `EOWRITE2(EHCI_USBINTR)` takes a synchronous external abort.
+  A verification subagent booted the OpenBSD snapshot through `diff-openbsd ... probe --usb-hc
+  ehci` and it fails the same way on both archs (`uhub0: device problem, disabling port 1`;
+  `generic_space_write_2() at ehci_pci_attach+0x104`), so the port stayed faithful and
+  `smoke-ehci` asserts OpenBSD's behaviour, the arm64 half as a `--status 35` panic like the
+  trap self-test. ohci's first write halting QEMU's controller was checked the same way
+  before it was asserted. uhci and the uaudio, cdce, ucom and HID drivers needed nothing.
+- Went well: a faithful shared fix found by a driver. EDK2 leaves `piix3-usb-uhci`'s I/O BAR
+  at 0 on arm64 `virt`; instead of a uhci workaround the PCI bus now carries the host
+  bridge's extents (`pa_*ex`, `pba_*ex`), `pci_reserve_resources` is complete and
+  `pci_mapreg_assign` places such a BAR, as OpenBSD does; the merge then wired ppb(4) to the
+  same extents (M16e had left them all `None`).
+- Failed: the controller name in xtask. M12's `--usb` named its bus `xhci.0`; ehci renamed it
+  `usbhc.0` while the HID and uaudio agents, working in parallel, still put their devices on
+  `xhci.0`. Each merge moved them, and xtask now refuses a full speed device on a controller
+  without full speed ports instead of letting QEMU fail.
+- Failed: `cfdata[]` again. Every agent appended at the same index (uhci and ohci both took
+  60), and main's merge brought UKC's free slots and `cf_locnames`, so each merge renumbered
+  entries, `pv[]` arrays and `NCFDATA` by script; two new locator runs came with it
+  (`LN_WSMOUSEDEV`, `LN_UCOMBUS` with the `portno` name). A tool that writes `ioconf.rs` from
+  a GENERIC subset would end this (not proposed yet).
+- Failed: a pf_osfp host test deadlocked under load on the first merge's `just test`; it was
+  M16e's global-state flake, fixed at the root by 2fd4e5f, cherry-picked here before main had it.
+- Idioms: a TD's `link` (a C union of a QH and a TD pointer) is an enum, so a walk that meets
+  a QH where it expects a TD stops instead of reinterpreting it (uhci, ARCHITECTURE); uaudio's
+  unit graph, nodes on several lists at once (C_TO_RUST).
+- Rules: none changed; `xtask.md` gains `--usb-hc xhci|ehci|uhci|ohci`, `--usb-mouse`,
+  `--usb-tablet`, `--usb-wacom-tablet`, `--usb-ccid`, `--usb-net`, `--usb-serial` with its
+  send and expect options, `--audio usb` and the probe's USB options.
+- Open: EDK2's UhciDxe asserts (`UhciSched.c(974): CR has Bad Signature`) before the kernel in
+  about one arm64 uhci boot in five; it did not show in the closing ci. If it does, xtask may
+  retry once on that exact firmware line before the kernel banner, never on a kernel failure.
+- Numbers: ported 1015 → 1042 (`cargo xtask ports status`, totals 144 todo, 140 wip, 1042
+  ported, 37 skipped, 1363 entries); tests bsd 2399 → 2496 (`cargo test -p bsd -- --list`;
+  `just test` passed); smoke recipes 59 → 67 (smoke-mouse, smoke-ugen, smoke-ehci,
+  smoke-uaudio, smoke-uhci, smoke-ohci, smoke-cdce, smoke-ucom); unsafe-report kernel 7951 →
+  8198 blocks. `just jobs=3 ci` rc=0 in 26m01s (67 of 67 smokes in 16m50s); `just
+  diff-openbsd` rc=0, 102 steps, 99 equal, 3 expected, 0 unexpected, on both archs.
+
+Effort: _(user)_
+
+Time: _(user)_
