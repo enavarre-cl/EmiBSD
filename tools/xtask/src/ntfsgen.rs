@@ -1,3 +1,4 @@
+/* <LICENSES> */
 /*
  * Copyright (c) 2026 Emilio Navarrete Lineros <enavarre@outlook.com>
  *
@@ -13,6 +14,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 /* <CODE> */
 //! `cargo xtask ntfs-image <out.img> [--check]`: a minimal NTFS 3.1 volume of our own (M10d).

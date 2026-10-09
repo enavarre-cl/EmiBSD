@@ -1,3 +1,21 @@
+/* <LICENSES> */
+/*
+ * Copyright (c) 2026 Emilio Navarrete Lineros <enavarre@outlook.com>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+/* </LICENSES> */
+
 /* <CODE> */
 //! `cargo xtask lz {check,status,drift,trace}`: the lineage of this tree against EmiBSD.LZ.
 //!
@@ -32,15 +50,12 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::layout::{strip_author_block, trim_licenses_edges};
+use crate::layout::{drop_empty_licenses_zone, strip_author_block, trim_licenses_edges};
 use crate::{REFERENCE_DIR, Result, git, is_structural, short, walk_rs};
 
 const LINEAGE_FILE: &str = "lineage.toml";
 const SYNC_FILE: &str = "lz-sync.toml";
 const LZ_PINNED: &str = "lz/PINNED.md";
-/// Whether `lz check` requires the author's block in every `.rs` (N0b): off while the block is
-/// accepted but not yet applied to the tree.
-const AUTHOR_REQUIRED: bool = false;
 const LZ_DIR: &str = "reference/emibsd-lz";
 const REFERENCE_PINNED: &str = "reference/PINNED.md";
 const TABLE_BEGIN: &str = "<!-- lz:begin -->";
@@ -299,9 +314,11 @@ pub(crate) fn strip_ident_lines(src: &str) -> String {
 
 /// A module's text as `lz check` compares it with its LZ source: without the RCS ident lines
 /// (decision 20) and the author's block (N0b), and with the blank lines that start or end the
-/// LICENSES zone dropped. Applied to both sides.
+/// LICENSES zone dropped, and an empty LICENSES zone dropped. Applied to both sides.
 fn comparable(src: &str) -> String {
-    trim_licenses_edges(&strip_author_block(&strip_ident_lines(src)))
+    drop_empty_licenses_zone(&trim_licenses_edges(&strip_author_block(
+        &strip_ident_lines(src),
+    )))
 }
 
 fn rel_of(root: &Path, f: &Path) -> String {
@@ -962,7 +979,7 @@ pub(crate) fn check(root: &Path) -> Result<()> {
             .unwrap_or(Licenses::AuthorOnly);
         let src = fs::read_to_string(f).map_err(|e| format!("{rel}: {e}"))?;
         errors.extend(crate::layout::check(&rel, &src, lic));
-        let author = crate::layout::check_author(&rel, &src, lic, AUTHOR_REQUIRED);
+        let author = crate::layout::check_author(&rel, &src, lic, true);
         if author.is_empty() && src.contains(crate::layout::AUTHOR_BLOCK) {
             n_author += 1;
         }

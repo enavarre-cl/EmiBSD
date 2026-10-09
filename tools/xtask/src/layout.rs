@@ -1,3 +1,21 @@
+/* <LICENSES> */
+/*
+ * Copyright (c) 2026 Emilio Navarrete Lineros <enavarre@outlook.com>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+/* </LICENSES> */
+
 /* <CODE> */
 //! The zone markers of every `.rs` under `sys/` and `tools/` (milestone M15).
 //!
@@ -212,8 +230,8 @@ fn licenses_zone(lines: &[&str]) -> Option<(usize, usize)> {
     Some((open, open + close))
 }
 
-/// Validate the author's block of one file (N0b). With `required`, a file without it is an
-/// error; without, only a misplaced or altered block is (the step before the block is applied).
+/// Validate the author's block of one file (N0b). With `required` (what `lz check` passes), a
+/// file without it is an error; without, only a misplaced or altered block is.
 pub(crate) fn check_author(rel: &str, src: &str, lic: Licenses, required: bool) -> Vec<String> {
     let mut errs = Vec::new();
     let lines: Vec<&str> = src.lines().collect();
@@ -276,6 +294,32 @@ pub(crate) fn check_author(rel: &str, src: &str, lic: Licenses, required: bool) 
         }
     }
     errs
+}
+
+/// `src` without an empty LICENSES zone (the markers and the blank line after them): before
+/// N0b a port of a C file without licence text could carry one, and LZ fills it with the
+/// author's block alone. `lz check` compares both sides through it.
+pub(crate) fn drop_empty_licenses_zone(src: &str) -> String {
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let trimmed: Vec<&str> = lines.iter().map(|l| l.trim_end_matches('\n')).collect();
+    let Some((open, close)) = licenses_zone(&trimmed) else {
+        return src.to_string();
+    };
+    if !trimmed[open + 1..close].iter().all(|l| l.trim().is_empty()) {
+        return src.to_string();
+    }
+    let to = if trimmed.get(close + 1).is_some_and(|l| l.is_empty()) {
+        close + 2
+    } else {
+        close + 1
+    };
+    let mut out = String::with_capacity(src.len());
+    for (i, l) in lines.iter().enumerate() {
+        if i < open || i >= to {
+            out.push_str(l);
+        }
+    }
+    out
 }
 
 /// `src` with the blank lines that start and end its LICENSES zone removed. Some LZ zones
@@ -713,6 +757,19 @@ mod tests {
             trim_licenses_edges(&strip_author_block(&native)),
             trim_licenses_edges(lz)
         );
+    }
+
+    #[test]
+    fn an_empty_zone_compares_like_a_zone_with_the_block_alone() {
+        let lz = "/* <LICENSES> */\n/* </LICENSES> */\n\n/* <CODE> */\n/* </CODE> */\n";
+        let native = format!(
+            "/* <LICENSES> */\n{AUTHOR_BLOCK}/* </LICENSES> */\n\n/* <CODE> */\n/* </CODE> */\n"
+        );
+        assert_eq!(
+            drop_empty_licenses_zone(&strip_author_block(&native)),
+            drop_empty_licenses_zone(lz)
+        );
+        assert_eq!(drop_empty_licenses_zone(&port(false)), port(false));
     }
 
     #[test]

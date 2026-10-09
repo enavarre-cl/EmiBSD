@@ -337,6 +337,7 @@ status = "inherited"
 rust = "sys/arch/amd64/include/mpconfig.rs"
 lz = ["sys/arch/amd64/include/mpconfig.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/arch/amd64/include/mplock.rs"
@@ -947,11 +948,13 @@ status = "inherited"
 rust = "sys/arch/arm64/stand/efiboot/disk.rs"
 lz = ["sys/arch/arm64/stand/efiboot/disk.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/arch/arm64/stand/efiboot/dt_blob.rs"
 lz = ["sys/arch/arm64/stand/efiboot/dt_blob.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/arch/arm64/stand/efiboot/efiacpi.rs"
@@ -1558,6 +1561,7 @@ status = "inherited"
 rust = "sys/dev/ic/pcdisplay.rs"
 lz = ["sys/dev/ic/pcdisplay.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/dev/ic/pcdisplay_chars.rs"
@@ -2360,11 +2364,13 @@ status = "inherited"
 rust = "sys/dev/wscons/ascii.rs"
 lz = ["sys/dev/wscons/ascii.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/dev/wscons/unicode.rs"
 lz = ["sys/dev/wscons/unicode.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/dev/wscons/wscons_callbacks.rs"
@@ -4298,6 +4304,7 @@ status = "inherited"
 rust = "sys/scsi/scsi_message.rs"
 lz = ["sys/scsi/scsi_message.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/scsi/scsiconf.rs"
@@ -4438,6 +4445,7 @@ status = "inherited"
 rust = "sys/sys/ataio.rs"
 lz = ["sys/sys/ataio.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/sys/audioio.rs"
@@ -4453,6 +4461,7 @@ status = "inherited"
 rust = "sys/sys/cdio.rs"
 lz = ["sys/sys/cdio.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/sys/clockintr.rs"
@@ -4749,6 +4758,7 @@ status = "inherited"
 rust = "sys/sys/scsiio.rs"
 lz = ["sys/sys/scsiio.rs"]
 status = "inherited"
+license = "none"
 
 [[module]]
 rust = "sys/sys/select.rs"
