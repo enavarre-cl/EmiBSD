@@ -121,7 +121,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
-    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom smoke-eap"
+    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom smoke-eap smoke-lpt"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2237,6 +2237,22 @@ smoke-eap: (build-amd64 "--features qemu,multiprocessor")
         --expect 'audio0 at eap0' --expect 'midi0 at eap0: <AudioPCI MIDI UART>' \
         --expect 'name=eap0' --expect 'outputs.master=200,200' --expect 'inputs.mic.preamp=off' \
         --expect 'record.source=mic' --expect 'inputs.source=mic,cd,line,fmsynth,aux,dac'
+
+# M16d: lpt(4), amd64 (the only GENERIC with lpt). QEMU's first parallel port (`--parallel
+# lpt.txt`, hwopts.rs: `-parallel file:`, the `isa-parallel` at 0x378, IRQ 7) is GENERIC's
+# `lpt0 at isa? port 0x378 irq 7`: lpt_isa_probe's walking-bit tests on the data port pass and
+# lpt0 attaches. After login the shell writes a line to /dev/lpt0: lptopen primes the printer
+# and waits for it to be ready, lptwrite pushes the bytes through lptintr (the interrupt and
+# the quarter-second tick), each strobed onto the port, and `--expect-parallel` finds the line
+# in QEMU's file, as OpenBSD 8.0 writes it on the same machine. Part of `smoke`.
+lpt_session := 'echo lpt-hello-$((40+2)) > /dev/lpt0; echo lpt-rc-$?\n'
+smoke-lpt: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-lpt: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --parallel lpt.txt --expect-parallel 'lpt-hello-42' \
+        {{disk_login}} --send-after '# ' --send '{{lpt_session}}' \
+        --expect 'lpt0 at isa0 port 0x378/4 irq 7' --expect 'lpt-rc-0'
 
 # `smoke-audio`'s session: the parameters and the mixer, then the tone.
 audio_play := disk_login + " " + \
