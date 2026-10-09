@@ -1752,8 +1752,11 @@ re_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' -
 # loads /bsd into its 64 MB block and enters locore0.S's _start with the tree (x2): the kernel
 # builds its bootstrap tables, takes /chosen's bootargs, DUID, UEFI memory map and system table
 # (getbootinfo), starts the other processors by PSCI CPU_ON (cpu_hatch_secondary) and finds its
-# root by the DUID (sd1a: the boot image is the virtio disk after the blank one). `machine dtb` is
-# arm64's machine command (it has no `machine memory`). Part of `smoke`.
+# root by the DUID (sd1a: the boot image is the virtio disk after the blank one). M16d: boot(8)
+# fills the kernel's PT_OPENBSD_RANDOMIZE segment from /etc/random.seed (RB_GOODRANDOM), so
+# random_start says "random: good seed from bootblocks" and not the Limine boot's no-entropy
+# warning. `machine dtb` is arm64's machine command (it has no `machine memory`). Part of
+# `smoke`.
 smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") efiboot-amd64 efiboot-arm64
     @test -x target/userland/amd64/host/bin/makefs -a -f target/userland/amd64/ramdisk-root/etc/fstab || \
         { echo "smoke-efiboot: no makefs or staged root; run just userland first"; exit 1; }
@@ -1775,6 +1778,7 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fe
         --expect "booting hd0a:/bsd: " --expect "]=0x" --expect "entry point at 0x1000000" \
         --expect "bsd: booted on amd64 by boot(8) efiboot" --expect "bsd: boot(8) bootarg protocol, " \
         --expect "bsd: {{ncpu}} processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
+        --expect "random: good seed from bootblocks" --reject "warning: no entropy supplied by boot loader" \
         --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
         --expect "cpu1 at mainbus0: apid 1 (application processor)" \
         --expect "cpu{{aps}} at mainbus0: apid {{aps}} (application processor)" \
@@ -1796,6 +1800,7 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fe
         --expect "-r-xr-xr-x 0,0" --expect "booting sd0a:/bsd: " --expect "]=0x" \
         --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "bsd: boot(8) bootarg protocol, " \
         --expect "bsd: {{ncpu}} processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
+        --expect "random: good seed from bootblocks" --reject "warning: no entropy supplied by boot loader" \
         --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" --expect "cpu{{aps}} at mainbus0 mpidr {{aps}}: ARM Cortex-A72" \
         --expect "cpu: {{aps}} of {{aps}} application processors running" \
         --expect "root on sd1a (454649424f4f5430.a) swap on sd1b dump on sd1b" \
@@ -2890,8 +2895,10 @@ smoke-tpm: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
 # there before the disks, so the virtioN numbers differ per arch). viornd asks for 16 bytes one
 # tick after its attach and gets one interrupt (as OpenBSD 8.0: `irq69/viornd0:1 1` on amd64;
 # the next request is 15 << 5 s away); its words go to enqueue_randomness, rnd(4)'s entropy
-# input ring (dev/rnd.rs; OpenBSD shows no count of them to userland). The balloon is driven from QEMU's monitor (`--monitor-after`):
-# `balloon 384` of the smokes' 512 MB, then `balloon 512`; ten seconds after each,
+# input ring (dev/rnd.rs; OpenBSD shows no count of them to userland); the shell reads 8 KB of
+# /dev/random (rnd(4)'s randomread, past 2048 bytes from a ChaCha20 context of its own). The
+# balloon is driven from QEMU's monitor (`--monitor-after`): `balloon 384` of the smokes'
+# 512 MB, then `balloon 512`; ten seconds after each,
 # hw.sensors.viomb0 shows what OpenBSD 8.0 shows on the same machine (the C's sensors lag the
 # last 1 MB request: 128 MB desired, 127 MB current; then 0 and 1 MB), and `vmstat -s`'s
 # pages free drop by at least the 32768 pages the balloon took and come back. Part of `smoke`.
@@ -2906,9 +2913,11 @@ virtio_check := "--virtio-rng --balloon --expect-ramdisk --until-seen " + disk_l
     "--send-after 'm16d-deflate-42' --send 'sleep 10; f2=$(pf); " + \
     "echo deflated: $(sysctl -n hw.sensors.viomb0.raw0) / $(sysctl -n hw.sensors.viomb0.raw1); " + \
     "[ $((f2-f1)) -ge 32512 ] && echo m16d-gave-$((32000+512)); " + \
+    "dd if=/dev/random of=/dev/null bs=4096 count=2; " + \
     "vmstat -i | while read n t r; do echo intr $n $t; done; echo m16d-done-$((40+3))\\n' " + \
     "--expect 'inflated: 134217728 (desired) / 133169152 (current)' --expect 'm16d-took-32768' " + \
-    "--expect 'deflated: 0 (desired) / 1048576 (current)' --expect 'm16d-gave-32512' --expect 'm16d-done-43'"
+    "--expect 'deflated: 0 (desired) / 1048576 (current)' --expect 'm16d-gave-32512' " + \
+    "--expect '2+0 records in' --expect 'm16d-done-43'"
 
 smoke-virtio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \

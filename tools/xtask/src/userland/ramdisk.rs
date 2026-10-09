@@ -118,7 +118,10 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   the call-out nodes `cuaU0`..`cuaU3`, minor `unit + 128` (`UCOMCUA_MASK`), mode 0660,
 ///   group `dialer` (`MAKEDEV`'s `ttyU*`).
 ///
-/// `/dev/random` (major 45) is left out: the kernel has no `random` driver yet.
+/// - `random` is major 45 (`cdev_random_init(1,random)`, M16d; 223 / 173): `urandom`, minor 0,
+///   mode 0644, and `random` a symbolic link to it (`MAKEDEV`'s `rnd`: `M urandom c 45 0 644`,
+///   `ln -s urandom random`; `DEV_LINKS`).
+///
 /// (name, kind, major, minor, mode, group)
 const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("console", 'c', 0, 0, 0o600, "wheel"),
@@ -128,6 +131,7 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("null", 'c', 2, 2, 0o666, "wheel"),
     ("zero", 'c', 2, 12, 0o666, "wheel"),
     ("klog", 'c', 7, 0, 0o600, "wheel"),
+    ("urandom", 'c', 45, 0, 0o644, "wheel"),
     ("tty00", 'c', 8, 0, 0o600, "wheel"),
     ("bpf", 'c', 23, 0, 0o600, "wheel"),
     ("rd0a", 'b', 17, 0, 0o640, "operator"),
@@ -339,8 +343,12 @@ pub(crate) fn check_devices(image: &Path) -> Result<()> {
 pub(super) const FD_NODES: u32 = 64;
 
 /// `/dev/stdin` and friends, as `MAKEDEV` links them: (name, target).
-pub(super) const DEV_LINKS: &[(&str, &str)] =
-    &[("stdin", "fd/0"), ("stdout", "fd/1"), ("stderr", "fd/2")];
+pub(super) const DEV_LINKS: &[(&str, &str)] = &[
+    ("stdin", "fd/0"),
+    ("stdout", "fd/1"),
+    ("stderr", "fd/2"),
+    ("random", "urandom"),
+];
 
 /// A user of `/etc/master.passwd`: (name, uid, gid, class, gecos, home, shell). OpenBSD's
 /// `root`, `daemon` and `nobody` (the lines of its stock `master.passwd`), and tcpdump(8)'s
