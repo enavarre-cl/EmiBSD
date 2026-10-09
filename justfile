@@ -121,7 +121,8 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
-    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom smoke-eap smoke-lpt"
+    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom " + \
+    "smoke-pckbc smoke-eap smoke-lpt"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2503,22 +2504,52 @@ smoke-vga: (build-amd64 "--features qemu,multiprocessor")
 # wsdisplay_kbdinput and the tty's line discipline bring "hi" to the reader, which echoes it
 # on the serial line. Then dd(1) reads two events from /dev/wskbd0 (which takes the keyboard
 # out of the mux into event mode, wsevent.c) while `a` is typed: a key down and a key up,
-# 48 bytes. Part of `smoke`.
+# 48 bytes. On amd64 (M16d) the PS/2 keyboard attaches first, wskbd0 at pckbd0, so the USB
+# keyboard is wskbd1 (WSKBD below), as on OpenBSD 8.0 with the same devices (diff-openbsd
+# probe). Part of `smoke`.
 kbd_tty := 'exec 3</dev/ttyC0; echo kbd-ready-$((40+2)); read line <&3; echo "kbd-got-[$line]"\n'
-kbd_ev := '(sleep 2; echo ev-ready-$((40+2))) & n=$(dd if=/dev/wskbd0 bs=24 count=2 2>/dev/null | wc -c); echo ev-bytes-$((n))\n'
+kbd_ev := '(sleep 2; echo ev-ready-$((40+2))) & n=$(dd if=/dev/WSKBD bs=24 count=2 2>/dev/null | wc -c); echo ev-bytes-$((n))\n'
 kbd_check := "--fb --usb --expect-ramdisk --until-seen " + \
     "--sendkey-after 'kbd-ready-42' --sendkeys 'h i ret' --sendkey-after 'ev-ready-42' --sendkeys 'a' " + \
     disk_login + " --send-after '# ' --send '" + kbd_tty + "' --send-after 'kbd-got-[hi]' --send '" + kbd_ev + "' " + \
-    "--expect 'ukbd0 at uhidev0' --expect 'wskbd0 at ukbd0 mux 1' " + \
-    "--expect 'wskbd0: connecting to wsdisplay0' --expect 'kbd-got-[hi]' " + \
-    "--expect 'wskbd0: disconnecting from wsdisplay0' --expect 'ev-bytes-48'"
+    "--expect 'ukbd0 at uhidev0' --expect 'WSKBD at ukbd0 mux 1' " + \
+    "--expect 'WSKBD: connecting to wsdisplay0' --expect 'kbd-got-[hi]' " + \
+    "--expect 'WSKBD: disconnecting from wsdisplay0' --expect 'ev-bytes-48'"
 smoke-kbd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-kbd: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{kbd_check}} \
-        --expect 'wsdisplay0 at efifb0 mux 1'
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{kbd_check}} \
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{replace(kbd_check, "WSKBD", "wskbd1")}} \
+        --expect 'wskbd0 at pckbd0 mux 1' --expect 'wsdisplay0 at efifb0 mux 1'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{replace(kbd_check, "WSKBD", "wskbd0")}} \
         --expect 'wsdisplay0 at simplefb0 mux 1'
+
+# M16d: pckbc(4) and pckbd(4), amd64 only (arm64's GENERIC has no pckbc). q35 always has the
+# i8042: pckbc0 attaches at isa0 (as on OpenBSD 8.0, which has `pckbc* at acpi?` too but takes
+# the isa line on q35), pckbd0 on its keyboard slot answers the reset, gets XT translation from
+# the controller and offers wskbd0 on mux 1, which connects to wsdisplay0. Without `--usb`
+# QEMU's `sendkey` goes to the PS/2 keyboard: after login the shell reads a line from
+# /dev/ttyC0 while `h`, `i` and Return are typed (pckbcintr, pckbd_input, wskbd_input and the
+# US layout of wskbdmap_mfii.rs bring "hi" to the reader), then dd(1) reads two events from
+# /dev/wskbd0 while `a` is typed. The lines are the ones OpenBSD 8.0 prints on the same machine
+# (diff-openbsd probe, M16d). The open of /dev/wskbd0 is retried until dd(1) blocks in its
+# read: pckbd_enable sends KBC_ENABLE with pckbc_poll_cmd while the keyboard's interrupt is
+# live, and QEMU answers at once, so when dd runs on the CPU that takes IRQ1 (cpu0) pckbcintr
+# eats the ACK, the poll times out and the open fails with EIO ("pckbd_enable: command
+# error"). That race is OpenBSD's (pckbd.c:499-507, pckbc.c:1041 at the pin), kept as is:
+# OpenBSD 8.0 on the same machine fails 4 of 8 such opens the same way (diff-openbsd probe F,
+# M16d). Up to eight opens are tried. Part of `smoke`.
+pckbc_ev := 'i=0; while [ $i -lt 8 ]; do rm -f /tmp/ev; (dd if=/dev/wskbd0 bs=24 count=2 2>/dev/null | wc -c >/tmp/ev) & sleep 2; [ -s /tmp/ev ] || break; i=$((i+1)); done; echo ev-open-retries-$i; echo ev-ready-$((40+2)); wait; echo ev-bytes-$(($(cat /tmp/ev)))\n'
+pckbc_check := "--expect-ramdisk --until-seen " + \
+    "--sendkey-after 'kbd-ready-42' --sendkeys 'h i ret' --sendkey-after 'ev-ready-42' --sendkeys 'a' " + \
+    disk_login + " --send-after '# ' --send '" + kbd_tty + "' --send-after 'kbd-got-[hi]' --send '" + \
+    pckbc_ev + "' " + \
+    "--expect 'pckbc0 at isa0 port 0x60/5 irq 1 irq 12' --expect 'pckbd0 at pckbc0 (kbd slot)' " + \
+    "--expect 'wskbd0 at pckbd0 mux 1' --expect 'wskbd0: connecting to wsdisplay0' " + \
+    "--expect 'kbd-got-[hi]' --expect 'wskbd0: disconnecting from wsdisplay0' --expect 'ev-bytes-48'"
+smoke-pckbc: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-pckbc: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{pckbc_check}}
 
 # M16b: USB pointers, both archs. QEMU's `usb-mouse`, `usb-tablet` and `usb-wacom-tablet` on a
 # `qemu-xhci` (`--usb-mouse --usb-tablet --usb-wacom-tablet`, devices.rs): uhidev(4) takes each,
