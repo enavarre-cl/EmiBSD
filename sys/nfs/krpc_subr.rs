@@ -99,7 +99,7 @@ use core::{mem, ptr};
 
 use libkern::StaticCell;
 
-use crate::crypto::idgen::{Idgen32Ctx, idgen32, idgen32_init};
+use crate::crypto::idgen::Idgen32Ctx;
 use crate::kassert;
 use crate::kern::init_main::PROC0;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
@@ -233,9 +233,9 @@ pub fn krpc_get_xid() -> u32 {
     // to it exists while this one lives.
     let ctx = unsafe { KRPC_XID_CTX.get_mut() };
     if !KRPC_XID_CALLED.swap(true, Ordering::Relaxed) {
-        idgen32_init(ctx);
+        ctx.init();
     }
-    let xid = idgen32(ctx);
+    let xid = ctx.generate();
     mtx_leave(&KRPC_XID_MTX);
     xid
 }

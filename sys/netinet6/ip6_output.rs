@@ -126,7 +126,7 @@ use core::mem::{offset_of, size_of};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
-use crate::crypto::idgen::{Idgen32Ctx, idgen32, idgen32_init};
+use crate::crypto::idgen::Idgen32Ctx;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_prot::suser;
@@ -2472,7 +2472,7 @@ pub fn ip6_randomid() -> u32 {
     mtx_enter(&IP6_ID_MTX);
     // SAFETY: IP6_ID_CTX is touched only here and in `ip6_randomid_init`, with IP6_ID_MTX
     // held; no other reference to it exists while this one lives.
-    let id = idgen32(unsafe { IP6_ID_CTX.get_mut() });
+    let id = unsafe { IP6_ID_CTX.get_mut() }.generate();
     mtx_leave(&IP6_ID_MTX);
     id
 }
@@ -2481,7 +2481,7 @@ pub fn ip6_randomid() -> u32 {
 pub fn ip6_randomid_init() {
     mtx_enter(&IP6_ID_MTX);
     // SAFETY: as in `ip6_randomid`.
-    idgen32_init(unsafe { IP6_ID_CTX.get_mut() });
+    unsafe { IP6_ID_CTX.get_mut() }.init();
     mtx_leave(&IP6_ID_MTX);
 }
 

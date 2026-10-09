@@ -39,12 +39,22 @@
 //! so that identifiers of two consecutive keys never collide. Zero is never returned.
 //!
 //! Upstream: sys/crypto/idgen.h @ 3ce1f3f79392, sys/crypto/idgen.c @ 3ce1f3f79392
+//! LZ: sys/crypto/idgen.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module (one name, as `docs/C_TO_RUST.md` does for
 //!   `.h`/`.c` pairs).
-//! - `struct idgen32_ctx` is [`Idgen32Ctx`]; `idgen32_init` stores a fresh context through
-//!   the `&mut` instead of `bzero` over its bytes. The caller provides the locking, as in C.
+//! - `struct idgen32_ctx` is [`Idgen32Ctx`]; `init` stores a fresh context instead of
+//!   `bzero` over its bytes. The caller provides the locking, as in C.
+//!
+//! ## Redesign
+//! - The functions over a context are methods: `idgen32_init` is [`Idgen32Ctx::init`],
+//!   `idgen32` is [`Idgen32Ctx::generate`], and the private `idgen32_permute` and
+//!   `idgen32_rekey` are `permute` and `rekey` (LZ: free functions with the context first).
+//!   `init` stays a method on the caller's storage: the generators live in `static`s that
+//!   are set up on first use.
+//! - The round counter of the permutation is a `u16` and the halves are taken with
+//!   `to_be_bytes`, so the `as` casts of the C's arithmetic go; the values are the same.
 
 use crate::dev::rnd::{arc4random, arc4random_buf};
 use crate::kern::kern_tc::getuptime;
@@ -76,7 +86,7 @@ pub struct Idgen32Ctx {
 
 impl Idgen32Ctx {
     /// An all-zero context (a C `static struct idgen32_ctx`), to be set up by
-    /// [`idgen32_init`].
+    /// [`Idgen32Ctx::init`].
     pub const fn zeroed() -> Self {
         Self {
             id32_counter: 0,
@@ -125,8 +135,8 @@ static IDGEN32_FTABLE: [u8; 256] = [
 ];
 
 /// `idgen32_g`: the keyed G function of round `k` on the 16-bit word `w`.
-fn idgen32_g(key: &[u8; IDGEN32_KEYLEN], k: u32, w: u16) -> u16 {
-    let o = (k as usize) * 4;
+fn idgen32_g(key: &[u8; IDGEN32_KEYLEN], k: u16, w: u16) -> u16 {
+    let o = usize::from(k) * 4;
     let kb = |i: usize| key[(o + i) & (IDGEN32_KEYLEN - 1)];
 
     let [g1, g2] = w.to_be_bytes();
@@ -139,54 +149,57 @@ fn idgen32_g(key: &[u8; IDGEN32_KEYLEN], k: u32, w: u16) -> u16 {
     u16::from_be_bytes([g5, g6])
 }
 
-/// `idgen32_permute`: the keyed permutation of the 31-bit value `in_`: a 15-bit left half
-/// and a 16-bit right half.
-fn idgen32_permute(ctx: &Idgen32Ctx, in_: u32) -> u32 {
-    let mut wl = ((in_ >> 16) & 0x7fff) as u16;
-    let mut wr = in_ as u16;
-    let mut r: u32 = 0;
+impl Idgen32Ctx {
+    /// `idgen32_permute`: the keyed permutation of the 31-bit value `in_`: a 15-bit left half
+    /// and a 16-bit right half.
+    fn permute(&self, in_: u32) -> u32 {
+        let [h0, h1, l0, l1] = in_.to_be_bytes();
+        let mut wl = u16::from_be_bytes([h0, h1]) & 0x7fff;
+        let mut wr = u16::from_be_bytes([l0, l1]);
+        let mut r: u16 = 0;
 
-    // Doubled up rounds, with an odd round at the end to swap.
-    for _ in 0..IDGEN32_ROUNDS / 2 {
-        wr ^= idgen32_g(&ctx.id32_key, r, wl) ^ r as u16;
-        r += 1;
-        wl ^= (idgen32_g(&ctx.id32_key, r, wr) ^ r as u16) & 0x7fff;
-        r += 1;
-    }
-    wr ^= idgen32_g(&ctx.id32_key, r, wl) ^ r as u16;
-
-    (u32::from(wl) << 16) | u32::from(wr)
-}
-
-/// `idgen32_rekey`: a new key, offset and deadline; the top bit flips.
-fn idgen32_rekey(ctx: &mut Idgen32Ctx) {
-    ctx.id32_counter = 0;
-    ctx.id32_hibit ^= 0x8000_0000;
-    ctx.id32_offset = arc4random();
-    arc4random_buf(&mut ctx.id32_key);
-    ctx.id32_rekey_time = getuptime() + IDGEN32_REKEY_TIME;
-}
-
-/// `idgen32_init`: initializes `ctx` with a random top bit and a first key.
-pub fn idgen32_init(ctx: &mut Idgen32Ctx) {
-    *ctx = Idgen32Ctx::zeroed();
-    ctx.id32_hibit = arc4random() & 0x8000_0000;
-    idgen32_rekey(ctx);
-}
-
-/// `idgen32`: the next identifier of `ctx`, never zero.
-pub fn idgen32(ctx: &mut Idgen32Ctx) -> u32 {
-    loop {
-        // Rekey a little early to avoid "card counting" attack.
-        if ctx.id32_counter > IDGEN32_REKEY_LIMIT || ctx.id32_rekey_time < getuptime() {
-            idgen32_rekey(ctx);
+        // Doubled up rounds, with an odd round at the end to swap.
+        for _ in 0..IDGEN32_ROUNDS / 2 {
+            wr ^= idgen32_g(&self.id32_key, r, wl) ^ r;
+            r += 1;
+            wl ^= (idgen32_g(&self.id32_key, r, wr) ^ r) & 0x7fff;
+            r += 1;
         }
-        let in_ = ctx.id32_offset.wrapping_add(ctx.id32_counter) & 0x7fff_ffff;
-        ctx.id32_counter = ctx.id32_counter.wrapping_add(1);
-        let ret = ctx.id32_hibit | idgen32_permute(ctx, in_);
-        // Zero IDs are often special, so avoid.
-        if ret != 0 {
-            return ret;
+        wr ^= idgen32_g(&self.id32_key, r, wl) ^ r;
+
+        (u32::from(wl) << 16) | u32::from(wr)
+    }
+
+    /// `idgen32_rekey`: a new key, offset and deadline; the top bit flips.
+    fn rekey(&mut self) {
+        self.id32_counter = 0;
+        self.id32_hibit ^= 0x8000_0000;
+        self.id32_offset = arc4random();
+        arc4random_buf(&mut self.id32_key);
+        self.id32_rekey_time = getuptime() + IDGEN32_REKEY_TIME;
+    }
+
+    /// `idgen32_init`: a random top bit and a first key.
+    pub fn init(&mut self) {
+        *self = Idgen32Ctx::zeroed();
+        self.id32_hibit = arc4random() & 0x8000_0000;
+        self.rekey();
+    }
+
+    /// `idgen32`: the next identifier, never zero.
+    pub fn generate(&mut self) -> u32 {
+        loop {
+            // Rekey a little early to avoid "card counting" attack.
+            if self.id32_counter > IDGEN32_REKEY_LIMIT || self.id32_rekey_time < getuptime() {
+                self.rekey();
+            }
+            let in_ = self.id32_offset.wrapping_add(self.id32_counter) & 0x7fff_ffff;
+            self.id32_counter = self.id32_counter.wrapping_add(1);
+            let ret = self.id32_hibit | self.permute(in_);
+            // Zero IDs are often special, so avoid.
+            if ret != 0 {
+                return ret;
+            }
         }
     }
 }
@@ -201,11 +214,11 @@ mod tests {
     #[test]
     fn idgen32_ids_distinct_nonzero() {
         let mut ctx = Idgen32Ctx::zeroed();
-        idgen32_init(&mut ctx);
+        ctx.init();
         let hibit = ctx.id32_hibit;
         let mut seen = HashSet::new();
         for _ in 0..8192 {
-            let id = idgen32(&mut ctx);
+            let id = ctx.generate();
             assert_ne!(id, 0);
             assert_eq!(id & 0x8000_0000, hibit);
             assert!(seen.insert(id), "id {id:#x} repeated within one key");
@@ -216,7 +229,7 @@ mod tests {
     fn idgen32_permute_is_injective_on_a_range() {
         let mut ctx = Idgen32Ctx::zeroed();
         arc4random_buf(&mut ctx.id32_key);
-        let out: HashSet<u32> = (0..65536u32).map(|i| idgen32_permute(&ctx, i)).collect();
+        let out: HashSet<u32> = (0..65536u32).map(|i| ctx.permute(i)).collect();
         assert_eq!(out.len(), 65536);
         assert!(out.iter().all(|&v| v <= 0x7fff_ffff));
     }
@@ -224,12 +237,31 @@ mod tests {
     #[test]
     fn idgen32_rekey_flips_hibit() {
         let mut ctx = Idgen32Ctx::zeroed();
-        idgen32_init(&mut ctx);
+        ctx.init();
         let hibit = ctx.id32_hibit;
         ctx.id32_counter = IDGEN32_REKEY_LIMIT + 1;
-        let id = idgen32(&mut ctx);
+        let id = ctx.generate();
         assert_eq!(id & 0x8000_0000, hibit ^ 0x8000_0000);
         assert_eq!(ctx.id32_counter, 1);
+    }
+
+    #[test]
+    fn permute_stays_in_31_bits_and_is_injective_under_random_keys() {
+        let mut st = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        for _ in 0..4 {
+            let mut ctx = Idgen32Ctx::zeroed();
+            ctx.id32_key.iter_mut().for_each(|b| *b = next() as u8);
+            let ins: HashSet<u32> = (0..20000).map(|_| next() as u32 & 0x7fff_ffff).collect();
+            let outs: HashSet<u32> = ins.iter().map(|i| ctx.permute(*i)).collect();
+            assert_eq!(ins.len(), outs.len());
+            assert!(outs.iter().all(|o| *o < 0x8000_0000));
+        }
     }
 }
 /* </TESTS> */

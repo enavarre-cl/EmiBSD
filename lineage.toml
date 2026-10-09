@@ -1371,7 +1371,27 @@ status = "redesigned"
 [[module]]
 rust = "sys/crypto/idgen.rs"
 lz = ["sys/crypto/idgen.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/idgen.rs::idgen32_init"
+native = ["Idgen32Ctx::init"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/idgen.rs::idgen32"
+native = ["Idgen32Ctx::generate"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/idgen.rs::idgen32_permute"
+native = ["Idgen32Ctx::permute"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/idgen.rs::idgen32_rekey"
+native = ["Idgen32Ctx::rekey"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/md5.rs"
@@ -4614,7 +4634,8 @@ status = "inherited"
 [[module]]
 rust = "sys/netinet6/ip6_output.rs"
 lz = ["sys/netinet6/ip6_output.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/idgen.rs"]
 
 [[module]]
 rust = "sys/netinet6/ip6_var.rs"
@@ -4669,7 +4690,8 @@ status = "inherited"
 [[module]]
 rust = "sys/nfs/krpc_subr.rs"
 lz = ["sys/nfs/krpc_subr.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/idgen.rs"]
 
 [[module]]
 rust = "sys/nfs/nfs.rs"
@@ -4724,7 +4746,8 @@ status = "inherited"
 [[module]]
 rust = "sys/nfs/nfs_subs.rs"
 lz = ["sys/nfs/nfs_subs.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/idgen.rs"]
 
 [[module]]
 rust = "sys/nfs/nfs_syscalls.rs"

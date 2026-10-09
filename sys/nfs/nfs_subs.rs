@@ -105,7 +105,7 @@ use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use crate::conf::param::HZ;
-use crate::crypto::idgen::{Idgen32Ctx, idgen32, idgen32_init};
+use crate::crypto::idgen::Idgen32Ctx;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_subr::uiomove;
@@ -726,9 +726,9 @@ pub fn nfs_get_xid() -> u32 {
     let ctx = unsafe { NFS_XID_CTX.get_mut() };
     if !NFS_XID_CALLED.load(Ordering::Relaxed) {
         NFS_XID_CALLED.store(true, Ordering::Relaxed);
-        idgen32_init(ctx);
+        ctx.init();
     }
-    let xid = idgen32(ctx);
+    let xid = ctx.generate();
     mtx_leave(&NFS_XID_MTX);
     txdr_unsigned(xid)
 }
