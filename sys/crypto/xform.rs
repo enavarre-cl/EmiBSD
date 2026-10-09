@@ -144,7 +144,7 @@ use super::gmac::{
 };
 use super::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
 use super::rijndael::{RijndaelCtx, rijndael_decrypt, rijndael_encrypt, rijndael_set_key};
-use super::rmd160::{RMD160_DIGEST_LENGTH, RMD160Final, RMD160Init, RMD160Update, Rmd160Ctx};
+use super::rmd160::{RMD160_DIGEST_LENGTH, Rmd160Ctx};
 use super::set_key::des_set_key;
 use super::sha1::{SHA1_DIGEST_LENGTH, Sha1Ctx};
 use super::sha2::{
@@ -659,20 +659,17 @@ fn chacha20_crypt_ks(key: &mut Kschedule, data: &mut [u8]) {
 macro_rules! hash_wrappers {
     (
         $variant:ident, $ctx:ty, $dlen:expr,
-        $hash_init:expr, $hash_update:expr, $hash_final:expr,
         $init_fn:ident, $update_fn:ident, $final_fn:ident, $who:literal
     ) => {
         fn $init_fn(c: &mut AuthCtx) {
-            let mut x = <$ctx>::default();
-            $hash_init(&mut x);
-            *c = AuthCtx::$variant(x);
+            *c = AuthCtx::$variant(<$ctx>::new());
         }
 
         #[allow(non_snake_case)] // the C name
         fn $update_fn(c: &mut AuthCtx, buf: &[u8]) -> Result<(), Errno> {
             match c {
                 AuthCtx::$variant(x) => {
-                    $hash_update(x, buf);
+                    x.update(buf);
                     Ok(())
                 }
                 _ => bad_ctx($who),
@@ -681,7 +678,7 @@ macro_rules! hash_wrappers {
 
         fn $final_fn(digest: &mut [u8], c: &mut AuthCtx) {
             match c {
-                AuthCtx::$variant(x) => $hash_final(digest_out::<$dlen>(digest), x),
+                AuthCtx::$variant(x) => *digest_out::<$dlen>(digest) = x.finalize(),
                 _ => bad_ctx($who),
             }
         }
@@ -692,9 +689,6 @@ hash_wrappers!(
     Md5,
     Md5Ctx,
     MD5_DIGEST_LENGTH,
-    |c: &mut Md5Ctx| *c = Md5Ctx::new(),
-    Md5Ctx::update,
-    |d: &mut [u8; MD5_DIGEST_LENGTH], c: &mut Md5Ctx| *d = c.finalize(),
     md5_init,
     MD5Update_int,
     md5_final,
@@ -705,20 +699,15 @@ hash_wrappers!(
     Sha1,
     Sha1Ctx,
     SHA1_DIGEST_LENGTH,
-    |c: &mut Sha1Ctx| *c = Sha1Ctx::new(),
-    Sha1Ctx::update,
-    |d: &mut [u8; SHA1_DIGEST_LENGTH], c: &mut Sha1Ctx| *d = c.finalize(),
     sha1_init,
     SHA1Update_int,
     sha1_final,
     "sha1"
 );
 
-/// `RMD160Update_int`'s family: `RMD160Final` takes an optional digest.
+/// `RMD160Update_int`'s family.
 fn rmd160_init(c: &mut AuthCtx) {
-    let mut x = Rmd160Ctx::default();
-    RMD160Init(&mut x);
-    *c = AuthCtx::Rmd160(x);
+    *c = AuthCtx::Rmd160(Rmd160Ctx::new());
 }
 
 /// `RMD160Update_int`.
@@ -726,7 +715,7 @@ fn rmd160_init(c: &mut AuthCtx) {
 fn RMD160Update_int(c: &mut AuthCtx, buf: &[u8]) -> Result<(), Errno> {
     match c {
         AuthCtx::Rmd160(x) => {
-            RMD160Update(x, buf);
+            x.update(buf);
             Ok(())
         }
         _ => bad_ctx("rmd160"),
@@ -735,7 +724,7 @@ fn RMD160Update_int(c: &mut AuthCtx, buf: &[u8]) -> Result<(), Errno> {
 
 fn rmd160_final(digest: &mut [u8], c: &mut AuthCtx) {
     match c {
-        AuthCtx::Rmd160(x) => RMD160Final(Some(digest_out::<RMD160_DIGEST_LENGTH>(digest)), x),
+        AuthCtx::Rmd160(x) => *digest_out::<RMD160_DIGEST_LENGTH>(digest) = x.finalize(),
         _ => bad_ctx("rmd160"),
     }
 }
@@ -744,9 +733,6 @@ hash_wrappers!(
     Sha256,
     Sha256Ctx,
     SHA256_DIGEST_LENGTH,
-    |c: &mut Sha256Ctx| *c = Sha256Ctx::new(),
-    Sha256Ctx::update,
-    |d: &mut [u8; SHA256_DIGEST_LENGTH], c: &mut Sha256Ctx| *d = c.finalize(),
     sha256_init,
     SHA256Update_int,
     sha256_final,
@@ -757,9 +743,6 @@ hash_wrappers!(
     Sha384,
     Sha384Ctx,
     SHA384_DIGEST_LENGTH,
-    |c: &mut Sha384Ctx| *c = Sha384Ctx::new(),
-    Sha384Ctx::update,
-    |d: &mut [u8; SHA384_DIGEST_LENGTH], c: &mut Sha384Ctx| *d = c.finalize(),
     sha384_init,
     SHA384Update_int,
     sha384_final,
@@ -770,9 +753,6 @@ hash_wrappers!(
     Sha512,
     Sha512Ctx,
     SHA512_DIGEST_LENGTH,
-    |c: &mut Sha512Ctx| *c = Sha512Ctx::new(),
-    Sha512Ctx::update,
-    |d: &mut [u8; SHA512_DIGEST_LENGTH], c: &mut Sha512Ctx| *d = c.finalize(),
     sha512_init,
     SHA512Update_int,
     sha512_final,

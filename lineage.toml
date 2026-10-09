@@ -1151,7 +1151,22 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/rmd160.rs"
 lz = ["sys/crypto/rmd160.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/rmd160.rs::RMD160Init"
+native = ["Rmd160Ctx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/rmd160.rs::RMD160Update"
+native = ["Rmd160Ctx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/rmd160.rs::RMD160Final"
+native = ["Rmd160Ctx::finalize"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/set_key.rs"
@@ -1268,7 +1283,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"

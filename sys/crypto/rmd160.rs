@@ -44,17 +44,28 @@
 //! RIPEMD-160, the hash of IPsec's `HMAC-RIPEMD-160-96`.
 //!
 //! Upstream: sys/crypto/rmd160.h @ 3ce1f3f79392, sys/crypto/rmd160.c @ 3ce1f3f79392
+//! LZ: sys/crypto/rmd160.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module; `RMD160_CTX` is [`Rmd160Ctx`].
-//! - `RMD160Update` takes a slice. `RMD160Final` takes `Option<&mut [u8; 20]>` (the C accepts a
-//!   NULL digest, which only wipes the state) and wipes the context by assignment
-//!   (`crate::crypto::wipe`).
 //! - `RMD160Transform` runs the eighty steps of each of the two lines in a loop over tables
 //!   (message word, rotation, boolean function and constant of each step), taken from the
 //!   `R(a, b, c, d, e, F, K, s, r)` lines of the C, and moves the five values along instead of
 //!   renaming the variables from step to step as the C does. The words are always read
 //!   little-endian.
+//!
+//! ## Redesign
+//! - The context and its three functions are a type with methods (`docs/IDIOMS.md`, "a hash
+//!   context"): `RMD160Init` is [`Rmd160Ctx::new`], `RMD160Update` is [`Rmd160Ctx::update`]
+//!   over a slice, and `RMD160Final(digest, ctx)` is [`Rmd160Ctx::finalize`], which returns
+//!   the digest and wipes the context in place (the C's `explicit_bzero(ctx, ..)`).
+//! - The C's `RMD160Final(NULL, ctx)`, which pads and wipes without writing a digest (LZ's
+//!   `Option` digest), has no caller; `finalize` always returns the digest, and a caller that
+//!   wants only the wipe drops it: the context ends wiped either way.
+//! - The fields are private. The whole-block loop of `update` walks `as_chunks` and
+//!   transforms the buffer in place instead of copying each block to the stack first.
+//! - `RMD160Transform` takes the state words and one block, not the context, and keeps its
+//!   name.
 
 use super::wipe;
 
@@ -110,15 +121,18 @@ static PADDING: [u8; 64] = {
     p
 };
 
-/// `RMD160_CTX`: a hash in progress.
+/// `RMD160_CTX`: a hash in progress, from [`Rmd160Ctx::new`] to [`Rmd160Ctx::finalize`].
+///
+/// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
+/// hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rmd160Ctx {
     /// `state`: the five chaining words.
-    pub state: [u32; 5],
+    state: [u32; 5],
     /// `count`: number of bits, mod 2^64.
-    pub count: u64,
+    count: u64,
     /// `buffer`: input buffer.
-    pub buffer: [u8; RMD160_BLOCK_LENGTH],
+    buffer: [u8; RMD160_BLOCK_LENGTH],
 }
 
 impl Default for Rmd160Ctx {
@@ -131,6 +145,68 @@ impl Default for Rmd160Ctx {
     }
 }
 
+impl Rmd160Ctx {
+    /// `RMD160Init`.
+    pub fn new() -> Self {
+        Self {
+            state: [H0, H1, H2, H3, H4],
+            count: 0,
+            buffer: [0; RMD160_BLOCK_LENGTH],
+        }
+    }
+
+    /// The bytes waiting in `buffer`: the message length mod 64. The value is below 64, so
+    /// the conversion to `usize` is exact.
+    fn buffered(&self) -> usize {
+        ((self.count / 8) % RMD160_BLOCK_LENGTH as u64) as usize
+    }
+
+    /// `RMD160Update`.
+    pub fn update(&mut self, input: &[u8]) {
+        let mut input = input;
+        let mut have = self.buffered();
+        let need = RMD160_BLOCK_LENGTH - have;
+        self.count = self.count.wrapping_add(8 * input.len() as u64);
+
+        if input.len() >= need {
+            if have != 0 {
+                let (head, rest) = input.split_at(need);
+                self.buffer[have..].copy_from_slice(head);
+                RMD160Transform(&mut self.state, &self.buffer);
+                input = rest;
+                have = 0;
+            }
+            // now the buffer is empty
+            let (blocks, rest) = input.as_chunks::<RMD160_BLOCK_LENGTH>();
+            for block in blocks {
+                RMD160Transform(&mut self.state, block);
+            }
+            input = rest;
+        }
+        self.buffer[have..have + input.len()].copy_from_slice(input);
+    }
+
+    /// `RMD160Final`: pads, returns the digest and wipes the context.
+    pub fn finalize(&mut self) -> [u8; RMD160_DIGEST_LENGTH] {
+        let size = self.count.to_le_bytes();
+
+        // pad to 64 byte blocks, at least one byte from PADDING plus 8 bytes for the size
+        let mut padlen = RMD160_BLOCK_LENGTH - self.buffered();
+        if padlen < 1 + 8 {
+            padlen += RMD160_BLOCK_LENGTH;
+        }
+        self.update(&PADDING[..padlen - 8]); // padlen - 8 <= 64
+        self.update(&size);
+
+        let mut digest = [0u8; RMD160_DIGEST_LENGTH];
+        for (out, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
+            *out = word.to_le_bytes();
+        }
+        wipe(self);
+        digest
+    }
+}
+
 /// The boolean function `Fj` (`F0` to `F4`) of the group of sixteen steps `j`.
 fn f(j: usize, x: u32, y: u32, z: u32) -> u32 {
     match j {
@@ -140,69 +216,6 @@ fn f(j: usize, x: u32, y: u32, z: u32) -> u32 {
         3 => (x & z) | (y & !z),
         _ => x ^ (y | !z),
     }
-}
-
-/// `RMD160Init`.
-#[allow(non_snake_case)] // the C name
-pub fn RMD160Init(ctx: &mut Rmd160Ctx) {
-    ctx.count = 0;
-    ctx.state[0] = H0;
-    ctx.state[1] = H1;
-    ctx.state[2] = H2;
-    ctx.state[3] = H3;
-    ctx.state[4] = H4;
-}
-
-/// `RMD160Update`.
-#[allow(non_snake_case)] // the C name
-pub fn RMD160Update(ctx: &mut Rmd160Ctx, input: &[u8]) {
-    let len = input.len();
-    let mut have = ((ctx.count / 8) % 64) as usize;
-    let need = 64 - have;
-    ctx.count = ctx.count.wrapping_add(8 * len as u64);
-    let mut off = 0;
-
-    if len >= need {
-        if have != 0 {
-            ctx.buffer[have..].copy_from_slice(&input[..need]);
-            let block = ctx.buffer;
-            RMD160Transform(&mut ctx.state, &block);
-            off = need;
-            have = 0;
-        }
-        // now the buffer is empty
-        while off + 64 <= len {
-            let mut block = [0u8; RMD160_BLOCK_LENGTH];
-            block.copy_from_slice(&input[off..off + 64]);
-            RMD160Transform(&mut ctx.state, &block);
-            off += 64;
-        }
-    }
-    if off < len {
-        ctx.buffer[have..have + len - off].copy_from_slice(&input[off..]);
-    }
-}
-
-/// `RMD160Final`: pads, writes the digest (when asked for) and wipes the context.
-#[allow(non_snake_case)] // the C name
-pub fn RMD160Final(digest: Option<&mut [u8; RMD160_DIGEST_LENGTH]>, ctx: &mut Rmd160Ctx) {
-    let size = ctx.count.to_le_bytes();
-
-    // pad to 64 byte blocks, at least one byte from PADDING plus 8 bytes for the size
-    let mut padlen = 64 - ((ctx.count / 8) % 64) as usize;
-    if padlen < 1 + 8 {
-        padlen += 64;
-    }
-    RMD160Update(ctx, &PADDING[..padlen - 8]); // padlen - 8 <= 64
-    RMD160Update(ctx, &size);
-
-    if let Some(digest) = digest {
-        for (i, w) in ctx.state.iter().enumerate() {
-            digest[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
-        }
-    }
-
-    wipe(ctx);
 }
 
 /// `RMD160Transform`: the compression function over one 64-byte block.
@@ -256,21 +269,19 @@ pub fn RMD160Transform(state: &mut [u32; 5], block: &[u8; RMD160_BLOCK_LENGTH]) 
 mod tests {
     // Known-answer tests for RIPEMD-160: the test suite of the RIPEMD-160 specification (Dobbertin,
     // Bosselaers, Preneel) and the digest of the digests of every length around the block
-    // boundaries (`hashlib`).
+    // boundaries (`hashlib`); a property test that any split of a random message gives the
+    // one-shot digest.
 
     use super::*;
-    use crate::crypto::testutil::hex;
+    use crate::crypto::testutil::{XorShift, hex};
 
     extern crate std;
     use std::vec::Vec;
 
     fn digest(data: &[u8]) -> [u8; RMD160_DIGEST_LENGTH] {
-        let mut ctx = Rmd160Ctx::default();
-        let mut out = [0u8; RMD160_DIGEST_LENGTH];
-        RMD160Init(&mut ctx);
-        RMD160Update(&mut ctx, data);
-        RMD160Final(Some(&mut out), &mut ctx);
-        out
+        let mut ctx = Rmd160Ctx::new();
+        ctx.update(data);
+        ctx.finalize()
     }
 
     #[test]
@@ -307,14 +318,12 @@ mod tests {
 
     #[test]
     fn one_million_a() {
-        let mut ctx = Rmd160Ctx::default();
-        let mut out = [0u8; RMD160_DIGEST_LENGTH];
-        RMD160Init(&mut ctx);
+        let mut ctx = Rmd160Ctx::new();
         let chunk = [b'a'; 1000];
         for _ in 0..1000 {
-            RMD160Update(&mut ctx, &chunk);
+            ctx.update(&chunk);
         }
-        RMD160Final(Some(&mut out), &mut ctx);
+        let out = ctx.finalize();
         assert_eq!(
             out.to_vec(),
             hex("52783243c1697bdbe16d37f97f68f08325dc1528")
@@ -326,13 +335,11 @@ mod tests {
         let msg: Vec<u8> = (0..300).map(|i| (i * 13 % 256) as u8).collect();
         let whole = digest(&msg);
         for chunk in [1usize, 3, 7, 55, 56, 63, 64, 65, 128, 299] {
-            let mut ctx = Rmd160Ctx::default();
-            let mut out = [0u8; RMD160_DIGEST_LENGTH];
-            RMD160Init(&mut ctx);
+            let mut ctx = Rmd160Ctx::new();
             for piece in msg.chunks(chunk) {
-                RMD160Update(&mut ctx, piece);
+                ctx.update(piece);
             }
-            RMD160Final(Some(&mut out), &mut ctx);
+            let out = ctx.finalize();
             assert_eq!(out, whole, "chunks of {chunk}");
             // Final wipes the context.
             assert_eq!(ctx, Rmd160Ctx::default());
@@ -340,12 +347,28 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_digest_only_wipes_the_state() {
-        let mut ctx = Rmd160Ctx::default();
-        RMD160Init(&mut ctx);
-        RMD160Update(&mut ctx, b"secret");
-        RMD160Final(None, &mut ctx);
+    fn finalize_wipes_the_state() {
+        // The C's `RMD160Final(NULL, ctx)` pads and wipes only; `finalize` wipes the same way
+        // whether or not the caller keeps the digest.
+        let mut ctx = Rmd160Ctx::new();
+        ctx.update(b"secret");
+        let _ = ctx.finalize();
         assert_eq!(ctx, Rmd160Ctx::default());
+    }
+
+    #[test]
+    fn random_splits_give_the_one_shot_digest() {
+        let mut rng = XorShift::new(0x726d_6431_3630_7370);
+        for _ in 0..200 {
+            let len = rng.below(600);
+            let msg = rng.bytes(len);
+            let whole = digest(&msg);
+            let mut ctx = Rmd160Ctx::new();
+            for piece in rng.split(&msg) {
+                ctx.update(piece);
+            }
+            assert_eq!(ctx.finalize(), whole, "{len} bytes");
+        }
     }
 }
 /* </TESTS> */
