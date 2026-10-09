@@ -1,4 +1,3 @@
-/*	$OpenBSD: exec.c,v 1.8 2020/05/10 11:55:42 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2006, 2016 Mark Kettenis

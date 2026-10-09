@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_vfsops.c,v 1.123 2025/09/20 13:53:36 mpi Exp $	*/
-/*	$NetBSD: ext2fs_vfsops.c,v 1.1 1997/06/11 09:34:07 bouyer Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.

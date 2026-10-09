@@ -1,4 +1,3 @@
-/*	$OpenBSD: subr_evcount.c,v 1.16 2023/09/16 09:33:27 mpi Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2004 Artur Grabowski <art@openbsd.org>

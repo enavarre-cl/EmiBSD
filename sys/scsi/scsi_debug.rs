@@ -1,5 +1,3 @@
-/*	$OpenBSD: scsi_debug.h,v 1.23 2022/02/28 14:48:11 krw Exp $	*/
-/*	$NetBSD: scsi_debug.h,v 1.7 1996/10/12 23:23:16 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Written by Julian Elischer (julian@tfs.com)

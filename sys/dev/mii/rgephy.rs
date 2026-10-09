@@ -1,4 +1,3 @@
-/*	$OpenBSD: rgephy.c,v 1.43 2023/04/05 10:45:07 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003

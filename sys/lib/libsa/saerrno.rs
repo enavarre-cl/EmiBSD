@@ -1,5 +1,3 @@
-/*	$OpenBSD: saerrno.h,v 1.9 2014/11/19 20:28:56 miod Exp $	*/
-/*	$NetBSD: saerrno.h,v 1.6 1995/09/18 21:19:45 pk Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988, 1993

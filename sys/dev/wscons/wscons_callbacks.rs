@@ -1,5 +1,3 @@
-/* $OpenBSD: wscons_callbacks.h,v 1.9 2013/10/18 22:06:40 miod Exp $ */
-/* $NetBSD: wscons_callbacks.h,v 1.16 2001/11/10 17:14:51 augustss Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.

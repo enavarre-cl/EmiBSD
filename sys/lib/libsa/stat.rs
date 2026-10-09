@@ -1,5 +1,3 @@
-/*	$OpenBSD: stat.c,v 1.7 2021/10/24 17:49:19 deraadt Exp $	*/
-/*	$NetBSD: stat.c,v 1.3 1994/10/26 05:45:07 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

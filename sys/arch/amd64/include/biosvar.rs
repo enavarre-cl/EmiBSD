@@ -1,4 +1,3 @@
-/*	$OpenBSD: biosvar.h,v 1.32 2023/09/08 20:47:22 kn Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997-1999 Michael Shalayeff

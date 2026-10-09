@@ -1,4 +1,3 @@
-/*	$OpenBSD: pf_norm.c,v 1.239 2026/08/11 14:28:59 bluhm Exp $ */
 /* <LICENSES> */
 
 /*

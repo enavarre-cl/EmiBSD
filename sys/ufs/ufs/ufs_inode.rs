@@ -1,5 +1,3 @@
-/*	$OpenBSD: ufs_inode.c,v 1.47 2024/07/13 14:37:56 beck Exp $	*/
-/*	$NetBSD: ufs_inode.c,v 1.7 1996/05/11 18:27:52 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993

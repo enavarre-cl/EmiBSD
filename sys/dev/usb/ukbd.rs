@@ -1,7 +1,3 @@
-/*	$OpenBSD: ukbd.c,v 1.91 2025/08/14 14:39:44 deraadt Exp $	*/
-/*      $NetBSD: ukbd.c,v 1.85 2003/03/11 16:44:00 augustss Exp $        */
-/*	$OpenBSD: ukbdvar.h,v 1.5 2010/07/31 16:04:50 miod Exp $ */
-/*	$NetBSD: ukbdvar.h,v 1.2 2000/06/01 14:29:00 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2010 Miodrag Vallat.

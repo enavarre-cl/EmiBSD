@@ -1,5 +1,3 @@
-/*	$OpenBSD: mfs_extern.h,v 1.22 2021/10/02 08:51:41 semarie Exp $	*/
-/*	$NetBSD: mfs_extern.h,v 1.4 1996/02/09 22:31:27 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1991, 1993

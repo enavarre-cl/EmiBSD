@@ -1,5 +1,3 @@
-/*	$OpenBSD: ifq.h,v 1.44 2025/03/04 01:13:37 dlg Exp $ */
-/*	$OpenBSD: ifq.c,v 1.62 2025/07/28 05:25:44 dlg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 David Gwynne <dlg@openbsd.org>

@@ -1,5 +1,3 @@
-/* $OpenBSD: pcdisplay_subr.c,v 1.14 2020/05/25 09:55:48 jsg Exp $ */
-/* $NetBSD: pcdisplay_subr.c,v 1.16 2000/06/08 07:01:19 cgd Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Carnegie-Mellon University.

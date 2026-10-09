@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_lock.c,v 1.87 2026/08/30 23:36:26 gnezdo Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2017 Visa Hankala

@@ -1,5 +1,3 @@
-/*	$OpenBSD: umassvar.h,v 1.16 2020/11/23 21:33:38 krw Exp $ */
-/*	$NetBSD: umassvar.h,v 1.20 2003/09/08 19:31:01 mycroft Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999 MAEKAWA Masahide <bishop@rr.iij4u.or.jp>,

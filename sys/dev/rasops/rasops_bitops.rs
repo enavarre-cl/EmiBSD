@@ -1,5 +1,3 @@
-/*	$OpenBSD: rasops_bitops.h,v 1.9 2020/07/20 12:40:45 fcambus Exp $ */
-/* 	$NetBSD: rasops_bitops.h,v 1.6 2000/04/12 14:22:30 pk Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.

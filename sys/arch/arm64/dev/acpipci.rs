@@ -1,4 +1,3 @@
-/*	$OpenBSD: acpipci.c,v 1.44 2026/01/06 11:51:33 patrick Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2018 Mark Kettenis

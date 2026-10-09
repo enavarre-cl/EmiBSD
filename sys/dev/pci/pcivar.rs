@@ -1,5 +1,3 @@
-/*	$OpenBSD: pcivar.h,v 1.81 2025/06/29 19:32:08 miod Exp $	*/
-/*	$NetBSD: pcivar.h,v 1.23 1997/06/06 23:48:05 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.

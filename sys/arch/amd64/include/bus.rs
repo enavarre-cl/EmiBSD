@@ -1,5 +1,3 @@
-/*	$OpenBSD: bus.h,v 1.38 2026/04/19 09:59:22 kettenis Exp $	*/
-/*	$NetBSD: bus.h,v 1.6 1996/11/10 03:19:25 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.

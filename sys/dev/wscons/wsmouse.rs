@@ -1,5 +1,3 @@
-/* $OpenBSD: wsmouse.c,v 1.76 2025/07/18 17:34:29 mvs Exp $ */
-/* $NetBSD: wsmouse.c,v 1.35 2005/02/27 00:27:52 perry Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.

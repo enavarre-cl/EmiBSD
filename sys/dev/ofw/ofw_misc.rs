@@ -1,5 +1,3 @@
-/*	$OpenBSD: ofw_misc.h,v 1.32 2026/09/05 20:36:56 kettenis Exp $	*/
-/*	$OpenBSD: ofw_misc.c,v 1.45 2026/09/05 20:36:56 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2017-2021 Mark Kettenis

@@ -1,5 +1,3 @@
-/*	$OpenBSD: cpuvar.h,v 1.14 2024/10/22 10:14:49 jsg Exp $	*/
-/* 	$NetBSD: cpuvar.h,v 1.1 2003/03/01 18:29:28 fvdl Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.

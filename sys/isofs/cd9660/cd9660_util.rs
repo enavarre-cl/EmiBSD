@@ -1,5 +1,3 @@
-/*	$OpenBSD: cd9660_util.c,v 1.11 2021/03/05 07:01:36 jsg Exp $	*/
-/*	$NetBSD: cd9660_util.c,v 1.12 1997/01/24 00:27:33 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994

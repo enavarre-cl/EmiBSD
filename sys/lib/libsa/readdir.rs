@@ -1,4 +1,3 @@
-/*	$OpenBSD: readdir.c,v 1.10 2022/01/11 06:35:03 visa Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Michael Shalayeff

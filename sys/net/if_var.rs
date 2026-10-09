@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_var.h,v 1.149 2026/06/23 18:50:43 bluhm Exp $	*/
-/*	$NetBSD: if.h,v 1.23 1996/05/07 02:40:27 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2012-2013 Henning Brauer <henning@openbsd.org>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: ucred.h,v 1.14 2022/06/26 05:20:42 visa Exp $	*/
-/*	$NetBSD: ucred.h,v 1.10 1996/02/09 18:25:45 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

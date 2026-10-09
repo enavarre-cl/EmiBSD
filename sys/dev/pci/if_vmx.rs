@@ -1,4 +1,3 @@
-/*	$OpenBSD: if_vmx.c,v 1.96 2026/06/23 14:40:40 bluhm Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2013 Tsubai Masanari

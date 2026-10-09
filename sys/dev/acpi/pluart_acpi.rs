@@ -1,4 +1,3 @@
-/*	$OpenBSD: pluart_acpi.c,v 1.9 2022/06/11 05:29:24 anton Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2018 Mark Kettenis

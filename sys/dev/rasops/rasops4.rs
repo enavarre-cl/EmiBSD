@@ -1,5 +1,3 @@
-/*	$OpenBSD: rasops4.c,v 1.13 2023/01/18 11:08:49 nicm Exp $	*/
-/*	$NetBSD: rasops4.c,v 1.4 2001/11/15 09:48:15 lukem Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.

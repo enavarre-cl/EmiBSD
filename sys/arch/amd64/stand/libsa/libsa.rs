@@ -1,4 +1,3 @@
-/*	$OpenBSD: libsa.h,v 1.8 2023/02/23 19:48:22 miod Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996-1999 Michael Shalayeff

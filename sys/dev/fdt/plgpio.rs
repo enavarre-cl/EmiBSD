@@ -1,4 +1,3 @@
-/*	$OpenBSD: plgpio.c,v 1.3 2021/10/24 17:52:26 mpi Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2018 Mark Kettenis <kettenis@openbsd.org>

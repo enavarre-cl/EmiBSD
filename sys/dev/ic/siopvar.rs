@@ -1,5 +1,3 @@
-/*	$OpenBSD: siopvar.h,v 1.18 2024/05/13 01:15:50 jsg Exp $ */
-/*	$NetBSD: siopvar.h,v 1.22 2005/11/18 23:10:32 bouyer Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2000 Manuel Bouyer.

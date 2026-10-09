@@ -1,5 +1,3 @@
-/*	$OpenBSD: tmpfs.h,v 1.11 2025/10/15 06:52:50 mvs Exp $	*/
-/*	$NetBSD: tmpfs.h,v 1.45 2011/09/27 01:10:43 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005, 2006, 2007 The NetBSD Foundation, Inc.

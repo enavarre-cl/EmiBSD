@@ -1,4 +1,3 @@
-/*	$OpenBSD: syscall_mi.h,v 1.37 2024/12/27 11:57:16 mpi Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

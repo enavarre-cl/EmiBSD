@@ -1,5 +1,3 @@
-/*	$OpenBSD: virtioreg.h,v 1.6 2024/07/26 07:55:23 sf Exp $	*/
-/*	$NetBSD: virtioreg.h,v 1.1 2011/10/30 12:12:21 hannken Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2012 Stefan Fritsch.

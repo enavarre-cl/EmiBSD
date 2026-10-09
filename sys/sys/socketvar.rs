@@ -1,5 +1,3 @@
-/*	$OpenBSD: socketvar.h,v 1.161 2026/06/11 12:50:52 bluhm Exp $	*/
-/*	$NetBSD: socketvar.h,v 1.18 1996/02/09 18:25:38 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1990, 1993

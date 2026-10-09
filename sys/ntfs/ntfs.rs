@@ -1,5 +1,3 @@
-/*	$OpenBSD: ntfs.h,v 1.19 2022/01/11 03:13:59 jsg Exp $	*/
-/*	$NetBSD: ntfs.h,v 1.5 2003/04/24 07:50:19 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999 Semen Ustimenko

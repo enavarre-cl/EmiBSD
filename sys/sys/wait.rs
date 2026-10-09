@@ -1,5 +1,3 @@
-/*	$OpenBSD: wait.h,v 1.20 2022/12/19 00:22:11 guenther Exp $	*/
-/*	$NetBSD: wait.h,v 1.11 1996/04/09 20:55:51 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993, 1994

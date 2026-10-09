@@ -1,4 +1,3 @@
-/*	$OpenBSD: mplock.h,v 1.3 2018/01/05 17:42:35 kettenis Exp $	*/
 /* <LICENSES> */
 /* public domain */
 /* </LICENSES> */

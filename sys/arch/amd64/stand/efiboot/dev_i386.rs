@@ -1,4 +1,3 @@
-/*	$OpenBSD: dev_i386.c,v 1.1 2019/05/10 21:20:42 mlarkin Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996-1999 Michael Shalayeff

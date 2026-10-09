@@ -1,5 +1,3 @@
-/*	$OpenBSD: ppbreg.h,v 1.6 2020/05/23 07:58:24 patrick Exp $	*/
-/*	$NetBSD: ppbreg.h,v 1.3 2001/07/06 18:07:16 mcr Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.

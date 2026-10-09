@@ -1,7 +1,3 @@
-/*	$OpenBSD: uhid.c,v 1.92 2024/12/30 02:46:00 guenther Exp $ */
-/*	$NetBSD: uhid.c,v 1.57 2003/03/11 16:44:00 augustss Exp $	*/
-/*	$OpenBSD: uhid.h,v 1.2 2021/01/23 05:08:36 thfr Exp $ */
-/*	$NetBSD: uhid.c,v 1.57 2003/03/11 16:44:00 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

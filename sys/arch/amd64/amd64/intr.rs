@@ -1,5 +1,3 @@
-/*	$OpenBSD: intr.c,v 1.64 2025/11/10 12:34:52 dlg Exp $	*/
-/*	$NetBSD: intr.c,v 1.3 2003/03/03 22:16:20 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright 2002 (c) Wasabi Systems, Inc.

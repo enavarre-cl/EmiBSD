@@ -1,4 +1,3 @@
-/*	$OpenBSD: gpio.h,v 1.8 2011/10/03 20:24:51 matthieu Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2004 Alexander Yurchenko <grange@openbsd.org>

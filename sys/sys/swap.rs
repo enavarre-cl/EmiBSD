@@ -1,5 +1,3 @@
-/*	$OpenBSD: swap.h,v 1.7 2013/09/30 12:02:30 millert Exp $	*/
-/*	$NetBSD: swap.h,v 1.2 1998/09/13 14:46:24 christos Exp $	*/
 /* <LICENSES> */
 
 /*

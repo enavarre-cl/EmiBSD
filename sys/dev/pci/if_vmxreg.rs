@@ -1,4 +1,3 @@
-/*	$OpenBSD: if_vmxreg.h,v 1.10 2024/06/07 08:44:25 jan Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2013 Tsubai Masanari

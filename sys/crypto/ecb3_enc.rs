@@ -1,4 +1,3 @@
-/*	$OpenBSD: ecb3_enc.c,v 1.3 2013/11/18 18:49:53 brad Exp $	*/
 /* <LICENSES> */
 /* lib/des/ecb3_enc.c */
 

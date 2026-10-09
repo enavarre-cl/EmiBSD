@@ -1,5 +1,3 @@
-/*	$OpenBSD: wsmux.c,v 1.62 2025/07/18 17:34:29 mvs Exp $	*/
-/*      $NetBSD: wsmux.c,v 1.37 2005/04/30 03:47:12 augustss Exp $      */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998, 2005 The NetBSD Foundation, Inc.

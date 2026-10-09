@@ -1,7 +1,3 @@
-/*	$OpenBSD: tcp_timer.h,v 1.28 2025/12/31 03:47:04 jsg Exp $	*/
-/*	$NetBSD: tcp_timer.h,v 1.6 1995/03/26 20:32:37 jtc Exp $	*/
-/*	$OpenBSD: tcp_timer.c,v 1.88 2025/09/17 17:29:14 bluhm Exp $	*/
-/*	$NetBSD: tcp_timer.c,v 1.14 1996/02/13 23:44:09 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

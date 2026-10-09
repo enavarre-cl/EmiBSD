@@ -1,5 +1,3 @@
-/*	$OpenBSD: ntfs_inode.h,v 1.8 2021/03/11 13:31:35 jsg Exp $	*/
-/*	$NetBSD: ntfs_inode.h,v 1.1 2002/12/23 17:38:33 jdolecek Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999 Semen Ustimenko

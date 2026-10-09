@@ -1,4 +1,3 @@
-/*	$OpenBSD: exec.h,v 1.7 2017/02/08 05:09:25 guenther Exp $	*/
 /* <LICENSES> */
 /*
  * Written by Artur Grabowski <art@openbsd.org> Public Domain

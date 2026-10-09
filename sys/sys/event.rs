@@ -1,4 +1,3 @@
-/*	$OpenBSD: event.h,v 1.74 2025/05/10 09:44:39 visa Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999,2000,2001 Jonathan Lemon <jlemon@FreeBSD.org>

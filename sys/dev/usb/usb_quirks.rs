@@ -1,9 +1,3 @@
-/*	$OpenBSD: usb_quirks.h,v 1.18 2021/03/24 02:49:57 jcs Exp $ */
-/*	$NetBSD: usb_quirks.h,v 1.20 2001/04/15 09:38:01 augustss Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/usb_quirks.h,v 1.9 1999/11/12 23:31:03 n_hibma Exp $	*/
-/*	$OpenBSD: usb_quirks.c,v 1.81 2025/03/27 14:12:38 sthen Exp $ */
-/*	$NetBSD: usb_quirks.c,v 1.45 2003/05/10 17:47:14 hamajima Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/usb_quirks.c,v 1.30 2003/01/02 04:15:55 imp Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

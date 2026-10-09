@@ -1,5 +1,3 @@
-/*	$OpenBSD: copy.S,v 1.21 2025/09/05 13:33:49 cludwig Exp $	*/
-/*	$NetBSD: copy.S,v 1.1 2003/04/26 18:39:26 fvdl Exp $	*/
 
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.

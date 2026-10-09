@@ -1,5 +1,3 @@
-/*	$OpenBSD: hmac.h,v 1.3 2012/12/05 23:20:15 deraadt Exp $	*/
-/*	$OpenBSD: hmac.c,v 1.4 2016/09/19 18:09:40 tedu Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 2008 Damien Bergamini <damien.bergamini@free.fr>

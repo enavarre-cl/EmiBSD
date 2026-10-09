@@ -1,4 +1,3 @@
-/*	$OpenBSD: if_cdce.c,v 1.83 2024/05/23 03:21:08 jsg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1997, 1998, 1999, 2000-2003 Bill Paul <wpaul@windriver.com>

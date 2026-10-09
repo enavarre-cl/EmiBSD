@@ -1,4 +1,3 @@
-/* $OpenBSD: pte.h,v 1.10 2024/10/14 12:02:16 jsg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 Dale Rahn <drahn@dalerahn.com>

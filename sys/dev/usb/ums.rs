@@ -1,5 +1,3 @@
-/*	$OpenBSD: ums.c,v 1.54 2026/01/19 12:20:43 helg Exp $ */
-/*	$NetBSD: ums.c,v 1.60 2003/03/11 16:44:00 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

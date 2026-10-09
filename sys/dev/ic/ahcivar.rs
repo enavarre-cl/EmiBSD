@@ -1,4 +1,3 @@
-/*	$OpenBSD: ahcivar.h,v 1.11 2021/05/30 15:05:33 visa Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2006 David Gwynne <dlg@openbsd.org>

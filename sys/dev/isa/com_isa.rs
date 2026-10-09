@@ -1,4 +1,3 @@
-/*	$OpenBSD: com_isa.c,v 1.10 2022/04/06 18:59:28 naddy Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 - 1999, Jason Downs.  All rights reserved.

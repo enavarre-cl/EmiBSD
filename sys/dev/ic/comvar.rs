@@ -1,5 +1,3 @@
-/*	$OpenBSD: comvar.h,v 1.62 2026/04/06 10:27:53 kettenis Exp $	*/
-/*	$NetBSD: comvar.h,v 1.5 1996/05/05 19:50:47 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 - 1998, Jason Downs.  All rights reserved.

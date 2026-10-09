@@ -1,4 +1,3 @@
-/*	$OpenBSD: psci.c,v 1.17 2024/07/10 11:01:24 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Jonathan Gray <jsg@openbsd.org>

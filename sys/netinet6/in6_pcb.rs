@@ -1,4 +1,3 @@
-/*	$OpenBSD: in6_pcb.c,v 1.152 2025/09/16 09:19:16 florian Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.

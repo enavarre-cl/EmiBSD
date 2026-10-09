@@ -1,5 +1,3 @@
-/*	$OpenBSD: idgen.h,v 1.3 2013/06/05 05:45:54 djm Exp $	*/
-/*	$OpenBSD: idgen.c,v 1.8 2020/07/22 13:54:30 tobhe Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2008 Damien Miller <djm@mindrot.org>

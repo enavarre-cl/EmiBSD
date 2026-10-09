@@ -1,7 +1,3 @@
-/*	$OpenBSD: uvm_page.h,v 1.74 2026/07/11 13:13:16 kettenis Exp $	*/
-/*	$NetBSD: uvm_page.h,v 1.19 2000/12/28 08:24:55 chs Exp $	*/
-/*	$OpenBSD: uvm_page.c,v 1.190 2026/07/11 13:13:16 kettenis Exp $	*/
-/*	$NetBSD: uvm_page.c,v 1.44 2000/11/27 08:40:04 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

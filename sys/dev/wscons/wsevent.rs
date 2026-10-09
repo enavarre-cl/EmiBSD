@@ -1,5 +1,3 @@
-/* $OpenBSD: wsevent.c,v 1.30 2025/07/18 17:34:29 mvs Exp $ */
-/* $NetBSD: wsevent.c,v 1.16 2003/08/07 16:31:29 agc Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.

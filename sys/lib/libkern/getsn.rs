@@ -1,4 +1,3 @@
-/*	$OpenBSD: getsn.c,v 1.7 2018/04/25 11:15:58 dlg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Theo de Raadt

@@ -1,5 +1,3 @@
-/*	$OpenBSD: disklabel.h,v 1.94 2025/11/13 20:59:14 deraadt Exp $	*/
-/*	$NetBSD: disklabel.h,v 1.41 1996/05/10 23:07:37 mark Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1987, 1988, 1993

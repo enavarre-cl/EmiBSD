@@ -1,4 +1,3 @@
-/*	$OpenBSD: efiacpi.c,v 1.20 2026/05/14 12:26:58 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2018 Mark Kettenis <kettenis@openbsd.org>

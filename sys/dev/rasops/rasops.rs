@@ -1,7 +1,3 @@
-/*	$OpenBSD: rasops.c,v 1.72 2025/06/03 14:58:36 kettenis Exp $	*/
-/*	$NetBSD: rasops.c,v 1.35 2001/02/02 06:01:01 marcus Exp $	*/
-/*	$OpenBSD: rasops.h,v 1.26 2023/02/03 18:32:31 miod Exp $ */
-/* 	$NetBSD: rasops.h,v 1.13 2000/06/13 13:36:54 ad Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.

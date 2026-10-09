@@ -1,5 +1,3 @@
-/*	$OpenBSD: md5.h,v 1.3 2014/11/16 17:39:09 tedu Exp $	*/
-/*	$OpenBSD: md5.c,v 1.4 2014/12/28 10:04:35 tedu Exp $	*/
 /* <LICENSES> */
 /*
  * This code implements the MD5 message-digest algorithm.

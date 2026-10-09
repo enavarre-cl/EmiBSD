@@ -1,5 +1,3 @@
-/*	$OpenBSD: krpc_subr.c,v 1.40 2025/02/16 16:05:07 bluhm Exp $	*/
-/*	$NetBSD: krpc_subr.c,v 1.12.4.1 1996/06/07 00:52:26 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995 Gordon Ross, Adam Glass

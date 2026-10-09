@@ -1,4 +1,3 @@
-/*	$OpenBSD: pf.c,v 1.1241 2026/09/10 12:28:04 deraadt Exp $ */
 /* <LICENSES> */
 
 /*

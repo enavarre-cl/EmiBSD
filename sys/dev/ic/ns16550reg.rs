@@ -1,5 +1,3 @@
-/*	$OpenBSD: ns16550reg.h,v 1.6 2022/01/11 11:51:14 uaa Exp $	*/
-/*	$NetBSD: ns16550reg.h,v 1.4 1994/10/27 04:18:43 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1991 The Regents of the University of California.

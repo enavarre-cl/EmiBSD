@@ -1,4 +1,3 @@
-/*	$OpenBSD: udf_subr.c,v 1.27 2024/04/13 23:44:11 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2006, Miodrag Vallat

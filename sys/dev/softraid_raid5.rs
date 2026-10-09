@@ -1,4 +1,3 @@
-/* $OpenBSD: softraid_raid5.c,v 1.33 2026/09/23 13:29:14 krw Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 Joel Sing <jsing@openbsd.org>

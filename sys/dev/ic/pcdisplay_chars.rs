@@ -1,5 +1,3 @@
-/* $OpenBSD: pcdisplay_chars.c,v 1.6 2023/04/13 18:29:35 miod Exp $ */
-/* $NetBSD: pcdisplay_chars.c,v 1.5 2000/06/08 07:01:19 cgd Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

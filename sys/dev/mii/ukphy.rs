@@ -1,5 +1,3 @@
-/*	$OpenBSD: ukphy.c,v 1.25 2022/04/06 18:59:29 naddy Exp $	*/
-/*	$NetBSD: ukphy.c,v 1.9 2000/02/02 23:34:57 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999 The NetBSD Foundation, Inc.

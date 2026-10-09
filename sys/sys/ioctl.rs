@@ -1,5 +1,3 @@
-/*	$OpenBSD: ioctl.h,v 1.17 2016/02/28 15:46:19 naddy Exp $	*/
-/*	$NetBSD: ioctl.h,v 1.20 1996/01/30 18:21:47 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1990, 1993, 1994

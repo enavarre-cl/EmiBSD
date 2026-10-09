@@ -1,4 +1,3 @@
-/*	$OpenBSD: in6_proto.c,v 1.153 2025/10/24 11:51:49 mvs Exp $	*/
 /*	$KAME: in6_proto.c,v 1.66 2000/10/10 15:35:47 itojun Exp $	*/
 /* <LICENSES> */
 /*

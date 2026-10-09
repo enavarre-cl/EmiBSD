@@ -1,4 +1,3 @@
-/*	$OpenBSD: mutex.h,v 1.26 2025/12/11 23:34:44 dlg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2004 Artur Grabowski <art@openbsd.org>

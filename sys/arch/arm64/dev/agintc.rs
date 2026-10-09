@@ -1,4 +1,3 @@
-/* $OpenBSD: agintc.c,v 1.66 2026/09/08 19:48:28 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2007, 2009, 2011, 2017 Dale Rahn <drahn@dalerahn.com>

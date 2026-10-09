@@ -1,4 +1,3 @@
-/*	$OpenBSD: pf_table.c,v 1.150 2026/09/21 13:58:20 gnezdo Exp $	*/
 /* <LICENSES> */
 
 /*

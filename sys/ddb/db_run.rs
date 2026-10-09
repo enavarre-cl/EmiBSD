@@ -1,7 +1,3 @@
-/*	$OpenBSD: db_run.c,v 1.33 2025/07/22 09:09:50 kettenis Exp $	*/
-/*	$NetBSD: db_run.c,v 1.8 1996/02/05 01:57:12 christos Exp $	*/
-/*	$OpenBSD: db_run.h,v 1.12 2019/11/06 07:30:08 mpi Exp $	*/
-/*	$NetBSD: db_run.h,v 1.3 1996/02/05 01:57:14 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

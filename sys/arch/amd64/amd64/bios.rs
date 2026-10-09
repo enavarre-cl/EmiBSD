@@ -1,4 +1,3 @@
-/*	$OpenBSD: bios.c,v 1.48 2025/09/16 12:18:10 hshoexer Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2006 Gordon Willem Klok <gklok@cogeco.ca>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: denode.h,v 1.36 2022/08/15 01:47:09 jsg Exp $	*/
-/*	$NetBSD: denode.h,v 1.24 1997/10/17 11:23:39 ws Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (C) 1994, 1995, 1997 Wolfgang Solfrank.

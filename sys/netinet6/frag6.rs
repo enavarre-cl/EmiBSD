@@ -1,4 +1,3 @@
-/*	$OpenBSD: frag6.c,v 1.97 2026/08/11 14:28:59 bluhm Exp $	*/
 /*	$KAME: frag6.c,v 1.40 2002/05/27 21:40:31 itojun Exp $	*/
 /* <LICENSES> */
 /*

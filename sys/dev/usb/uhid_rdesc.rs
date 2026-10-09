@@ -1,6 +1,3 @@
-/*	$OpenBSD: uhid_rdesc.h,v 1.2 2022/03/21 12:18:52 thfr Exp $ */
-/*	$NetBSD: ugraphire_rdesc.h,v 1.1 2000/12/29 01:47:49 augustss Exp $	*/
-/*	$FreeBSD: uxb360gp_rdesc.h,v 1.3 2008/05/24 18:35:55 ed Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2000 Nick Hibma <n_hibma@freebsd.org>

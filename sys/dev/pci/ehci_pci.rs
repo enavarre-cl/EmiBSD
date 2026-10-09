@@ -1,5 +1,3 @@
-/*	$OpenBSD: ehci_pci.c,v 1.33 2024/05/24 06:02:53 jsg Exp $ */
-/*	$NetBSD: ehci_pci.c,v 1.15 2004/04/23 21:13:06 itojun Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001, 2002 The NetBSD Foundation, Inc.

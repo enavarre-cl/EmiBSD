@@ -1,5 +1,3 @@
-/*	$OpenBSD: pluart.c,v 1.14 2022/07/02 08:50:42 visa Exp $	*/
-/*	$OpenBSD: pluartvar.h,v 1.5 2022/06/27 13:03:32 anton Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>

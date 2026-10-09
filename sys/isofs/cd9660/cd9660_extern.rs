@@ -1,5 +1,3 @@
-/*	$OpenBSD: cd9660_extern.h,v 1.16 2023/07/17 09:41:20 semarie Exp $	*/
-/*	$NetBSD: cd9660_extern.h,v 1.1 1997/01/24 00:24:53 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994

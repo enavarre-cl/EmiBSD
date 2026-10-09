@@ -1,5 +1,3 @@
-/*	$OpenBSD: mc146818reg.h,v 1.8 2019/04/29 15:46:11 cheloha Exp $	*/
-/*	$NetBSD: mc146818reg.h,v 1.1 1995/05/04 19:31:18 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995 Carnegie-Mellon University.

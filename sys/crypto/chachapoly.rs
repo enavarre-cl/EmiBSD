@@ -1,5 +1,3 @@
-/*	$OpenBSD: chachapoly.h,v 1.4 2020/07/22 13:54:30 tobhe Exp $	*/
-/*	$OpenBSD: chachapoly.c,v 1.6 2020/07/22 13:54:30 tobhe Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 Mike Belopuhov

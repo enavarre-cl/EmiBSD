@@ -1,5 +1,3 @@
-/*	$OpenBSD: siopreg.h,v 1.12 2010/07/23 07:47:13 jsg Exp $ */
-/*	$NetBSD: siopreg.h,v 1.16 2005/02/27 00:27:02 perry Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2000 Manuel Bouyer.

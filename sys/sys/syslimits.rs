@@ -1,5 +1,3 @@
-/*	$OpenBSD: syslimits.h,v 1.16 2024/08/02 01:53:21 guenther Exp $	*/
-/*	$NetBSD: syslimits.h,v 1.12 1995/10/05 05:26:19 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988, 1993

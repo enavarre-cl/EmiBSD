@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_subr.c,v 1.53 2024/10/08 11:57:59 claudio Exp $	*/
-/*	$NetBSD: kern_subr.c,v 1.15 1996/04/09 17:21:56 ragge Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1991, 1993

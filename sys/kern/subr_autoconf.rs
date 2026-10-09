@@ -1,5 +1,3 @@
-/*	$OpenBSD: subr_autoconf.c,v 1.98 2025/09/16 12:18:10 hshoexer Exp $	*/
-/*	$NetBSD: subr_autoconf.c,v 1.21 1996/04/04 06:06:18 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1992, 1993

@@ -1,5 +1,3 @@
-/*	$OpenBSD: vm_machdep.c,v 1.14 2025/05/21 09:06:58 mpi Exp $	*/
-/*	$NetBSD: vm_machdep.c,v 1.1 2003/04/26 18:39:33 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1995 Charles M. Hannum.  All rights reserved.

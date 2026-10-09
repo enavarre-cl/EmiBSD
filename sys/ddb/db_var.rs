@@ -1,4 +1,3 @@
-/*	$OpenBSD: db_var.h,v 1.15 2025/05/19 21:48:28 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Michael Shalayeff.  All rights reserved.

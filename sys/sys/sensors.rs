@@ -1,4 +1,3 @@
-/*	$OpenBSD: sensors.h,v 1.37 2020/07/15 07:13:57 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003, 2004 Alexander Yurchenko <grange@openbsd.org>

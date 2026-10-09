@@ -1,5 +1,3 @@
-/*	$OpenBSD: ttycom.h,v 1.17 2018/06/16 13:55:03 deraadt Exp $	*/
-/*	$NetBSD: ttycom.h,v 1.4 1996/05/19 17:17:53 jonathan Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1990, 1993, 1994

@@ -1,4 +1,3 @@
-/*	$OpenBSD: subr_userconf.c,v 1.48 2022/08/14 01:58:28 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996-2001 Mats O Jansson <moj@stacken.kth.se>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: i2c_io.h,v 1.2 2020/01/11 11:30:47 kettenis Exp $	*/
-/*	$NetBSD: i2c_io.h,v 1.3 2012/04/22 14:10:36 pgoyette Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.

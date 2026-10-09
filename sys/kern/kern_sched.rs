@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_sched.c,v 1.116 2026/04/09 01:30:02 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2007, 2008 Artur Grabowski <art@openbsd.org>

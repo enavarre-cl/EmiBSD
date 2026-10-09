@@ -1,5 +1,3 @@
-/*	$OpenBSD: umass.c,v 1.82 2024/05/23 03:21:09 jsg Exp $ */
-/*	$NetBSD: umass.c,v 1.116 2004/06/30 05:53:46 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 The NetBSD Foundation, Inc.

@@ -1,4 +1,3 @@
-/*	$OpenBSD: siginfo.h,v 1.14 2024/02/21 15:53:07 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Theo de Raadt

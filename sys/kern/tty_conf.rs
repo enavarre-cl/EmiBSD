@@ -1,5 +1,3 @@
-/*	$OpenBSD: tty_conf.c,v 1.23 2015/12/22 20:31:51 sf Exp $	*/
-/*	$NetBSD: tty_conf.c,v 1.18 1996/05/19 17:17:55 jonathan Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1991, 1993

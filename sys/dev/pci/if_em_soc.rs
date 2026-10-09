@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_em_soc.h,v 1.3 2025/06/12 06:43:22 jsg Exp $	*/
-/*	$OpenBSD: if_em_soc.c,v 1.6 2025/06/12 06:43:22 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2009 Dariusz Swiderski <sfires@sfires.net>

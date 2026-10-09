@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_balloc.c,v 1.27 2019/07/19 00:24:31 cheloha Exp $	*/
-/*	$NetBSD: ext2fs_balloc.c,v 1.10 2001/07/04 21:16:01 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.

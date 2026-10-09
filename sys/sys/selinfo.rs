@@ -1,4 +1,3 @@
-/*	$OpenBSD: selinfo.h,v 1.6 2022/07/05 15:06:16 visa Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1992, 1993

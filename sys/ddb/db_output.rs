@@ -1,7 +1,3 @@
-/*	$OpenBSD: db_output.c,v 1.37 2021/06/10 12:33:48 bluhm Exp $	*/
-/*	$NetBSD: db_output.c,v 1.13 1996/04/01 17:27:14 christos Exp $	*/
-/*	$OpenBSD: db_output.h,v 1.17 2021/02/09 14:37:13 jcs Exp $ */
-/*	$NetBSD: db_output.h,v 1.9 1996/04/04 05:13:50 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

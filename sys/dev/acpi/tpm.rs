@@ -1,4 +1,3 @@
-/* $OpenBSD: tpm.c,v 1.20 2024/05/29 12:21:33 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Minimal interface to Trusted Platform Module chips implementing the

@@ -1,5 +1,3 @@
-/*	$OpenBSD: direntry.h,v 1.8 2021/12/23 02:12:52 jsg Exp $	*/
-/*	$NetBSD: direntry.h,v 1.13 1997/10/17 11:23:45 ws Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (C) 1994, 1995, 1997 Wolfgang Solfrank.

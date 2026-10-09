@@ -1,4 +1,3 @@
-/*	$OpenBSD: udf_vnops.c,v 1.76 2026/06/30 14:04:03 kirill Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001, 2002 Scott Long <scottl@freebsd.org>

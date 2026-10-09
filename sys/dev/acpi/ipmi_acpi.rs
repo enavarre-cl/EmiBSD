@@ -1,4 +1,3 @@
-/* $OpenBSD: ipmi_acpi.c,v 1.7 2025/01/28 02:20:49 yasuoka Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2018 Patrick Wildt <patrick@blueri.se>

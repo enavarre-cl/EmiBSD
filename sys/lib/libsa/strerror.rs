@@ -1,5 +1,3 @@
-/*	$OpenBSD: strerror.c,v 1.10 2014/11/19 20:28:56 miod Exp $	*/
-/*	$NetBSD: strerror.c,v 1.11 1996/10/13 02:29:08 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

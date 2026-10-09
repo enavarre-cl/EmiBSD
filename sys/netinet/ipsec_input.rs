@@ -1,4 +1,3 @@
-/*	$OpenBSD: ipsec_input.c,v 1.223 2026/05/07 14:58:03 claudio Exp $	*/
 /* <LICENSES> */
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),

@@ -1,4 +1,3 @@
-/*	$OpenBSD: param.h,v 1.147 2026/07/16 06:21:08 deraadt Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1989, 1993

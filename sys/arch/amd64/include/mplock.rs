@@ -1,4 +1,3 @@
-/*	$OpenBSD: mplock.h,v 1.5 2017/10/17 14:25:35 visa Exp $	*/
 /* <LICENSES> */
 /* public domain */
 /* </LICENSES> */

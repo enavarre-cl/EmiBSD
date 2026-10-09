@@ -1,5 +1,3 @@
-/*	$OpenBSD: signal.h,v 1.30 2026/03/21 01:56:51 daniel Exp $	*/
-/*	$NetBSD: signal.h,v 1.21 1996/02/09 18:25:32 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1991, 1993

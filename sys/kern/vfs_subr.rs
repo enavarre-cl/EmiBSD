@@ -1,5 +1,3 @@
-/*	$OpenBSD: vfs_subr.c,v 1.335 2026/06/30 14:04:03 kirill Exp $	*/
-/*	$NetBSD: vfs_subr.c,v 1.53 1996/04/22 01:39:13 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

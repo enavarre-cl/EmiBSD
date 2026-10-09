@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvm_glue.c,v 1.95 2026/02/11 22:34:40 deraadt Exp $	*/
-/*	$NetBSD: uvm_glue.c,v 1.44 2001/02/06 19:54:44 eeh Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

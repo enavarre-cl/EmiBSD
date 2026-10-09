@@ -1,5 +1,3 @@
-/*	$OpenBSD: ffs_inode.c,v 1.83 2024/02/03 18:51:58 beck Exp $	*/
-/*	$NetBSD: ffs_inode.c,v 1.10 1996/05/11 18:27:19 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

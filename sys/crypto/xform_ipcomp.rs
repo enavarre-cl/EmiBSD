@@ -1,4 +1,3 @@
-/* $OpenBSD: xform_ipcomp.c,v 1.8 2019/01/09 12:11:38 mpi Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 Jean-Jacques Bernard-Gundol (jj@wabbitt.org)

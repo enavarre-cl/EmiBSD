@@ -1,5 +1,3 @@
-/*	$OpenBSD: vmparam.h,v 1.26 2026/06/22 00:27:33 jsg Exp $	*/
-/*	$NetBSD: vmparam.h,v 1.1 2003/04/26 18:39:49 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.

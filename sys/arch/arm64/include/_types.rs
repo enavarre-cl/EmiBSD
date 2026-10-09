@@ -1,4 +1,3 @@
-/* $OpenBSD: _types.h,v 1.7 2026/08/31 10:58:08 tb Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990, 1993

@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_pfsync.h,v 1.66 2026/04/12 03:16:04 deraadt Exp $	*/
-/*	$OpenBSD: if_pfsync.c,v 1.335 2026/08/12 18:23:14 bluhm Exp $	*/
 /* <LICENSES> */
 
 /*

@@ -1,5 +1,3 @@
-/*	$OpenBSD: ethertypes.h,v 1.20 2025/05/18 04:10:49 dlg Exp $	*/
-/*	$NetBSD: ethertypes.h,v 1.13 2002/02/10 01:28:32 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

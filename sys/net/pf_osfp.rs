@@ -1,4 +1,3 @@
-/*	$OpenBSD: pf_osfp.c,v 1.50 2026/09/13 03:27:17 deraadt Exp $ */
 /* <LICENSES> */
 
 /*

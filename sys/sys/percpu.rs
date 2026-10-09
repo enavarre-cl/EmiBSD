@@ -1,4 +1,3 @@
-/*	$OpenBSD: percpu.h,v 1.9 2023/09/16 09:33:27 mpi Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 David Gwynne <dlg@openbsd.org>

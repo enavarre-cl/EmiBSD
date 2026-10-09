@@ -1,4 +1,3 @@
-/* $OpenBSD: fusebuf.c,v 1.19 2026/06/17 13:29:01 helg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2012-2013 Sylvestre Gallon <ccna.syl@gmail.com>

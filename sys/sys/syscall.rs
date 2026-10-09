@@ -1,5 +1,3 @@
-/*	$OpenBSD: syscall.h,v 1.286 2026/08/12 15:05:21 naddy Exp $	*/
-
 /* <CODE> */
 //! `<sys/syscall.h>`: system call numbers.
 //!

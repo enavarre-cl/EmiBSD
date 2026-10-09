@@ -1,6 +1,4 @@
-/*	$OpenBSD: in6_ifattach.h,v 1.10 2019/08/21 15:32:18 florian Exp $	*/
 /*	$KAME: in6_ifattach.h,v 1.9 2000/04/12 05:35:48 itojun Exp $	*/
-/*	$OpenBSD: in6_ifattach.c,v 1.128 2026/09/20 20:50:29 gnezdo Exp $	*/
 /*	$KAME: in6_ifattach.c,v 1.124 2001/07/18 08:32:51 jinmei Exp $	*/
 /* <LICENSES> */
 /*

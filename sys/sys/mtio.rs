@@ -1,5 +1,3 @@
-/*	$OpenBSD: mtio.h,v 1.9 2007/06/01 18:44:48 krw Exp $	*/
-/*	$NetBSD: mtio.h,v 1.14 1997/04/15 06:50:19 lukem Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

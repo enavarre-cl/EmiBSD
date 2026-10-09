@@ -1,5 +1,3 @@
-/*	$OpenBSD: signalvar.h,v 1.58 2025/03/10 09:28:57 claudio Exp $	*/
-/*	$NetBSD: signalvar.h,v 1.17 1996/04/22 01:23:31 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993

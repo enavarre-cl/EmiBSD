@@ -1,7 +1,3 @@
-/*	$OpenBSD: cd.h,v 1.28 2019/11/29 14:06:21 krw Exp $	*/
-/*	$NetBSD: scsi_cd.h,v 1.6 1996/03/19 03:06:39 mycroft Exp $	*/
-/*	$OpenBSD: cd.c,v 1.268 2026/05/09 09:11:47 jsg Exp $	*/
-/*	$NetBSD: cd.c,v 1.100 1997/04/02 02:29:30 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1994, 1995, 1997 Charles M. Hannum.  All rights reserved.

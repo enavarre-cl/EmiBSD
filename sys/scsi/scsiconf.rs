@@ -1,7 +1,3 @@
-/*	$OpenBSD: scsiconf.h,v 1.202 2023/05/10 15:28:26 krw Exp $	*/
-/*	$NetBSD: scsiconf.h,v 1.35 1997/04/02 02:29:38 mycroft Exp $	*/
-/*	$OpenBSD: scsiconf.c,v 1.255 2025/09/16 12:18:10 hshoexer Exp $	*/
-/*	$NetBSD: scsiconf.c,v 1.57 1996/05/02 01:09:01 neil Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1993, 1994, 1995 Charles Hannum.  All rights reserved.

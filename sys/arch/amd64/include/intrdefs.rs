@@ -1,6 +1,3 @@
-/*	$OpenBSD: intrdefs.h,v 1.25 2025/11/10 12:34:52 dlg Exp $	*/
-/*	$NetBSD: intrdefs.h,v 1.2 2003/05/04 22:01:56 fvdl Exp $	*/
-
 /* <CODE> */
 //! amd64 `<machine/intrdefs.h>`: interrupt priority levels and interrupt source numbers.
 //!

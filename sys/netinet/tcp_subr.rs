@@ -1,5 +1,3 @@
-/*	$OpenBSD: tcp_subr.c,v 1.216 2025/07/18 08:39:14 mvs Exp $	*/
-/*	$NetBSD: tcp_subr.c,v 1.22 1996/02/13 23:44:00 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1990, 1993

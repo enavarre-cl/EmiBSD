@@ -1,7 +1,3 @@
-/*	$OpenBSD: ntfs_subr.h,v 1.12 2024/05/13 01:15:53 jsg Exp $	*/
-/*	$NetBSD: ntfs_subr.h,v 1.1 2002/12/23 17:38:33 jdolecek Exp $	*/
-/*	$OpenBSD: ntfs_subr.c,v 1.53 2025/01/13 13:58:41 claudio Exp $	*/
-/*	$NetBSD: ntfs_subr.c,v 1.4 2003/04/10 21:37:32 jdolecek Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999 Semen Ustimenko

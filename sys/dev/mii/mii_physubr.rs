@@ -1,5 +1,3 @@
-/*	$OpenBSD: mii_physubr.c,v 1.46 2020/01/15 00:14:47 cheloha Exp $	*/
-/*	$NetBSD: mii_physubr.c,v 1.20 2001/04/13 23:30:09 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999, 2000 The NetBSD Foundation, Inc.

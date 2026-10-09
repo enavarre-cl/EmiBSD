@@ -1,4 +1,3 @@
-/*	$OpenBSD: poll.h,v 1.16 2024/08/04 22:28:08 guenther Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Theo de Raadt

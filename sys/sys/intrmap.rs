@@ -1,4 +1,3 @@
-/*	$OpenBSD: intrmap.h,v 1.4 2025/06/13 09:48:45 jsg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2020 David Gwynne <dlg@openbsd.org>

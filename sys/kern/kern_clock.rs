@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_clock.c,v 1.127 2025/06/01 03:43:48 dlg Exp $	*/
-/*	$NetBSD: kern_clock.c,v 1.34 1996/06/09 04:51:03 briggs Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1991, 1993

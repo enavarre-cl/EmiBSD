@@ -1,6 +1,3 @@
-/*	$OpenBSD: pic.h,v 1.8 2024/01/19 18:38:16 kettenis Exp $	*/
-/*	$NetBSD: pic.h,v 1.1 2003/02/26 21:26:11 fvdl Exp $	*/
-
 /* <CODE> */
 //! amd64 `<machine/pic.h>`: structure common to all PIC softcs.
 //!

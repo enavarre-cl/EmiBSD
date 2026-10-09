@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_subr.c,v 1.38 2024/10/08 02:58:26 jsg Exp $	*/
-/*	$NetBSD: ext2fs_subr.c,v 1.1 1997/06/11 09:34:03 bouyer Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.

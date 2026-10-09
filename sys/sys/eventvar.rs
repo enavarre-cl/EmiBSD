@@ -1,4 +1,3 @@
-/*	$OpenBSD: eventvar.h,v 1.17 2022/07/09 12:48:21 visa Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999,2000 Jonathan Lemon <jlemon@FreeBSD.org>

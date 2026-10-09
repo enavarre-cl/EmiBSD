@@ -1,7 +1,3 @@
-/*	$OpenBSD: igmp.h,v 1.6 2003/06/02 23:28:13 millert Exp $	*/
-/*	$NetBSD: igmp.h,v 1.6 1995/05/31 06:08:21 mycroft Exp $	*/
-/*	$OpenBSD: igmp.c,v 1.100 2026/07/30 14:57:46 bluhm Exp $	*/
-/*	$NetBSD: igmp.c,v 1.15 1996/02/13 23:41:25 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988 Stephen Deering.

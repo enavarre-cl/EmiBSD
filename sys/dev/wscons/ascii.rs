@@ -1,5 +1,3 @@
-/* $OpenBSD: ascii.h,v 1.6 2017/05/27 12:00:28 fcambus Exp $ */
-/* $NetBSD: ascii.h,v 1.3 1998/06/20 19:11:04 drochner Exp $ */
 /* <LICENSES> */
 /* </LICENSES> */
 

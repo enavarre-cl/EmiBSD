@@ -1,4 +1,3 @@
-/*	$OpenBSD: cpu.c,v 1.154 2026/09/09 22:15:49 tobhe Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>

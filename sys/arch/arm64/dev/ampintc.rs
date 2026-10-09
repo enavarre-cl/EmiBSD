@@ -1,4 +1,3 @@
-/* $OpenBSD: ampintc.c,v 1.35 2025/12/15 12:59:24 dlg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2007,2009,2011 Dale Rahn <drahn@openbsd.org>

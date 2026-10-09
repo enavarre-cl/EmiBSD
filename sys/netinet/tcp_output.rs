@@ -1,5 +1,3 @@
-/*	$OpenBSD: tcp_output.c,v 1.158 2026/01/01 05:28:23 jsg Exp $	*/
-/*	$NetBSD: tcp_output.c,v 1.16 1997/06/03 16:17:09 kml Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1990, 1993

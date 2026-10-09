@@ -1,5 +1,3 @@
-/*	$OpenBSD: tcp_usrreq.c,v 1.253 2025/10/24 15:09:56 bluhm Exp $	*/
-/*	$NetBSD: tcp_usrreq.c,v 1.20 1996/02/13 23:44:16 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1993

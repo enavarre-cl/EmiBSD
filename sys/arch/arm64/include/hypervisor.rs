@@ -1,4 +1,3 @@
-/* $OpenBSD: hypervisor.h,v 1.5 2025/02/11 22:27:09 kettenis Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2013, 2014 Andrew Turner

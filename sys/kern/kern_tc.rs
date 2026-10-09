@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_tc.c,v 1.84 2025/06/12 20:37:58 deraadt Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2000 Poul-Henning Kamp <phk@FreeBSD.org>

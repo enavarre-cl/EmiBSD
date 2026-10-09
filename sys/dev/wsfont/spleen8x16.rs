@@ -1,4 +1,3 @@
-/*	$OpenBSD: spleen8x16.h,v 1.7 2020/07/31 20:14:48 fcambus Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2018-2020 Frederic Cambus <fcambus@openbsd.org>

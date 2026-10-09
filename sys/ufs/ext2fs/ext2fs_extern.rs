@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_extern.h,v 1.40 2025/07/07 00:55:15 jsg Exp $	*/
-/*	$NetBSD: ext2fs_extern.h,v 1.1 1997/06/11 09:33:55 bouyer Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997 Manuel Bouyer.

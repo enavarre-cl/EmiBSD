@@ -1,4 +1,3 @@
-/*	$OpenBSD: ipsec_output.c,v 1.105 2025/07/08 00:47:41 jsg Exp $ */
 /* <LICENSES> */
 /*
  * The author of this code is Angelos D. Keromytis (angelos@cis.upenn.edu)

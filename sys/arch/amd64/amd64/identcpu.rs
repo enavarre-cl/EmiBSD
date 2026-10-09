@@ -1,5 +1,3 @@
-/*	$OpenBSD: identcpu.c,v 1.158 2026/09/21 21:02:15 deraadt Exp $	*/
-/*	$NetBSD: identcpu.c,v 1.1 2003/04/26 18:39:28 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.

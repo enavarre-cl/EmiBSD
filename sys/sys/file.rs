@@ -1,5 +1,3 @@
-/*	$OpenBSD: file.h,v 1.67 2026/09/19 17:21:52 dv Exp $	*/
-/*	$NetBSD: file.h,v 1.11 1995/03/26 20:24:13 jtc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

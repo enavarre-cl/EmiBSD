@@ -1,7 +1,3 @@
-/*	$OpenBSD: wsfont.c,v 1.65 2023/10/24 13:52:49 fcambus Exp $ */
-/*	$NetBSD: wsfont.c,v 1.17 2001/02/07 13:59:24 ad Exp $	*/
-/*	$OpenBSD: wsfont.h,v 1.12 2019/07/11 18:07:54 mpi Exp $ */
-/*	$NetBSD: wsfont.h,v 1.12 2000/06/13 13:37:07 ad Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.

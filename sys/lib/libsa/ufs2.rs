@@ -1,4 +1,3 @@
-/*	$OpenBSD: ufs2.c,v 1.8 2019/08/03 15:22:17 deraadt Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

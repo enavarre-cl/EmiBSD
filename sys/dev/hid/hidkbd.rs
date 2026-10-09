@@ -1,7 +1,3 @@
-/*	$OpenBSD: hidkbd.c,v 1.15 2024/10/21 19:05:31 miod Exp $	*/
-/*      $NetBSD: ukbd.c,v 1.85 2003/03/11 16:44:00 augustss Exp $        */
-/*	$OpenBSD: hidkbdsc.h,v 1.3 2022/11/09 10:05:18 robert Exp $	*/
-/*	$OpenBSD: hidkbdvar.h,v 1.1 2016/01/08 15:54:13 jcs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: isa.c,v 1.52 2025/09/16 12:18:10 hshoexer Exp $	*/
-/*	$NetBSD: isa.c,v 1.85 1996/05/14 00:31:04 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997, Jason Downs.  All rights reserved.

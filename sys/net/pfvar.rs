@@ -1,4 +1,3 @@
-/*	$OpenBSD: pfvar.h,v 1.548 2026/02/05 03:26:00 dlg Exp $ */
 /* <LICENSES> */
 
 /*

@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvm_swap.c,v 1.183 2026/07/11 13:13:16 kettenis Exp $	*/
-/*	$NetBSD: uvm_swap.c,v 1.40 2000/11/17 11:39:39 mrg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996, 1997 Matthew R. Green

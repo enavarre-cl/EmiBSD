@@ -1,4 +1,3 @@
-/* $OpenBSD: amltypes.h,v 1.53 2026/07/07 18:26:28 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Jordan Hargrave <jordan@openbsd.org>

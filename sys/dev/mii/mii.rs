@@ -1,7 +1,3 @@
-/*	$OpenBSD: mii.h,v 1.14 2015/07/18 20:38:44 yuo Exp $	*/
-/*	$NetBSD: mii.h,v 1.8 2001/05/31 03:06:46 thorpej Exp $	*/
-/*	$OpenBSD: mii.c,v 1.24 2022/01/09 05:42:44 jsg Exp $	*/
-/*	$NetBSD: mii.c,v 1.19 2000/02/02 17:09:44 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.  All rights reserved.

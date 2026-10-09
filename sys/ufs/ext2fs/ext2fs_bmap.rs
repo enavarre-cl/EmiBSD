@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_bmap.c,v 1.29 2024/04/13 23:44:11 jsg Exp $	*/
-/*	$NetBSD: ext2fs_bmap.c,v 1.5 2000/03/30 12:41:11 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.

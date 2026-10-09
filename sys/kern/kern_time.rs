@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_time.c,v 1.171 2026/05/05 12:28:59 kettenis Exp $	*/
-/*	$NetBSD: kern_time.c,v 1.20 1996/02/18 11:57:06 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

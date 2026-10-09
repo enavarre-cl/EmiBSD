@@ -1,4 +1,3 @@
-/*	$OpenBSD: machdep.c,v 1.1 2019/05/10 21:20:42 mlarkin Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2004 Tom Cosgrove

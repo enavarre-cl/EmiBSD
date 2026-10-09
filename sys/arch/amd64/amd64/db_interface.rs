@@ -1,5 +1,3 @@
-/*	$OpenBSD: db_interface.c,v 1.40 2025/02/12 20:18:31 bluhm Exp $	*/
-/*	$NetBSD: db_interface.c,v 1.1 2003/04/26 18:39:27 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

@@ -1,4 +1,3 @@
-/*	$OpenBSD: udf.h,v 1.21 2016/06/19 11:54:33 natano Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001, 2002 Scott Long <scottl@freebsd.org>

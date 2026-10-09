@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_unveil.c,v 1.57 2026/04/11 17:04:55 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2017-2019 Bob Beck <beck@openbsd.org>

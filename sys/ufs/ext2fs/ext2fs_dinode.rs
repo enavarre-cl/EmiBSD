@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_dinode.h,v 1.17 2014/07/31 17:37:52 pelikan Exp $	*/
-/*	$NetBSD: ext2fs_dinode.h,v 1.6 2000/01/26 16:21:33 bouyer Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.

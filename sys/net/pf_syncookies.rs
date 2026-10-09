@@ -1,4 +1,3 @@
-/*	$OpenBSD: pf_syncookies.c,v 1.10 2025/07/07 02:28:50 jsg Exp $ */
 /* <LICENSES> */
 
 /* Copyright (c) 2016,2017 Henning Brauer <henning@openbsd.org>

@@ -1,4 +1,3 @@
-/* $OpenBSD: proc.h,v 1.4 2024/03/29 21:14:31 miod Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1991 Regents of the University of California.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: in_cksum.c,v 1.7 2020/05/19 12:54:37 patrick Exp $	*/
-/*	$NetBSD: in_cksum.c,v 1.3 1995/04/22 13:53:48 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1992 Regents of the University of California.

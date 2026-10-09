@@ -1,5 +1,3 @@
-/*	$OpenBSD: swapgeneric.c,v 1.6 2024/10/30 07:28:17 jsg Exp $ */
-/*	$NetBSD: swapgeneric.c,v 1.12 1996/05/03 19:42:28 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.

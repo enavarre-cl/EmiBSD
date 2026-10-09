@@ -1,7 +1,3 @@
-/*	$OpenBSD: netif.c,v 1.14 2022/12/27 07:34:05 jca Exp $	*/
-/*	$NetBSD: netif.c,v 1.7 1996/10/13 02:29:03 christos Exp $	*/
-/*	$OpenBSD: netif.h,v 1.5 2003/06/01 17:00:33 deraadt Exp $	*/
-/*	$NetBSD: netif.h,v 1.4 1995/09/14 23:45:30 pk Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1993 Adam Glass

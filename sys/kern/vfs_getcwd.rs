@@ -1,5 +1,3 @@
-/* $OpenBSD: vfs_getcwd.c,v 1.38 2022/12/05 23:18:37 deraadt Exp $ */
-/* $NetBSD: vfs_getcwd.c,v 1.3.2.3 1999/07/11 10:24:09 sommerfeld Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1999 The NetBSD Foundation, Inc.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: time.h,v 1.67 2025/06/05 08:49:09 claudio Exp $	*/
-/*	$NetBSD: time.h,v 1.18 1996/04/23 10:29:33 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

@@ -1,4 +1,3 @@
-/*	$OpenBSD: tsc.c,v 1.33 2026/09/18 19:24:50 jan Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2008 The NetBSD Foundation, Inc.

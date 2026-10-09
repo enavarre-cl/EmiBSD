@@ -1,5 +1,3 @@
-/*	$OpenBSD: uipc_usrreq.c,v 1.224 2026/09/19 17:21:52 dv Exp $	*/
-/*	$NetBSD: uipc_usrreq.c,v 1.18 1996/02/09 19:00:50 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1991, 1993

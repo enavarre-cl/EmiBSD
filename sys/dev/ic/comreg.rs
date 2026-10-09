@@ -1,5 +1,3 @@
-/*	$OpenBSD: comreg.h,v 1.21 2022/01/11 11:51:14 uaa Exp $	*/
-/*	$NetBSD: comreg.h,v 1.8 1996/02/05 23:01:50 scottr Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 - 1998, Jason Downs.  All rights reserved.

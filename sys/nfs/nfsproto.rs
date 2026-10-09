@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfsproto.h,v 1.11 2024/04/30 17:06:00 miod Exp $	*/
-/*	$NetBSD: nfsproto.h,v 1.1 1996/02/18 11:54:06 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

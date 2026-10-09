@@ -1,4 +1,3 @@
-/*	$OpenBSD: endian.h,v 1.25 2014/12/21 04:49:00 guenther Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997 Niklas Hallqvist.  All rights reserved.
@@ -23,7 +22,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/*	$OpenBSD: _endian.h,v 1.8 2018/01/11 23:13:37 dlg Exp $	*/
 /*-
  * Copyright (c) 1997 Niklas Hallqvist.  All rights reserved.
  *

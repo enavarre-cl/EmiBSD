@@ -1,7 +1,3 @@
-/*	$OpenBSD: db_command.c,v 1.104 2026/02/02 15:20:51 claudio Exp $	*/
-/*	$NetBSD: db_command.c,v 1.20 1996/03/30 22:30:05 christos Exp $	*/
-/*	$OpenBSD: db_command.h,v 1.35 2022/04/14 19:47:12 naddy Exp $	*/
-/*	$NetBSD: db_command.h,v 1.8 1996/02/05 01:56:55 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

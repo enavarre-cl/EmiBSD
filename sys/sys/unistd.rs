@@ -1,5 +1,3 @@
-/*	$OpenBSD: unistd.h,v 1.31 2015/07/20 00:56:10 guenther Exp $	*/
-/*	$NetBSD: unistd.h,v 1.10 1994/06/29 06:46:06 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

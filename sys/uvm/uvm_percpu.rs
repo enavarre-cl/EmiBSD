@@ -1,4 +1,3 @@
-/*	$OpenBSD: uvm_percpu.h,v 1.3 2024/05/01 12:54:27 mpi Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2024 Martin Pieuchot <mpi@openbsd.org>

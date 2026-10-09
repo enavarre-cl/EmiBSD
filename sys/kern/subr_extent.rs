@@ -1,5 +1,3 @@
-/*	$OpenBSD: subr_extent.c,v 1.65 2024/01/19 22:12:24 kettenis Exp $	*/
-/*	$NetBSD: subr_extent.c,v 1.7 1996/11/21 18:46:34 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996, 1998 The NetBSD Foundation, Inc.

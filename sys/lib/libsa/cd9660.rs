@@ -1,7 +1,3 @@
-/*	$OpenBSD: cd9660.c,v 1.15 2014/11/19 19:58:40 miod Exp $	*/
-/*	$NetBSD: cd9660.c,v 1.1 1996/09/30 16:01:19 ws Exp $	*/
-/*	$OpenBSD: cd9660.h,v 1.3 2002/03/14 01:27:07 millert Exp $	*/
-/*	$NetBSD: cd9660.h,v 1.1 1996/09/30 16:01:20 ws Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (C) 1996 Wolfgang Solfrank.

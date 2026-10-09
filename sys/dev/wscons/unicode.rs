@@ -1,5 +1,3 @@
-/* $OpenBSD: unicode.h,v 1.2 2023/04/13 18:29:36 miod Exp $ */
-/* $NetBSD: unicode.h,v 1.1 1999/02/20 18:20:02 drochner Exp $ */
 /* <LICENSES> */
 /* </LICENSES> */
 

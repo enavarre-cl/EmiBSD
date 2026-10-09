@@ -1,5 +1,3 @@
-/*	$OpenBSD: extent.h,v 1.15 2024/01/19 22:12:24 kettenis Exp $	*/
-/*	$NetBSD: extent.h,v 1.6 1997/10/09 07:43:05 jtc Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996 The NetBSD Foundation, Inc.

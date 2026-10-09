@@ -1,4 +1,3 @@
-/*	$OpenBSD: conf.c,v 1.49 2026/05/03 13:10:46 stsp Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Michael Shalayeff

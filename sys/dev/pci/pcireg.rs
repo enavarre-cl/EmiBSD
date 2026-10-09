@@ -1,5 +1,3 @@
-/*	$OpenBSD: pcireg.h,v 1.64 2026/04/07 08:20:40 kettenis Exp $	*/
-/*	$NetBSD: pcireg.h,v 1.26 2000/05/10 16:58:42 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Christopher G. Demetriou.  All rights reserved.

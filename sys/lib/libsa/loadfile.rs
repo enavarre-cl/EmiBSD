@@ -1,7 +1,3 @@
-/* $NetBSD: loadfile.c,v 1.10 2000/12/03 02:53:04 tsutsui Exp $ */
-/* $OpenBSD: loadfile.c,v 1.21 2021/10/24 17:49:19 deraadt Exp $ */
-/*	$NetBSD: loadfile.h,v 1.1 1999/04/28 09:08:50 christos Exp $	 */
-/*	$OpenBSD: loadfile.h,v 1.7 2019/11/29 20:53:13 kettenis Exp $	 */
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.

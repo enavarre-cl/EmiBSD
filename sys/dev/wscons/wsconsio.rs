@@ -1,5 +1,3 @@
-/* $OpenBSD: wsconsio.h,v 1.102 2024/09/30 01:41:49 jsg Exp $ */
-/* $NetBSD: wsconsio.h,v 1.74 2005/04/28 07:15:44 martin Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.

@@ -1,7 +1,3 @@
-/*	$OpenBSD: uhidev.c,v 1.112 2025/11/13 23:04:48 jmatthew Exp $	*/
-/*	$NetBSD: uhidev.c,v 1.14 2003/03/11 16:44:00 augustss Exp $	*/
-/*	$OpenBSD: uhidev.h,v 1.41 2022/03/21 12:18:52 thfr Exp $	*/
-/*	$NetBSD: uhidev.h,v 1.3 2002/10/08 09:56:17 dan Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.

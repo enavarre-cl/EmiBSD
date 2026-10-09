@@ -1,4 +1,3 @@
-/*	$OpenBSD: memprobe.c,v 1.2 2021/01/28 18:54:50 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997-1999 Michael Shalayeff

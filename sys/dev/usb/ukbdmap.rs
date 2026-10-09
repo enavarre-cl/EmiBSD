@@ -1,4 +1,3 @@
-/*	$OpenBSD: ukbdmap.c,v 1.51 2026/01/06 18:52:40 helg Exp $	*/
 /* <LICENSES> */
 /*
  * THIS FILE IS AUTOMAGICALLY GENERATED.  DO NOT EDIT.
@@ -8,7 +7,6 @@
  * generated from:
  */
 /*	OpenBSD: wskbdmap_mfii.c,v 1.49 2025/11/09 16:21:56 matthieu Exp  */
-/*	$NetBSD: wskbdmap_mfii.c,v 1.15 2000/05/19 16:40:04 drochner Exp $	*/
 
 /*
  * PLEASE DO NOT FORGET TO REGEN

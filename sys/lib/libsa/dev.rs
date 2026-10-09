@@ -1,5 +1,3 @@
-/*	$OpenBSD: dev.c,v 1.5 2023/03/08 04:43:08 guenther Exp $	*/
-/*	$NetBSD: dev.c,v 1.4 1994/10/30 21:48:23 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

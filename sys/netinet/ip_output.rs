@@ -1,5 +1,3 @@
-/*	$OpenBSD: ip_output.c,v 1.420 2026/08/05 09:43:19 bluhm Exp $	*/
-/*	$NetBSD: ip_output.c,v 1.28 1996/02/13 23:43:07 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1990, 1993

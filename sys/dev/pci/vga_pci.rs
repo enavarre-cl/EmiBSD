@@ -1,5 +1,3 @@
-/* $OpenBSD: vga_pci.c,v 1.92 2025/06/12 09:17:46 jsg Exp $ */
-/* $NetBSD: vga_pci.c,v 1.3 1998/06/08 06:55:58 thorpej Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.

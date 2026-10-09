@@ -1,4 +1,3 @@
-/* $OpenBSD: acpiutil.c,v 1.9 2020/06/17 16:16:05 deraadt Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>

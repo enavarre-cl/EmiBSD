@@ -1,7 +1,3 @@
-/*	$OpenBSD: ufs.c,v 1.27 2019/08/03 15:22:17 deraadt Exp $	*/
-/*	$NetBSD: ufs.c,v 1.16 1996/09/30 16:01:22 ws Exp $	*/
-/*	$OpenBSD: ufs.h,v 1.7 2019/08/03 15:22:17 deraadt Exp $	*/
-/*	$NetBSD: ufs.h,v 1.5 1995/10/20 01:35:25 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

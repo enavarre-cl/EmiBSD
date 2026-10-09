@@ -1,5 +1,3 @@
-/* $OpenBSD: wskbd.c,v 1.124 2025/07/18 17:34:29 mvs Exp $ */
-/* $NetBSD: wskbd.c,v 1.80 2005/05/04 01:52:16 augustss Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.

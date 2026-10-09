@@ -1,4 +1,3 @@
-/*	$OpenBSD: tcb.h,v 1.2 2017/01/10 13:13:12 patrick Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2011 Philip Guenther <guenther@openbsd.org>

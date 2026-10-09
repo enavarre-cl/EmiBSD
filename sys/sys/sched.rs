@@ -1,5 +1,3 @@
-/*	$OpenBSD: sched.h,v 1.78 2026/03/31 16:46:21 deraadt Exp $	*/
-/* $NetBSD: sched.h,v 1.2 1999/02/28 18:14:58 ross Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.

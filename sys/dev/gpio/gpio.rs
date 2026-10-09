@@ -1,4 +1,3 @@
-/*	$OpenBSD: gpio.c,v 1.17 2022/04/11 14:30:05 visa Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2008 Marc Balmer <mbalmer@openbsd.org>

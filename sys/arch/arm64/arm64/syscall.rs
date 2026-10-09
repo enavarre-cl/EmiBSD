@@ -1,4 +1,3 @@
-/* $OpenBSD: syscall.c,v 1.20 2026/03/08 17:07:31 deraadt Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 Dale Rahn <drahn@dalerahn.com>

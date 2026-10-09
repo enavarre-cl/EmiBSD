@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfsdiskless.h,v 1.10 2013/09/20 23:51:44 fgsch Exp $	*/
-/*	$NetBSD: nfsdiskless.h,v 1.9 1996/02/18 11:54:00 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993

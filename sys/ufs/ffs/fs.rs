@@ -1,5 +1,3 @@
-/*	$OpenBSD: fs.h,v 1.45 2024/02/03 18:51:58 beck Exp $	*/
-/*	$NetBSD: fs.h,v 1.6 1995/04/12 21:21:02 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

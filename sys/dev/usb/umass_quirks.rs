@@ -1,7 +1,3 @@
-/*	$OpenBSD: umass_quirks.h,v 1.4 2008/06/26 05:42:19 ray Exp $	*/
-/*	$NetBSD: umass_quirks.h,v 1.3 2001/12/29 13:46:23 augustss Exp $	*/
-/*	$OpenBSD: umass_quirks.c,v 1.35 2024/05/23 03:21:09 jsg Exp $	*/
-/*	$NetBSD: umass_quirks.c,v 1.67 2004/06/28 07:49:16 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.

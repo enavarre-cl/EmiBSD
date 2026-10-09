@@ -1,5 +1,3 @@
-/*	$OpenBSD: cd9660_vnops.c,v 1.97 2024/10/18 05:52:32 miod Exp $	*/
-/*	$NetBSD: cd9660_vnops.c,v 1.42 1997/10/16 23:56:57 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994

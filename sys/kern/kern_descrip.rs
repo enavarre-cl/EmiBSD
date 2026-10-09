@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_descrip.c,v 1.213 2026/03/08 16:41:21 deraadt Exp $	*/
-/*	$NetBSD: kern_descrip.c,v 1.42 1996/03/30 22:24:38 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1991, 1993

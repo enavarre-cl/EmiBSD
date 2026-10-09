@@ -1,4 +1,3 @@
-/*	$OpenBSD: heap.h,v 1.1 2015/09/02 01:52:25 yasuoka Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>

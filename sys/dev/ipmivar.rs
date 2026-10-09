@@ -1,4 +1,3 @@
-/* $OpenBSD: ipmivar.h,v 1.34 2021/01/23 12:10:08 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Jordan Hargrave

@@ -1,5 +1,3 @@
-/*	$OpenBSD: uipc_mbuf.c,v 1.307 2026/07/03 11:51:57 dlg Exp $	*/
-/*	$NetBSD: uipc_mbuf.c,v 1.15.4.1 1996/06/13 17:11:44 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1991, 1993

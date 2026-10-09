@@ -1,4 +1,3 @@
-/* $OpenBSD: smmuvar.h,v 1.11 2025/12/29 23:25:32 patrick Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2021 Patrick Wildt <patrick@blueri.se>

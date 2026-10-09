@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_kthread.c,v 1.47 2024/07/08 13:17:12 claudio Exp $	*/
-/*	$NetBSD: kern_kthread.c,v 1.3 1998/12/22 21:21:36 kleink Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999 The NetBSD Foundation, Inc.

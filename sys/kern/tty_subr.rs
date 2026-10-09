@@ -1,5 +1,3 @@
-/*	$OpenBSD: tty_subr.c,v 1.36 2022/08/14 01:58:28 jsg Exp $	*/
-/*	$NetBSD: tty_subr.c,v 1.13 1996/02/09 19:00:43 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1993, 1994 Theo de Raadt

@@ -1,7 +1,3 @@
-/*	$OpenBSD: db_lex.c,v 1.15 2020/10/15 03:14:00 deraadt Exp $	*/
-/*	$NetBSD: db_lex.c,v 1.8 1996/02/05 01:57:05 christos Exp $	*/
-/*	$OpenBSD: db_lex.h,v 1.9 2016/04/19 12:23:25 mpi Exp $	*/
-/*	$NetBSD: db_lex.h,v 1.7 1996/02/05 01:57:07 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

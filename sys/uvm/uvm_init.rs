@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvm_init.c,v 1.46 2026/05/17 10:46:25 mpi Exp $	*/
-/*	$NetBSD: uvm_init.c,v 1.14 2000/06/27 17:29:23 mrg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

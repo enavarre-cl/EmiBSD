@@ -1,5 +1,3 @@
-/*	$OpenBSD: vmmeter.h,v 1.15 2016/07/27 14:44:59 tedu Exp $	*/
-/*	$NetBSD: vmmeter.h,v 1.9 1995/03/26 20:25:04 jtc Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1993

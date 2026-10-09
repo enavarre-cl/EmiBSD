@@ -1,5 +1,3 @@
-/*	$OpenBSD: sd.c,v 1.343 2026/06/24 17:03:06 krw Exp $	*/
-/*	$NetBSD: sd.c,v 1.111 1997/04/02 02:29:41 mycroft Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 2003, 2004 The NetBSD Foundation, Inc.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: exit.c,v 1.9 2004/01/03 14:08:53 espie Exp $	*/
-/*	$NetBSD: exit.c,v 1.11 1996/12/01 20:22:19 pk Exp $	*/
 /* <LICENSES> */
 /*-
  *  Copyright (c) 1993 John Brezak

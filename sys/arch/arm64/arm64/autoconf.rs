@@ -1,4 +1,3 @@
-/*	$OpenBSD: autoconf.c,v 1.18 2026/06/23 11:45:54 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2009 Miodrag Vallat.

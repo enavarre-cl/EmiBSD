@@ -1,4 +1,3 @@
-/*	$OpenBSD: exec_elf.h,v 1.112 2026/09/16 03:22:35 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Erik Theisen.  All rights reserved.

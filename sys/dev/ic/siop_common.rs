@@ -1,5 +1,3 @@
-/*	$OpenBSD: siop_common.c,v 1.46 2024/09/01 03:08:56 jsg Exp $ */
-/*	$NetBSD: siop_common.c,v 1.37 2005/02/27 00:27:02 perry Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2000, 2002 Manuel Bouyer.

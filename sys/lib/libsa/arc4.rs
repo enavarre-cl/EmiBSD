@@ -1,5 +1,3 @@
-/*	$OpenBSD: arc4.c,v 1.1 2019/10/29 02:51:17 deraadt Exp $	*/
-/*	$OpenBSD: arc4.h,v 1.1 2019/10/29 02:51:17 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 Markus Friedl <markus@openbsd.org>

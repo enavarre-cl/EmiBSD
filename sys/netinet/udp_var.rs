@@ -1,5 +1,3 @@
-/*	$OpenBSD: udp_var.h,v 1.53 2025/03/02 21:28:32 bluhm Exp $	*/
-/*	$NetBSD: udp_var.h,v 1.12 1996/02/13 23:44:41 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

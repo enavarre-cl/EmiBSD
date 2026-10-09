@@ -1,4 +1,3 @@
-/*	$OpenBSD: ip6protosw.h,v 1.16 2022/02/22 01:02:57 guenther Exp $	*/
 /*	$KAME: ip6protosw.h,v 1.22 2001/02/08 18:02:08 itojun Exp $	*/
 /* <LICENSES> */
 /*

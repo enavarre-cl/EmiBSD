@@ -1,6 +1,3 @@
-/*	$OpenBSD: uftdireg.h,v 1.14 2022/12/30 00:54:09 kevlo Exp $ 	*/
-/*	$NetBSD: uftdireg.h,v 1.6 2002/07/11 21:14:28 augustss Exp $ */
-
 /* <CODE> */
 //! `<dev/usb/uftdireg.h>`: the FTDI USB single port serial converter's vendor requests and
 //! data format.

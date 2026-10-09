@@ -1,5 +1,3 @@
-/*	$OpenBSD: tty_pty.c,v 1.116 2025/09/25 08:46:50 mvs Exp $	*/
-/*	$NetBSD: tty_pty.c,v 1.33.4.1 1996/06/02 09:08:11 mrg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

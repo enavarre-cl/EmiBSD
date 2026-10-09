@@ -1,7 +1,3 @@
-/*	$OpenBSD: in.h,v 1.149 2025/03/02 21:28:32 bluhm Exp $	*/
-/*	$NetBSD: in.h,v 1.20 1996/02/13 23:41:47 christos Exp $	*/
-/*	$OpenBSD: in.c,v 1.196 2026/09/20 20:50:29 gnezdo Exp $	*/
-/*	$NetBSD: in.c,v 1.26 1996/02/13 23:41:39 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1990, 1993

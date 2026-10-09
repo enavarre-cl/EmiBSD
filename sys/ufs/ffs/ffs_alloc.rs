@@ -1,5 +1,3 @@
-/*	$OpenBSD: ffs_alloc.c,v 1.115 2024/02/03 18:51:58 beck Exp $	*/
-/*	$NetBSD: ffs_alloc.c,v 1.11 1996/05/11 18:27:09 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2002 Networks Associates Technology, Inc.

@@ -1,4 +1,3 @@
-/* $OpenBSD: locore.S,v 1.53 2026/09/09 16:08:18 deraadt Exp $ */
 /*-
  * Copyright (c) 2012-2014 Andrew Turner
  * All rights reserved.

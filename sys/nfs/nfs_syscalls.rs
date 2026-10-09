@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_syscalls.c,v 1.130 2025/03/27 23:30:54 tedu Exp $	*/
-/*	$NetBSD: nfs_syscalls.c,v 1.19 1996/02/18 11:53:52 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

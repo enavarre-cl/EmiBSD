@@ -1,5 +1,3 @@
-/*	$OpenBSD: wskbdutil.c,v 1.19 2021/12/30 06:55:11 anton Exp $	*/
-/*	$NetBSD: wskbdutil.c,v 1.7 1999/12/21 11:59:13 drochner Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.

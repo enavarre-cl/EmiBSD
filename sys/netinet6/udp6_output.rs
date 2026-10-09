@@ -1,4 +1,3 @@
-/*	$OpenBSD: udp6_output.c,v 1.67 2025/07/08 00:47:41 jsg Exp $	*/
 /*	$KAME: udp6_output.c,v 1.21 2001/02/07 11:51:54 itojun Exp $	*/
 /* <LICENSES> */
 /*

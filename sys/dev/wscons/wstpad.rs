@@ -1,4 +1,3 @@
-/* $OpenBSD: wstpad.c,v 1.35 2025/01/30 08:53:29 mvs Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2015, 2016 Ulf Brosziewski

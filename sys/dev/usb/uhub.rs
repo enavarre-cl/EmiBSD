@@ -1,6 +1,3 @@
-/*	$OpenBSD: uhub.c,v 1.99 2026/02/20 12:32:34 sthen Exp $ */
-/*	$NetBSD: uhub.c,v 1.64 2003/02/08 03:32:51 ichiro Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/uhub.c,v 1.18 1999/11/17 22:33:43 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: init_sysent.c,v 1.291 2026/08/12 15:05:21 naddy Exp $	*/
-
 /* <CODE> */
 //! System call switch table.
 //!

@@ -1,6 +1,3 @@
-/*	$OpenBSD: uhcivar.h,v 1.33 2014/05/18 17:10:27 mpi Exp $ */
-/*	$NetBSD: uhcivar.h,v 1.36 2002/12/31 00:39:11 augustss Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/uhcivar.h,v 1.14 1999/11/17 22:33:42 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

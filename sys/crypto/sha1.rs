@@ -1,5 +1,3 @@
-/*	$OpenBSD: sha1.h,v 1.6 2014/11/16 17:39:09 tedu Exp $	*/
-/*	$OpenBSD: sha1.c,v 1.11 2014/12/28 10:04:35 tedu Exp $	*/
 /* <LICENSES> */
 /*
  * SHA-1 in C

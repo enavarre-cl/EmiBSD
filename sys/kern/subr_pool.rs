@@ -1,5 +1,3 @@
-/*	$OpenBSD: subr_pool.c,v 1.243 2026/01/29 01:04:35 dlg Exp $	*/
-/*	$NetBSD: subr_pool.c,v 1.61 2001/09/26 07:14:56 chs Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997, 1999, 2000 The NetBSD Foundation, Inc.

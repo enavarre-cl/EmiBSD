@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_exec.c,v 1.275 2026/09/17 19:45:07 dgl Exp $	*/
-/*	$NetBSD: kern_exec.c,v 1.75 1996/02/09 18:59:28 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (C) 1993, 1994 Christopher G. Demetriou

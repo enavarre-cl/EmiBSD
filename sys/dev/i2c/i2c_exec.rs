@@ -1,5 +1,3 @@
-/*	$OpenBSD: i2c_exec.c,v 1.3 2015/03/14 03:38:47 jsg Exp $	*/
-/*	$NetBSD: i2c_exec.c,v 1.3 2003/10/29 00:34:58 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.

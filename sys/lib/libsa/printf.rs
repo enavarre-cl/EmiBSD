@@ -1,5 +1,3 @@
-/*	$OpenBSD: printf.c,v 1.29 2019/05/11 16:56:47 deraadt Exp $	*/
-/*	$NetBSD: printf.c,v 1.10 1996/11/30 04:19:21 gwr Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

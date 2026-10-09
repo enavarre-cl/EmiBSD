@@ -1,6 +1,3 @@
-/*      $OpenBSD: cast.h,v 1.2 2002/03/14 01:26:51 millert Exp $       */
-/*      $OpenBSD: cast.c,v 1.4 2012/04/25 04:12:27 matthew Exp $       */
-/*      $OpenBSD: castsb.h,v 1.1 2000/02/28 23:13:04 deraadt Exp $       */
 /* <LICENSES> */
 /*
  *	CAST-128 in C

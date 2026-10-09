@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvm_addr.h,v 1.8 2024/07/04 04:52:10 jsg Exp $	*/
-/*	$OpenBSD: uvm_addr.c,v 1.37 2024/09/04 07:54:53 mglocker Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2011 Ariane van der Steldt <ariane@stack.nl>

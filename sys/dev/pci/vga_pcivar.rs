@@ -1,5 +1,3 @@
-/* $OpenBSD: vga_pcivar.h,v 1.20 2015/10/29 07:47:03 kettenis Exp $ */
-/* $NetBSD: vga_pcivar.h,v 1.1 1998/03/22 15:16:19 drochner Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Carnegie-Mellon University.

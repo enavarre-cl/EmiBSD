@@ -1,5 +1,3 @@
-/*	$OpenBSD: rmd160.h,v 1.5 2009/07/05 19:33:46 millert Exp $	*/
-/*	$OpenBSD: rmd160.c,v 1.5 2011/01/11 15:42:05 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.

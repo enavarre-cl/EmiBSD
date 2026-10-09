@@ -1,5 +1,3 @@
-/*	$OpenBSD: disk.h,v 1.42 2025/09/15 10:33:03 krw Exp $	*/
-/*	$NetBSD: disk.h,v 1.11 1996/04/28 20:22:50 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995 Jason R. Thorpe.  All rights reserved.

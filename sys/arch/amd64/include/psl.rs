@@ -1,5 +1,3 @@
-/*	$OpenBSD: psl.h,v 1.5 2018/07/09 19:20:29 guenther Exp $	*/
-/*	$NetBSD: psl.h,v 1.1 2003/02/26 21:26:11 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.

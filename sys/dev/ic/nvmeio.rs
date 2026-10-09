@@ -1,4 +1,3 @@
-/* $OpenBSD: nvmeio.h,v 1.1 2024/05/24 12:04:07 krw Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2023 Kenneth R Westerback <krw@openbsd.org>

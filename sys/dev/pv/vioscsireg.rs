@@ -1,4 +1,3 @@
-/*	$OpenBSD: vioscsireg.h,v 1.2 2019/03/24 18:21:12 sf Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2013 Google Inc.

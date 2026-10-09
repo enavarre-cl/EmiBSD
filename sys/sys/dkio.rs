@@ -1,5 +1,3 @@
-/*	$OpenBSD: dkio.h,v 1.15 2026/06/24 17:03:06 krw Exp $	*/
-/*	$NetBSD: dkio.h,v 1.1 1996/01/30 18:21:48 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1987, 1988, 1993

@@ -1,7 +1,3 @@
-/*	$OpenBSD: cd9660_rrip.h,v 1.3 2003/06/02 23:28:05 millert Exp $	*/
-/*	$NetBSD: cd9660_rrip.h,v 1.6 1994/12/13 22:33:24 mycroft Exp $	*/
-/*	$OpenBSD: cd9660_rrip.c,v 1.18 2026/03/19 22:26:50 kirill Exp $	*/
-/*	$NetBSD: cd9660_rrip.c,v 1.17 1997/01/24 00:27:32 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993, 1994

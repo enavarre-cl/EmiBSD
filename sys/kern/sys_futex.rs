@@ -1,4 +1,3 @@
-/*	$OpenBSD: sys_futex.c,v 1.26 2025/08/18 03:51:45 dlg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2016-2017 Martin Pieuchot

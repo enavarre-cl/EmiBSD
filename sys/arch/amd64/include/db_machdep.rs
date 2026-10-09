@@ -1,5 +1,3 @@
-/*	$OpenBSD: db_machdep.h,v 1.19 2021/08/30 08:11:12 jasper Exp $	*/
-/*	$NetBSD: db_machdep.h,v 1.2 2003/04/29 17:06:04 scw Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

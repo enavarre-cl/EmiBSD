@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_node.c,v 1.77 2026/06/30 14:04:04 kirill Exp $	*/
-/*	$NetBSD: nfs_node.c,v 1.16 1996/02/18 11:53:42 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

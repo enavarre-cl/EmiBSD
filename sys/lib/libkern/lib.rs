@@ -1,5 +1,3 @@
-/*	$OpenBSD: libkern.h,v 1.37 2023/12/21 02:57:14 jsg Exp $	*/
-/*	$NetBSD: libkern.h,v 1.7 1996/03/14 18:52:08 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1992, 1993

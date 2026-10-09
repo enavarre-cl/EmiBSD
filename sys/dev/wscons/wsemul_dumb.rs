@@ -1,5 +1,3 @@
-/* $OpenBSD: wsemul_dumb.c,v 1.14 2020/05/25 09:55:49 jsg Exp $ */
-/* $NetBSD: wsemul_dumb.c,v 1.7 2000/01/05 11:19:36 drochner Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.

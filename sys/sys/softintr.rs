@@ -1,4 +1,3 @@
-/*	$OpenBSD: softintr.h,v 1.1 2025/04/23 15:07:00 visa Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2025 Visa Hankala

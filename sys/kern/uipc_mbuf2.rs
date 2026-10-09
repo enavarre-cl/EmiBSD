@@ -1,6 +1,4 @@
-/*	$OpenBSD: uipc_mbuf2.c,v 1.50 2025/06/25 20:26:32 miod Exp $	*/
 /*	$KAME: uipc_mbuf2.c,v 1.29 2001/02/14 13:42:10 itojun Exp $	*/
-/*	$NetBSD: uipc_mbuf.c,v 1.40 1999/04/01 00:23:25 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (C) 1999 WIDE Project.

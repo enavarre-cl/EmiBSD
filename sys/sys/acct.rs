@@ -1,5 +1,3 @@
-/*	$OpenBSD: acct.h,v 1.16 2024/02/25 00:07:13 deraadt Exp $	*/
-/*	$NetBSD: acct.h,v 1.16 1995/03/26 20:23:52 jtc Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990, 1993, 1994

@@ -1,4 +1,3 @@
-/* $OpenBSD: cpufunc_asm.S,v 1.9 2026/06/23 11:45:54 kettenis Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2014 Robin Randhawa

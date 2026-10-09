@@ -1,6 +1,4 @@
-/*	$OpenBSD: nd6.h,v 1.106 2026/03/23 13:12:39 jsg Exp $	*/
 /*	$KAME: nd6.h,v 1.95 2002/06/08 11:31:06 itojun Exp $	*/
-/*	$OpenBSD: nd6.c,v 1.305 2025/11/27 21:54:28 bluhm Exp $	*/
 /*	$KAME: nd6.c,v 1.280 2002/06/08 19:52:07 itojun Exp $	*/
 /* <LICENSES> */
 /*

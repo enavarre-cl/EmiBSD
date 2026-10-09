@@ -1,4 +1,3 @@
-/* $OpenBSD: fuse_lookup.c,v 1.27 2026/07/10 14:43:48 helg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2012-2013 Sylvestre Gallon <ccna.syl@gmail.com>

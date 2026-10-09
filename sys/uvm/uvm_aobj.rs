@@ -1,7 +1,3 @@
-/*	$OpenBSD: uvm_aobj.h,v 1.20 2023/05/13 09:24:59 mpi Exp $	*/
-/*	$NetBSD: uvm_aobj.h,v 1.10 2000/01/11 06:57:49 chs Exp $	*/
-/*	$OpenBSD: uvm_aobj.c,v 1.123 2026/09/06 21:01:30 kirill Exp $	*/
-/*	$NetBSD: uvm_aobj.c,v 1.39 2001/02/18 21:19:08 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 Chuck Silvers, Charles D. Cranor and

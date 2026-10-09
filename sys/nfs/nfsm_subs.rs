@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfsm_subs.h,v 1.52 2026/06/09 02:52:26 jsg Exp $	*/
-/*	$NetBSD: nfsm_subs.h,v 1.10 1996/03/20 21:59:56 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

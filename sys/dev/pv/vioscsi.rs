@@ -1,4 +1,3 @@
-/*	$OpenBSD: vioscsi.c,v 1.38 2025/11/23 10:32:47 sf Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2013 Google Inc.

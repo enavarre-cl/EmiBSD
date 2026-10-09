@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_kq.c,v 1.37 2024/05/01 13:15:59 jsg Exp $ */
-/*	$NetBSD: nfs_kq.c,v 1.7 2003/10/30 01:43:10 simonb Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 2002 The NetBSD Foundation, Inc.

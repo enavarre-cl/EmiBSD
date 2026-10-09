@@ -1,4 +1,3 @@
-/*	$OpenBSD: disk.h,v 1.7 2020/12/09 18:10:18 krw Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Tobias Weingartner

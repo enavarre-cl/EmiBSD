@@ -1,5 +1,3 @@
-/*	$OpenBSD: siop_pci.c,v 1.9 2024/05/24 06:02:58 jsg Exp $ */
-/*	$NetBSD: siop_pci.c,v 1.18 2005/06/28 00:28:42 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2000 Manuel Bouyer.

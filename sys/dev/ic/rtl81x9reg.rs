@@ -1,4 +1,3 @@
-/*	$OpenBSD: rtl81x9reg.h,v 1.105 2024/05/13 01:15:50 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997, 1998

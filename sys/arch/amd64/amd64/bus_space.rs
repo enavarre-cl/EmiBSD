@@ -1,5 +1,3 @@
-/*	$OpenBSD: bus_space.c,v 1.32 2026/08/19 08:56:28 hshoexer Exp $	*/
-/*	$NetBSD: bus_space.c,v 1.2 2003/03/14 18:47:53 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996, 1997, 1998 The NetBSD Foundation, Inc.

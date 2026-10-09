@@ -1,5 +1,3 @@
-/* $OpenBSD: if_pflog.h,v 1.29 2021/01/13 09:13:30 mvs Exp $ */
-/*	$OpenBSD: if_pflog.c,v 1.99 2025/07/07 02:28:50 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright 2001 Niels Provos <provos@citi.umich.edu>

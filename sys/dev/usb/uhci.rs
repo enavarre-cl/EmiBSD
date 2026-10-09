@@ -1,6 +1,3 @@
-/*	$OpenBSD: uhci.c,v 1.156 2022/04/12 19:41:11 naddy Exp $	*/
-/*	$NetBSD: uhci.c,v 1.172 2003/02/23 04:19:26 simonb Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/uhci.c,v 1.33 1999/11/17 22:33:41 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

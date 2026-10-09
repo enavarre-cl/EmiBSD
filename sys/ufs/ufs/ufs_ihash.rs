@@ -1,5 +1,3 @@
-/*	$OpenBSD: ufs_ihash.c,v 1.32 2026/06/30 14:04:04 kirill Exp $	*/
-/*	$NetBSD: ufs_ihash.c,v 1.3 1996/02/09 22:36:04 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1991, 1993

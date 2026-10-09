@@ -1,4 +1,3 @@
-/*	$OpenBSD: pf_if.c,v 1.114 2026/09/08 18:42:14 bluhm Exp $ */
 /* <LICENSES> */
 
 /*

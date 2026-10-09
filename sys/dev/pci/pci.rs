@@ -1,5 +1,3 @@
-/*	$OpenBSD: pci.c,v 1.132 2025/10/29 16:26:08 kettenis Exp $	*/
-/*	$NetBSD: pci.c,v 1.31 1997/06/06 23:48:04 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Christopher G. Demetriou.  All rights reserved.

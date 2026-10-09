@@ -1,7 +1,3 @@
-/*	$OpenBSD: uvm_pager.h,v 1.35 2026/07/07 17:32:56 kettenis Exp $	*/
-/*	$NetBSD: uvm_pager.h,v 1.20 2000/11/27 08:40:05 chs Exp $	*/
-/*	$OpenBSD: uvm_pager.c,v 1.99 2026/07/11 13:13:16 kettenis Exp $	*/
-/*	$NetBSD: uvm_pager.c,v 1.36 2000/11/27 18:26:41 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

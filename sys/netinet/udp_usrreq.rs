@@ -1,5 +1,3 @@
-/*	$OpenBSD: udp_usrreq.c,v 1.351 2026/07/17 18:51:29 bluhm Exp $	*/
-/*	$NetBSD: udp_usrreq.c,v 1.28 1996/03/16 23:54:03 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1990, 1993

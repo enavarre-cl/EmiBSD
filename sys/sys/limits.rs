@@ -1,4 +1,3 @@
-/* $OpenBSD: limits.h,v 1.11 2026/09/26 15:02:53 deraadt Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2002 Marc Espie.

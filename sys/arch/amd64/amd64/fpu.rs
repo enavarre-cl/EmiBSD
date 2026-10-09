@@ -1,5 +1,3 @@
-/*	$OpenBSD: fpu.c,v 1.45 2025/07/02 14:51:31 kettenis Exp $	*/
-/*	$NetBSD: fpu.c,v 1.1 2003/04/26 18:39:28 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994, 1995, 1998 Charles M. Hannum.  All rights reserved.

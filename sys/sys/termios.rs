@@ -1,5 +1,3 @@
-/*	$OpenBSD: termios.h,v 1.14 2022/12/30 23:41:45 millert Exp $	*/
-/*	$NetBSD: termios.h,v 1.14 1996/04/09 20:55:41 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988, 1989, 1993, 1994

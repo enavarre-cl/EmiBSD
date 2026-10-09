@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_acct.c,v 1.51 2026/09/26 15:03:48 deraadt Exp $	*/
-/*	$NetBSD: kern_acct.c,v 1.42 1996/02/04 02:15:12 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994 Christopher G. Demetriou

@@ -1,5 +1,3 @@
-/* $OpenBSD: pcdisplayvar.h,v 1.13 2020/05/25 09:55:48 jsg Exp $ */
-/* $NetBSD: pcdisplayvar.h,v 1.8 2000/01/25 02:44:03 ad Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

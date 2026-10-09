@@ -1,6 +1,4 @@
-/*	$OpenBSD: raw_ip6.h,v 1.4 2017/02/09 15:23:35 jca Exp $	*/
 /*	$KAME: raw_ip6.h,v 1.2 2001/05/27 13:28:35 itojun Exp $	*/
-/*	$OpenBSD: raw_ip6.c,v 1.195 2026/09/17 15:56:59 bluhm Exp $	*/
 /*	$KAME: raw_ip6.c,v 1.69 2001/03/04 15:55:44 itojun Exp $	*/
 /* <LICENSES> */
 /*

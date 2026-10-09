@@ -1,7 +1,3 @@
-/*	$OpenBSD: ip_icmp.h,v 1.33 2025/03/02 21:28:32 bluhm Exp $	*/
-/*	$NetBSD: ip_icmp.h,v 1.10 1996/02/13 23:42:28 christos Exp $	*/
-/*	$OpenBSD: ip_icmp.c,v 1.203 2025/07/08 00:47:41 jsg Exp $	*/
-/*	$NetBSD: ip_icmp.c,v 1.19 1996/02/13 23:42:22 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

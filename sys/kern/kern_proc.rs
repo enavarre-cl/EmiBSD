@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_proc.c,v 1.103 2025/09/25 08:46:50 mvs Exp $	*/
-/*	$NetBSD: kern_proc.c,v 1.14 1996/02/09 18:59:41 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1991, 1993

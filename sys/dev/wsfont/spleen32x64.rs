@@ -1,4 +1,3 @@
-/*	$OpenBSD: spleen32x64.h,v 1.11 2026/02/01 20:20:33 fcambus Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2018-2026 Frederic Cambus <fcambus@openbsd.org>

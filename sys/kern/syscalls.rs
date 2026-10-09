@@ -1,5 +1,3 @@
-/*	$OpenBSD: syscalls.c,v 1.288 2026/08/12 15:05:21 naddy Exp $	*/
-
 /* <CODE> */
 //! System call names.
 //!

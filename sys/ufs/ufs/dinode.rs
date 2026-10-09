@@ -1,5 +1,3 @@
-/*	$OpenBSD: dinode.h,v 1.19 2020/05/28 15:48:29 otto Exp $	*/
-/*	$NetBSD: dinode.h,v 1.7 1995/06/15 23:22:48 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1989, 1993

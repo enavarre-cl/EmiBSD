@@ -1,5 +1,3 @@
-/*	$OpenBSD: ecma167-udf.h,v 1.10 2022/01/11 03:13:59 jsg Exp $	*/
-/* $NetBSD: ecma167-udf.h,v 1.10 2008/06/24 15:30:33 reinoud Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2003, 2004, 2005, 2006, 2008 Reinoud Zandijk

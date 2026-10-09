@@ -1,5 +1,3 @@
-/*	$OpenBSD: ufs_quota.c,v 1.48 2025/09/20 13:53:36 mpi Exp $	*/
-/*	$NetBSD: ufs_quota.c,v 1.8 1996/02/09 22:36:09 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1990, 1993, 1995

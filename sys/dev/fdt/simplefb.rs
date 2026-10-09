@@ -1,4 +1,3 @@
-/*	$OpenBSD: simplefb.c,v 1.23 2026/09/18 03:33:29 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Mark Kettenis

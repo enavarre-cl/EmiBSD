@@ -1,5 +1,3 @@
-/*	$OpenBSD: conf.h,v 1.168 2025/09/08 17:25:46 helg Exp $	*/
-/*	$NetBSD: conf.h,v 1.33 1996/05/03 20:03:32 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990, 1993

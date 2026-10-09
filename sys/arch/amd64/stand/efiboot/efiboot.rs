@@ -1,5 +1,3 @@
-/*	$OpenBSD: efiboot.c,v 1.44 2025/09/16 05:07:33 yasuoka Exp $	*/
-/*	$OpenBSD: efiboot.h,v 1.7 2025/08/27 09:08:12 jmatthew Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>

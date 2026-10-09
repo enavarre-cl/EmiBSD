@@ -1,5 +1,3 @@
-/*	$OpenBSD: i82489var.h,v 1.22 2025/11/12 09:48:52 hshoexer Exp $	*/
-/*	$NetBSD: i82489var.h,v 1.1 2003/02/26 21:26:10 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

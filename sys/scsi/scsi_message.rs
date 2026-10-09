@@ -1,4 +1,3 @@
-/*	$OpenBSD: scsi_message.h,v 1.10 2019/09/27 23:07:42 krw Exp $	*/
 /* <LICENSES> */
 /* </LICENSES> */
 

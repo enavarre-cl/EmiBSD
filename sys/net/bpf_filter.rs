@@ -1,5 +1,3 @@
-/*	$OpenBSD: bpf_filter.c,v 1.42 2026/09/10 18:31:39 claudio Exp $	*/
-/*	$NetBSD: bpf_filter.c,v 1.12 1996/02/13 22:00:00 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1990, 1991, 1992, 1993

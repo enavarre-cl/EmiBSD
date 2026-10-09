@@ -1,5 +1,3 @@
-/*	$OpenBSD: fdt.c,v 1.8 2023/02/13 16:16:03 kettenis Exp $	*/
-/*	$OpenBSD: fdt.h,v 1.3 2017/08/23 18:03:54 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2009 Dariusz Swiderski <sfires@sfires.net>

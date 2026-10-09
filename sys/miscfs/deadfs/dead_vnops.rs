@@ -1,5 +1,3 @@
-/*	$OpenBSD: dead_vnops.c,v 1.43 2024/10/18 05:52:32 miod Exp $	*/
-/*	$NetBSD: dead_vnops.c,v 1.16 1996/02/13 13:12:48 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

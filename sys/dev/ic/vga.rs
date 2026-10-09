@@ -1,5 +1,3 @@
-/* $OpenBSD: vga.c,v 1.74 2021/05/27 23:24:40 cheloha Exp $ */
-/* $NetBSD: vga.c,v 1.28.2.1 2000/06/30 16:27:47 simonb Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999 Kazutaka YOKOTA <yokota@zodiac.mech.utsunomiya-u.ac.jp>

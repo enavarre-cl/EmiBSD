@@ -1,5 +1,3 @@
-/*	$OpenBSD: pcb.h,v 1.19 2024/04/14 09:59:04 kettenis Exp $	*/
-/*	$NetBSD: pcb.h,v 1.1 2003/04/26 18:39:45 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

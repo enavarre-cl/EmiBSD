@@ -1,5 +1,3 @@
-/*	$OpenBSD: subr_prof.c,v 1.44 2026/09/25 04:55:43 gnezdo Exp $	*/
-/*	$NetBSD: subr_prof.c,v 1.12 1996/04/22 01:38:50 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1993

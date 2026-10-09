@@ -1,4 +1,3 @@
-/*	$OpenBSD: fpu.c,v 1.4 2025/02/18 09:18:57 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2022 Mark Kettenis <kettenis@openbsd.org>

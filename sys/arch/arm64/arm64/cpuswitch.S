@@ -1,4 +1,3 @@
-/* $OpenBSD: cpuswitch.S,v 1.8 2024/10/17 02:20:53 jsg Exp $ */
 /*
  * Copyright (c) 2015 Dale Rahn <drahn@dalerahn.com>
  *

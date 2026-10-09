@@ -1,6 +1,3 @@
-/*	$OpenBSD: uvm_object.h,v 1.30 2022/09/04 06:49:11 jsg Exp $	*/
-/*	$OpenBSD: uvm_object.c,v 1.29 2026/07/22 20:58:23 kirill Exp $	*/
-/*	$NetBSD: uvm_object.h,v 1.11 2001/03/09 01:02:12 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

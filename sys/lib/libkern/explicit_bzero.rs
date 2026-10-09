@@ -1,4 +1,3 @@
-/*	$OpenBSD: explicit_bzero.c,v 1.3 2014/06/21 02:34:26 matthew Exp $ */
 /* <LICENSES> */
 /*
  * Public domain.

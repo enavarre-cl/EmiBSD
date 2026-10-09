@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_arp.h,v 1.8 2024/10/15 00:41:40 jsg Exp $	*/
-/*	$NetBSD: if_arp.h,v 1.8 1995/03/08 02:56:52 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1986, 1993

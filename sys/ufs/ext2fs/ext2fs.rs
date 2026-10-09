@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs.h,v 1.27 2024/07/15 13:27:36 martijn Exp $	*/
-/*	$NetBSD: ext2fs.h,v 1.10 2000/01/28 16:00:23 bouyer Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.

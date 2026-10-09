@@ -1,4 +1,3 @@
-/*	$OpenBSD: intr.h,v 1.26 2025/12/15 01:39:32 dlg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2001-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)

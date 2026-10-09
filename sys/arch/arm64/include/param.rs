@@ -1,4 +1,3 @@
-/*	$OpenBSD: param.h,v 1.8 2025/07/07 18:33:36 kettenis Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.

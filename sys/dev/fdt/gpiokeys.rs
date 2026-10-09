@@ -1,4 +1,3 @@
-/*	$OpenBSD: gpiokeys.c,v 1.7 2025/09/08 19:32:57 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2021 Klemens Nanni <kn@openbsd.org>

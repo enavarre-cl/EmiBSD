@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_fork.c,v 1.272 2026/04/04 08:46:30 jsg Exp $	*/
-/*	$NetBSD: kern_fork.c,v 1.29 1996/02/09 18:59:34 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1991, 1993

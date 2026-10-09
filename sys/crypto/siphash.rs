@@ -1,5 +1,3 @@
-/* $OpenBSD: siphash.h,v 1.6 2024/09/04 07:54:52 mglocker Exp $ */
-/*	$OpenBSD: siphash.c,v 1.5 2018/01/05 19:05:09 mikeb Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2013 Andre Oppermann <andre@FreeBSD.org>

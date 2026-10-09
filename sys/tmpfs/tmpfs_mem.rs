@@ -1,5 +1,3 @@
-/*	$OpenBSD: tmpfs_mem.c,v 1.11 2025/11/21 09:49:33 mvs Exp $	*/
-/*	$NetBSD: tmpfs_mem.c,v 1.4 2011/05/24 01:09:47 rmind Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2010, 2011 The NetBSD Foundation, Inc.

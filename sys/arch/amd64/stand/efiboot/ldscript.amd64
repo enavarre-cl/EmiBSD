@@ -1,4 +1,3 @@
-/* $OpenBSD: ldscript.arm64,v 1.4 2022/07/29 21:34:59 kettenis Exp $ */
 /* Same as elf_x86_64_fbsd_efi.lds, except for OUTPUT_FORMAT below - KEEP IN SYNC */
 
 /*

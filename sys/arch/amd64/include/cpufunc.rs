@@ -1,5 +1,3 @@
-/*	$OpenBSD: cpufunc.h,v 1.48 2026/07/28 15:08:06 hshoexer Exp $	*/
-/*	$NetBSD: cpufunc.h,v 1.3 2003/05/08 10:27:43 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

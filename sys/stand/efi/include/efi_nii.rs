@@ -1,4 +1,3 @@
-/* $FreeBSD: head/sys/boot/efi/include/efi_nii.h 163898 2006-11-02 02:42:48Z marcel $ */
 /* <LICENSES> */
 /*++
 Copyright (c)  1999 - 2002 Intel Corporation. All rights reserved

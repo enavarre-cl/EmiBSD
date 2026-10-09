@@ -1,5 +1,3 @@
-/*	$OpenBSD: wsksymvar.h,v 1.10 2021/12/30 06:55:11 anton Exp $	*/
-/*	$NetBSD: wsksymvar.h,v 1.8.4.1 2000/07/07 09:50:21 hannken Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.

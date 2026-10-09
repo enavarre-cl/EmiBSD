@@ -1,5 +1,3 @@
-/*	$OpenBSD: ioccom.h,v 1.6 2025/05/02 10:14:46 jsg Exp $	*/
-/*	$NetBSD: ioccom.h,v 1.4 1994/10/30 21:49:56 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1990, 1993, 1994

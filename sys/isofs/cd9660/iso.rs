@@ -1,5 +1,3 @@
-/*	$OpenBSD: iso.h,v 1.16 2021/03/05 07:01:36 jsg Exp $	*/
-/*	$NetBSD: iso.h,v 1.20 1997/07/07 22:45:34 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994

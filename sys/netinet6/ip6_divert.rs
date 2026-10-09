@@ -1,4 +1,3 @@
-/*      $OpenBSD: ip6_divert.c,v 1.109 2026/06/24 15:56:17 claudio Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2009 Michele Marchetto <michele@openbsd.org>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: mem.c,v 1.10 2024/12/30 02:46:00 guenther Exp $	*/
-/*	$NetBSD: mem.c,v 1.11 2003/10/16 12:02:58 jdolecek Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1990, 1993

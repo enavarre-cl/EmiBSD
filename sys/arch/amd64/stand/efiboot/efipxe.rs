@@ -1,5 +1,3 @@
-/*	$OpenBSD: efipxe.c,v 1.10 2021/06/07 00:04:20 krw Exp $	*/
-/*	$OpenBSD: efipxe.h,v 1.3 2020/12/09 18:10:18 krw Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2017 Patrick Wildt <patrick@blueri.se>

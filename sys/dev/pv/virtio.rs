@@ -1,5 +1,3 @@
-/*	$OpenBSD: virtio.c,v 1.39 2025/09/16 12:18:10 hshoexer Exp $	*/
-/*	$NetBSD: virtio.c,v 1.3 2011/11/02 23:05:52 njoly Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2012 Stefan Fritsch, Alexander Fiveg.

@@ -1,7 +1,3 @@
-/*	$OpenBSD: if_ether.h,v 1.99 2025/12/02 03:24:19 dlg Exp $	*/
-/*	$NetBSD: if_ether.h,v 1.22 1996/05/11 13:00:00 mycroft Exp $	*/
-/*	$OpenBSD: if_ether.c,v 1.278 2026/03/23 13:12:39 jsg Exp $	*/
-/*	$NetBSD: if_ether.c,v 1.31 1996/05/11 12:59:58 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

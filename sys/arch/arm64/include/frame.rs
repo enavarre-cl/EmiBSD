@@ -1,4 +1,3 @@
-/* $OpenBSD: frame.h,v 1.3 2018/06/30 15:23:37 deraadt Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>

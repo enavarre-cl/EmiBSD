@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_xxx.c,v 1.42 2025/06/16 20:21:33 kettenis Exp $	*/
-/*	$NetBSD: kern_xxx.c,v 1.32 1996/04/22 01:38:41 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

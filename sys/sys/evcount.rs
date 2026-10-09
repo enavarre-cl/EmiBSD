@@ -1,4 +1,3 @@
-/*	$OpenBSD: evcount.h,v 1.4 2022/11/10 07:05:41 jmatthew Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2004 Artur Grabowski <art@openbsd.org>

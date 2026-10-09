@@ -1,5 +1,3 @@
-/*	$OpenBSD: toeplitz.h,v 1.11 2023/05/17 10:22:17 dlg Exp $ */
-/* $OpenBSD: toeplitz.c,v 1.11 2025/07/07 02:28:50 jsg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2019 David Gwynne <dlg@openbsd.org>

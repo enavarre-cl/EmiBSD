@@ -1,7 +1,3 @@
-/*	$OpenBSD: azalia.h,v 1.69 2019/10/14 02:04:35 jcs Exp $	*/
-/*	$NetBSD: azalia.h,v 1.6 2006/01/16 14:15:26 kent Exp $	*/
-/*	$OpenBSD: azalia.c,v 1.292 2026/04/04 09:01:13 jsg Exp $	*/
-/*	$NetBSD: azalia.c,v 1.20 2006/05/07 08:31:44 kent Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 2005 The NetBSD Foundation, Inc.

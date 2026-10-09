@@ -1,5 +1,3 @@
-/*	$OpenBSD: ufsmount.h,v 1.13 2016/02/27 18:50:38 natano Exp $	*/
-/*	$NetBSD: ufsmount.h,v 1.4 1994/12/21 20:00:23 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

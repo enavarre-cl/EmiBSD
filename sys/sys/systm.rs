@@ -1,5 +1,3 @@
-/*	$OpenBSD: systm.h,v 1.179 2026/04/22 01:51:37 jsg Exp $	*/
-/*	$NetBSD: systm.h,v 1.50 1996/06/09 04:55:09 briggs Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1988, 1991, 1993

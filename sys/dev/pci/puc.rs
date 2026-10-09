@@ -1,5 +1,3 @@
-/*	$OpenBSD: puc.c,v 1.32 2024/11/09 10:23:06 miod Exp $	*/
-/*	$NetBSD: puc.c,v 1.3 1999/02/06 06:29:54 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1998, 1999

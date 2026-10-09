@@ -1,4 +1,3 @@
-/* $OpenBSD: clockintr.h,v 1.29 2024/02/25 19:15:50 cheloha Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2020-2024 Scott Cheloha <cheloha@openbsd.org>

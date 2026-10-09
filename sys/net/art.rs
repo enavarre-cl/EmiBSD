@@ -1,5 +1,3 @@
-/* $OpenBSD: art.h,v 1.29 2026/04/23 01:28:03 jsg Exp $ */
-/*	$OpenBSD: art.c,v 1.36 2026/04/23 01:28:03 jsg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 Martin Pieuchot

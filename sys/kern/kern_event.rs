@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_event.c,v 1.206 2026/06/01 18:24:58 mvs Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999,2000,2001 Jonathan Lemon <jlemon@FreeBSD.org>

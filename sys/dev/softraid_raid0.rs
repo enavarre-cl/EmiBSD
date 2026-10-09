@@ -1,4 +1,3 @@
-/* $OpenBSD: softraid_raid0.c,v 1.53 2020/03/25 21:29:04 tobhe Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2008 Marco Peereboom <marco@peereboom.us>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: cdio.h,v 1.17 2017/10/24 09:36:13 jsg Exp $	*/
-/*	$NetBSD: cdio.h,v 1.11 1996/02/19 18:29:04 scottr Exp $	*/
 /* <LICENSES> */
 /* </LICENSES> */
 

@@ -1,5 +1,3 @@
-/*	$OpenBSD: mptramp.S,v 1.23 2024/07/12 13:10:58 deraadt Exp $	*/
-/*	$NetBSD: mptramp.S,v 1.1 2003/04/26 18:39:30 fvdl Exp $	*/
 
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.

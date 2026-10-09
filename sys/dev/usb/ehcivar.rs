@@ -1,5 +1,3 @@
-/*	$OpenBSD: ehcivar.h,v 1.37 2016/10/02 06:36:39 kettenis Exp $ */
-/*	$NetBSD: ehcivar.h,v 1.19 2005/04/29 15:04:29 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.

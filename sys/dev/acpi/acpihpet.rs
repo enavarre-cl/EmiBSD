@@ -1,4 +1,3 @@
-/* $OpenBSD: acpihpet.c,v 1.32 2025/09/16 12:18:10 hshoexer Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>

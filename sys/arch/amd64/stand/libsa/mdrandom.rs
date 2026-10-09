@@ -1,4 +1,3 @@
-/*	$OpenBSD: mdrandom.c,v 1.4 2024/09/26 10:12:02 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2020 Theo de Raadt

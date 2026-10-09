@@ -1,4 +1,3 @@
-/* $OpenBSD: cpu.h,v 1.57 2026/09/06 20:02:12 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>

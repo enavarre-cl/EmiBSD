@@ -1,5 +1,3 @@
-/*	$OpenBSD: proc.h,v 1.401 2026/09/19 17:53:49 gnezdo Exp $	*/
-/*	$NetBSD: proc.h,v 1.44 1996/04/22 01:23:21 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1986, 1989, 1991, 1993

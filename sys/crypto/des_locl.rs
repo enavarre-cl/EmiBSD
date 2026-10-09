@@ -1,4 +1,3 @@
-/*	$OpenBSD: des_locl.h,v 1.7 2015/12/10 21:00:51 naddy Exp $	*/
 /* <LICENSES> */
 /* lib/des/des_locl.h */
 

@@ -1,5 +1,3 @@
-/*	$OpenBSD: msdosfs_vfsops.c,v 1.99 2025/09/20 13:53:36 mpi Exp $	*/
-/*	$NetBSD: msdosfs_vfsops.c,v 1.48 1997/10/18 02:54:57 briggs Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (C) 1994, 1995, 1997 Wolfgang Solfrank.

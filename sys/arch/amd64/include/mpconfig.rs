@@ -1,5 +1,3 @@
-/*	$OpenBSD: mpconfig.h,v 1.8 2011/10/21 20:48:11 kettenis Exp $	*/
-/*	$NetBSD: mpconfig.h,v 1.2 2003/05/11 00:05:52 fvdl Exp $	*/
 /* <LICENSES> */
 /* </LICENSES> */
 

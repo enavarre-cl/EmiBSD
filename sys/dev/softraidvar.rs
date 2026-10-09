@@ -1,4 +1,3 @@
-/* $OpenBSD: softraidvar.h,v 1.176 2022/12/19 15:27:06 kn Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2006 Marco Peereboom <marco@peereboom.us>

@@ -1,12 +1,9 @@
-/*	$OpenBSD: miidevs.h,v 1.139 2025/05/09 13:51:21 jcs Exp $	*/
-
 /*
  * THIS FILE AUTOMATICALLY GENERATED.  DO NOT EDIT.
  *
  * generated from:
  *	OpenBSD: miidevs,v 1.135 2025/05/09 13:51:03 jcs Exp
  */
-/* $NetBSD: miidevs,v 1.3 1998/11/05 03:43:43 thorpej Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

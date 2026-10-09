@@ -1,4 +1,3 @@
-/*	$OpenBSD: i2c_scan.c,v 1.147 2024/09/04 07:54:52 mglocker Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Theo de Raadt <deraadt@openbsd.org>

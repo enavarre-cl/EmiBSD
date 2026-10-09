@@ -1,5 +1,3 @@
-/*	$OpenBSD: user.h,v 1.12 2025/11/10 12:34:52 dlg Exp $	*/
-/*	$NetBSD: user.h,v 1.11 1996/04/22 01:23:44 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1991, 1993

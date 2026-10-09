@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_loop.c,v 1.103 2025/09/09 09:16:18 bluhm Exp $	*/
-/*	$NetBSD: if_loop.c,v 1.15 1996/05/07 02:40:33 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.

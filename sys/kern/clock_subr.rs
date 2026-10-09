@@ -1,5 +1,3 @@
-/*	$OpenBSD: clock_subr.c,v 1.6 2016/08/26 07:09:56 guenther Exp $	*/
-/*	$NetBSD: clock_subr.c,v 1.3 1997/03/15 18:11:16 is Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988 University of Utah.

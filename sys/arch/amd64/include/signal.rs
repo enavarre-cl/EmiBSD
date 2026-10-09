@@ -1,5 +1,3 @@
-/*	$OpenBSD: signal.h,v 1.9 2016/05/10 18:39:42 deraadt Exp $	*/
-/*	$NetBSD: signal.h,v 1.2 2003/04/28 23:16:17 bjh21 Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1991 Regents of the University of California.

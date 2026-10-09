@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_pflow.h,v 1.24 2025/11/13 17:12:30 chris Exp $	*/
-/*	$OpenBSD: if_pflow.c,v 1.112 2025/11/13 17:12:30 chris Exp $	*/
 /* <LICENSES> */
 
 /*

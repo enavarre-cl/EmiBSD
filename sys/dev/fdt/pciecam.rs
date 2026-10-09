@@ -1,4 +1,3 @@
-/* $OpenBSD: pciecam.c,v 1.5 2024/02/03 10:37:26 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2013,2017 Patrick Wildt <patrick@blueri.se>

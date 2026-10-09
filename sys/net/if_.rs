@@ -1,7 +1,3 @@
-/*	$OpenBSD: if.h,v 1.224 2026/06/23 14:40:40 bluhm Exp $	*/
-/*	$NetBSD: if.h,v 1.23 1996/05/07 02:40:27 thorpej Exp $	*/
-/*	$OpenBSD: if.c,v 1.766 2026/09/20 20:50:29 gnezdo Exp $	*/
-/*	$NetBSD: if.c,v 1.35 1996/05/07 05:26:04 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

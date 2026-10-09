@@ -1,4 +1,3 @@
-/*	$OpenBSD: nvme.c,v 1.130 2026/09/06 19:27:01 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 David Gwynne <dlg@openbsd.org>

@@ -1,6 +1,3 @@
-/*	$OpenBSD: usbcdc.h,v 1.10 2022/01/09 05:43:02 jsg Exp $ */
-/*	$NetBSD: usbcdc.h,v 1.8 2001/02/16 20:15:57 kenh Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/usbcdc.h,v 1.7 1999/11/17 22:33:48 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

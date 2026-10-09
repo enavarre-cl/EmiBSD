@@ -1,7 +1,3 @@
-/*	$OpenBSD: tftp.c,v 1.7 2021/10/25 15:59:46 patrick Exp $	*/
-/*	$NetBSD: tftp.c,v 1.15 2003/08/18 15:45:29 dsl Exp $	 */
-/*	$OpenBSD: tftp.h,v 1.4 2014/11/19 19:59:02 miod Exp $	*/
-/*	$NetBSD: tftp.h,v 1.3 2003/08/07 16:32:30 agc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996

@@ -1,5 +1,3 @@
-/*	$OpenBSD: xdr_subs.h,v 1.10 2015/04/17 04:43:21 guenther Exp $	*/
-/*	$NetBSD: xdr_subs.h,v 1.11 1996/02/18 11:54:12 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

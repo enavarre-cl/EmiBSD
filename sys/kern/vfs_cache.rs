@@ -1,5 +1,3 @@
-/*	$OpenBSD: vfs_cache.c,v 1.58 2022/08/14 01:58:28 jsg Exp $	*/
-/*	$NetBSD: vfs_cache.c,v 1.13 1996/02/04 02:18:09 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

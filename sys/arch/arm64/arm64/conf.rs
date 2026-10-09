@@ -1,4 +1,3 @@
-/*	$OpenBSD: conf.c,v 1.24 2024/06/12 02:50:25 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1994, 1995 Charles M. Hannum.  All rights reserved.

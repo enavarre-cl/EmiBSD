@@ -1,4 +1,3 @@
-/*	$OpenBSD: ip6_input.c,v 1.301 2026/09/17 15:56:59 bluhm Exp $	*/
 /*	$KAME: ip6_input.c,v 1.188 2001/03/29 05:34:31 itojun Exp $	*/
 /* <LICENSES> */
 /*

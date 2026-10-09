@@ -1,4 +1,3 @@
-/*	$OpenBSD: com_puc.c,v 1.28 2023/09/11 08:41:27 mvs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 - 1999, Jason Downs.  All rights reserved.

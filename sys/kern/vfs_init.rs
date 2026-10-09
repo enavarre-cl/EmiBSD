@@ -1,5 +1,3 @@
-/*	$OpenBSD: vfs_init.c,v 1.44 2024/05/20 09:11:21 mvs Exp $	*/
-/*	$NetBSD: vfs_init.c,v 1.6 1996/02/09 19:00:58 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

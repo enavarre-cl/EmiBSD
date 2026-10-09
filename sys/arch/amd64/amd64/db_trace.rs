@@ -1,5 +1,3 @@
-/*	$OpenBSD: db_trace.c,v 1.60 2025/08/03 11:17:08 sashan Exp $	*/
-/*	$NetBSD: db_trace.c,v 1.1 2003/04/26 18:39:27 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

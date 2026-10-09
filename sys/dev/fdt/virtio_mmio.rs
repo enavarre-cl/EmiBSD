@@ -1,5 +1,3 @@
-/*	$OpenBSD: virtio_mmio.c,v 1.24 2025/12/22 20:24:49 sf Exp $	*/
-/*	$NetBSD: virtio.c,v 1.3 2011/11/02 23:05:52 njoly Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>

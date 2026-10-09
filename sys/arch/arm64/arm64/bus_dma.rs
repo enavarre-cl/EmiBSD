@@ -1,4 +1,3 @@
-/*	$OpenBSD: bus_dma.c,v 1.18 2026/08/07 19:07:30 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2003-2004 Opsycon AB  (www.opsycon.se / www.opsycon.com)

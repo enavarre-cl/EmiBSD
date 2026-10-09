@@ -1,5 +1,3 @@
-/*	$OpenBSD: i2cvar.h,v 1.19 2022/08/31 15:14:01 kettenis Exp $	*/
-/*	$NetBSD: i2cvar.h,v 1.1 2003/09/30 00:35:31 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.

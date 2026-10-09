@@ -1,5 +1,3 @@
-/*	$OpenBSD: vector.S,v 1.108 2026/08/19 08:56:28 hshoexer Exp $	*/
-/*	$NetBSD: vector.S,v 1.5 2004/06/28 09:13:11 fvdl Exp $	*/
 
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: cmd.c,v 1.70 2023/02/23 19:48:22 miod Exp $	*/
-/*	$OpenBSD: cmd.h,v 1.19 2023/02/23 19:48:22 miod Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997-1999 Michael Shalayeff

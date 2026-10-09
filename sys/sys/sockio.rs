@@ -1,5 +1,3 @@
-/*	$OpenBSD: sockio.h,v 1.86 2025/11/21 04:44:26 dlg Exp $	*/
-/*	$NetBSD: sockio.h,v 1.5 1995/08/23 00:40:47 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1990, 1993, 1994

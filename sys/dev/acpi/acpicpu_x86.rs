@@ -1,4 +1,3 @@
-/* $OpenBSD: acpicpu_x86.c,v 1.2 2025/09/16 12:18:10 hshoexer Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Marco Peereboom <marco@openbsd.org>

@@ -1,4 +1,3 @@
-/*	$OpenBSD: exec_i386.c,v 1.12 2024/10/04 22:21:28 bluhm Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997-1998 Michael Shalayeff

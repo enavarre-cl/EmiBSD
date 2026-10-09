@@ -1,4 +1,3 @@
-/*      $OpenBSD: criov.c,v 1.20 2015/03/14 03:38:46 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1999 Theo de Raadt

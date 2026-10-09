@@ -1,4 +1,3 @@
-/*	$OpenBSD: biovar.h,v 1.46 2020/06/07 16:51:43 kn Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2002 Niklas Hallqvist.  All rights reserved.

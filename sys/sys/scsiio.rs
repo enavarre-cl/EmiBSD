@@ -1,5 +1,3 @@
-/*	$OpenBSD: scsiio.h,v 1.10 2012/09/05 17:17:47 deraadt Exp $	*/
-/*	$NetBSD: scsiio.h,v 1.3 1994/06/29 06:45:09 cgd Exp $	*/
 /* <LICENSES> */
 /* </LICENSES> */
 

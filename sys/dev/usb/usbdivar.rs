@@ -1,6 +1,3 @@
-/*	$OpenBSD: usbdivar.h,v 1.85 2025/03/01 14:43:03 kirill Exp $ */
-/*	$NetBSD: usbdivar.h,v 1.70 2002/07/11 21:14:36 augustss Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/usbdivar.h,v 1.11 1999/11/17 22:33:51 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

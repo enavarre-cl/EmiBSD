@@ -1,4 +1,3 @@
-/*	$OpenBSD: if_vio.c,v 1.81 2026/06/23 14:40:40 bluhm Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2012 Stefan Fritsch, Alexander Fiveg.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: kernel.h,v 1.28 2025/09/25 08:46:50 mvs Exp $	*/
-/*	$NetBSD: kernel.h,v 1.11 1995/03/03 01:24:16 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990, 1993

@@ -1,5 +1,3 @@
-/*	$OpenBSD: virtiovar.h,v 1.29 2025/01/29 14:03:19 sf Exp $	*/
-/*	$NetBSD: virtiovar.h,v 1.1 2011/10/30 12:12:21 hannken Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2012 Stefan Fritsch.

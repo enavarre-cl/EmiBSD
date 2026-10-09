@@ -1,5 +1,3 @@
-/*	$OpenBSD: spl.S,v 1.20 2023/07/27 00:30:07 guenther Exp $	*/
-/*	$NetBSD: spl.S,v 1.3 2004/06/28 09:13:11 fvdl Exp $	*/
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.
  * All rights reserved.

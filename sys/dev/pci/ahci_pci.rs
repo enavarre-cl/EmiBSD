@@ -1,4 +1,3 @@
-/*	$OpenBSD: ahci_pci.c,v 1.18 2024/06/16 18:00:08 kn Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2006 David Gwynne <dlg@openbsd.org>

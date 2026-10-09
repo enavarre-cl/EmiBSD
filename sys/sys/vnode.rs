@@ -1,5 +1,3 @@
-/*	$OpenBSD: vnode.h,v 1.179 2025/09/25 09:05:47 mpi Exp $	*/
-/*	$NetBSD: vnode.h,v 1.38 1996/02/29 20:59:05 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

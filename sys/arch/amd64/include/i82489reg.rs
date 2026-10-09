@@ -1,5 +1,3 @@
-/*	$OpenBSD: i82489reg.h,v 1.9 2026/09/19 16:11:07 mlarkin Exp $	*/
-/*	$NetBSD: i82489reg.h,v 1.1 2003/02/26 21:26:10 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

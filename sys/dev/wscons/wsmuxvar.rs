@@ -1,5 +1,3 @@
-/*	$OpenBSD: wsmuxvar.h,v 1.11 2019/02/18 17:39:14 anton Exp $	*/
-/*      $NetBSD: wsmuxvar.h,v 1.10 2005/04/30 03:47:12 augustss Exp $   */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

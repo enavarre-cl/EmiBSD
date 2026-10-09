@@ -1,7 +1,3 @@
-/* $OpenBSD: vga_isa.c,v 1.11 2022/04/06 18:59:29 naddy Exp $ */
-/* $NetBSD: vga_isa.c,v 1.3 1998/06/12 18:45:48 drochner Exp $ */
-/* $OpenBSD: vga_isavar.h,v 1.4 2002/03/14 01:26:56 millert Exp $ */
-/* $NetBSD: vga_isavar.h,v 1.1 1998/03/22 15:14:36 drochner Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Carnegie-Mellon University.

@@ -1,4 +1,3 @@
-/*	$OpenBSD: exec_elf.c,v 1.206 2026/09/16 03:22:37 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Per Fogelstrom

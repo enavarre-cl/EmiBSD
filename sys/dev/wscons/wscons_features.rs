@@ -1,4 +1,3 @@
-/* $OpenBSD: wscons_features.h,v 1.5 2023/01/12 20:39:37 nicm Exp $ */
 /* <LICENSES> */
 /* public domain */
 /* </LICENSES> */

@@ -1,5 +1,3 @@
-/*	$OpenBSD: mfs_vfsops.c,v 1.63 2024/10/17 09:11:35 claudio Exp $	*/
-/*	$NetBSD: mfs_vfsops.c,v 1.10 1996/02/09 22:31:28 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1990, 1993, 1994

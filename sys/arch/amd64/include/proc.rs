@@ -1,5 +1,3 @@
-/*	$OpenBSD: proc.h,v 1.14 2024/04/14 09:59:04 kettenis Exp $	*/
-/*	$NetBSD: proc.h,v 1.1 2003/04/26 18:39:46 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991 Regents of the University of California.

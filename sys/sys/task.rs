@@ -1,4 +1,3 @@
-/*	$OpenBSD: task.h,v 1.18 2020/08/01 08:40:20 anton Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2013 David Gwynne <dlg@openbsd.org>

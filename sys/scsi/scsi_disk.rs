@@ -1,5 +1,3 @@
-/*	$OpenBSD: scsi_disk.h,v 1.43 2022/01/11 23:10:11 jsg Exp $	*/
-/*	$NetBSD: scsi_disk.h,v 1.10 1996/07/05 16:19:05 christos Exp $	*/
 /* <LICENSES> */
 /*
  * SCSI interface description

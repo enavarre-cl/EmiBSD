@@ -1,4 +1,3 @@
-/* $OpenBSD: kern_clockintr.c,v 1.71 2024/11/07 16:02:29 miod Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 Dale Rahn <drahn@openbsd.org>

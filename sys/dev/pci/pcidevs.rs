@@ -4,7 +4,6 @@
  * generated from:
  *	OpenBSD: pcidevs,v 1.2147 2026/08/14 03:32:01 jsg Exp
  */
-/*	$NetBSD: pcidevs,v 1.30 1997/06/24 06:20:24 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Christopher G. Demetriou

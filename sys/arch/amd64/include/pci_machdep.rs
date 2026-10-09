@@ -1,5 +1,3 @@
-/*	$OpenBSD: pci_machdep.h,v 1.33 2026/07/25 22:57:22 chris Exp $	*/
-/*	$NetBSD: pci_machdep.h,v 1.1 2003/02/26 21:26:11 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.

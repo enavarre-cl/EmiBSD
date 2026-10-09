@@ -1,5 +1,3 @@
-/*	$OpenBSD: ufs_vnops.c,v 1.165 2026/05/26 15:01:16 kirill Exp $	*/
-/*	$NetBSD: ufs_vnops.c,v 1.18 1996/05/11 18:28:04 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

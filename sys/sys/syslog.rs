@@ -1,5 +1,3 @@
-/*	$OpenBSD: syslog.h,v 1.19 2023/04/27 23:16:18 gnezdo Exp $	*/
-/*	$NetBSD: syslog.h,v 1.14 1996/04/03 20:46:44 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1993

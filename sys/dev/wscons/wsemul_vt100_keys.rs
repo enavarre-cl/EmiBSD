@@ -1,5 +1,3 @@
-/* $OpenBSD: wsemul_vt100_keys.c,v 1.9 2023/01/23 09:36:40 nicm Exp $ */
-/* $NetBSD: wsemul_vt100_keys.c,v 1.3 1999/04/22 20:06:02 mycroft Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

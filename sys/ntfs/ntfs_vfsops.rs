@@ -1,7 +1,3 @@
-/*	$OpenBSD: ntfs_vfsops.h,v 1.4 2020/02/27 09:10:31 mpi Exp $	*/
-/*	$NetBSD: ntfs_vfsops.h,v 1.1 2002/12/23 17:38:34 jdolecek Exp $	*/
-/*	$OpenBSD: ntfs_vfsops.c,v 1.68 2026/06/30 14:04:04 kirill Exp $	*/
-/*	$NetBSD: ntfs_vfsops.c,v 1.7 2003/04/24 07:50:19 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999 Semen Ustimenko (semenu@FreeBSD.org)

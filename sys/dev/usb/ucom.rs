@@ -1,5 +1,3 @@
-/*	$OpenBSD: ucom.c,v 1.80 2026/06/26 10:32:32 gnezdo Exp $ */
-/*	$NetBSD: ucom.c,v 1.49 2003/01/01 00:10:25 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998, 2000 The NetBSD Foundation, Inc.

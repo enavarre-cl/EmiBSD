@@ -1,5 +1,3 @@
-/*	$OpenBSD: ntfsmount.h,v 1.3 2006/05/29 20:40:58 miod Exp $	*/
-/*	$NetBSD: ntfsmount.h,v 1.1 2002/12/23 17:38:34 jdolecek Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999 Semen Ustimenko

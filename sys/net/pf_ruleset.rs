@@ -1,4 +1,3 @@
-/*	$OpenBSD: pf_ruleset.c,v 1.22 2025/07/07 02:28:50 jsg Exp $ */
 /* <LICENSES> */
 
 /*

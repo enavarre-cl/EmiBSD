@@ -1,7 +1,3 @@
-/*	$OpenBSD: mulaw.h,v 1.16 2015/06/25 06:43:46 ratchov Exp $ */
-/*	$NetBSD: mulaw.h,v 1.11 1999/11/01 18:12:19 augustss Exp $	*/
-/*	$OpenBSD: mulaw.c,v 1.18 2015/06/25 06:43:46 ratchov Exp $ */
-/*	$NetBSD: mulaw.c,v 1.15 2001/01/18 20:28:20 jdolecek Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996 The NetBSD Foundation, Inc.

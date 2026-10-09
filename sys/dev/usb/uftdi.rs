@@ -1,5 +1,3 @@
-/*	$OpenBSD: uftdi.c,v 1.80 2024/11/09 08:37:44 miod Exp $ 	*/
-/*	$NetBSD: uftdi.c,v 1.14 2003/02/23 04:20:07 simonb Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2000 The NetBSD Foundation, Inc.

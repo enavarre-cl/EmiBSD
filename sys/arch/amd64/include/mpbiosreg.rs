@@ -1,5 +1,3 @@
-/*	$OpenBSD: mpbiosreg.h,v 1.5 2023/04/10 04:21:20 jsg Exp $	*/
-/* 	$NetBSD: mpbiosreg.h,v 1.3 2003/03/04 23:27:32 fvdl Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.

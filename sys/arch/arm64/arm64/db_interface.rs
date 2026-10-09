@@ -1,5 +1,3 @@
-/*	$OpenBSD: db_interface.c,v 1.17 2025/07/22 09:20:41 kettenis Exp $	*/
-/*	$NetBSD: db_interface.c,v 1.34 2003/10/26 23:11:15 chris Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Scott K. Stevens

@@ -1,4 +1,3 @@
-/* $OpenBSD: xhcivar.h,v 1.17 2025/02/01 22:46:34 patrick Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 Martin Pieuchot

@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_wg.h,v 1.7 2025/07/10 05:28:13 dlg Exp $ */
-/*	$OpenBSD: if_wg.c,v 1.50 2026/09/20 21:18:09 mvs Exp $ */
 /* <LICENSES> */
 
 /*

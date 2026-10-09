@@ -1,7 +1,3 @@
-/*	$OpenBSD: cons.h,v 1.20 2024/05/13 01:15:50 jsg Exp $	*/
-/*	$NetBSD: cons.h,v 1.14 1996/03/14 19:08:35 christos Exp $	*/
-/*	$OpenBSD: cons.c,v 1.31 2025/09/20 13:53:36 mpi Exp $	*/
-/*	$NetBSD: cons.c,v 1.30 1996/04/08 19:57:30 jonathan Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988 University of Utah.

@@ -1,4 +1,3 @@
-/* $OpenBSD: disk.h,v 1.4 2026/09/04 17:48:11 mglocker Exp $ */
 /* <LICENSES> */
 /* </LICENSES> */
 

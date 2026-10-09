@@ -1,5 +1,3 @@
-/*	$OpenBSD: efidev.c,v 1.14 2026/09/04 17:48:11 mglocker Exp $	*/
-/*	$OpenBSD: efidev.h,v 1.5 2026/09/04 17:48:11 mglocker Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>

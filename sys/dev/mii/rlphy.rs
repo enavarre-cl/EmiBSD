@@ -1,4 +1,3 @@
-/*	$OpenBSD: rlphy.c,v 1.35 2025/05/09 13:53:10 jcs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998, 1999 Jason L. Wright (jason@thought.net)

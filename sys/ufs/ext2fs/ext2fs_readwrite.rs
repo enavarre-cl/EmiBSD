@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_readwrite.c,v 1.46 2023/03/08 04:43:09 guenther Exp $	*/
-/*	$NetBSD: ext2fs_readwrite.c,v 1.16 2001/02/27 04:37:47 chs Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997 Manuel Bouyer.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: ffs_balloc.c,v 1.47 2024/04/13 23:44:11 jsg Exp $	*/
-/*	$NetBSD: ffs_balloc.c,v 1.3 1996/02/09 22:22:21 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2002 Networks Associates Technology, Inc.

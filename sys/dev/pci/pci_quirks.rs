@@ -1,5 +1,3 @@
-/*	$OpenBSD: pci_quirks.c,v 1.7 2015/07/20 18:05:04 miod Exp $	*/
-/*	$NetBSD: pci_quirks.c,v 1.1 1998/05/31 06:03:44 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 Christopher G. Demetriou.  All rights reserved.

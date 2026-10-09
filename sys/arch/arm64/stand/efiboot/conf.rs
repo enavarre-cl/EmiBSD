@@ -1,4 +1,3 @@
-/*	$OpenBSD: conf.c,v 1.55 2026/09/06 17:10:00 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Michael Shalayeff

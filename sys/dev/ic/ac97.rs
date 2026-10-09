@@ -1,5 +1,3 @@
-/*	$OpenBSD: ac97.h,v 1.27 2018/04/11 04:48:31 ratchov Exp $	*/
-/*	$OpenBSD: ac97.c,v 1.85 2024/04/29 00:29:48 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1999 Constantine Sapuntzakis

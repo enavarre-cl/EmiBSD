@@ -1,4 +1,3 @@
-/*	$OpenBSD: nvme_pci.c,v 1.15 2026/06/30 16:24:33 jcs Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 David Gwynne <dlg@openbsd.org>

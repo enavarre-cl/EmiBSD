@@ -1,5 +1,3 @@
-/* $OpenBSD: acpiiort.h,v 1.4 2021/06/25 17:41:22 patrick Exp $ */
-/* $OpenBSD: acpiiort.c,v 1.9 2022/09/07 18:25:08 patrick Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2021 Patrick Wildt <patrick@blueri.se>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_malloc.c,v 1.158 2026/02/11 22:34:41 deraadt Exp $	*/
-/*	$NetBSD: kern_malloc.c,v 1.15.4.2 1996/06/13 17:10:56 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1987, 1991, 1993

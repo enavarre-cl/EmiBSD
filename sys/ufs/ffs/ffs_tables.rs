@@ -1,5 +1,3 @@
-/*	$OpenBSD: ffs_tables.c,v 1.6 2011/07/03 18:23:10 tedu Exp $	*/
-/*	$NetBSD: ffs_tables.c,v 1.2 1994/06/29 06:46:35 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

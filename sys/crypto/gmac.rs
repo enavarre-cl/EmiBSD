@@ -1,5 +1,3 @@
-/*	$OpenBSD: gmac.h,v 1.6 2017/05/02 11:44:32 mikeb Exp $	*/
-/*	$OpenBSD: gmac.c,v 1.10 2017/05/02 11:44:32 mikeb Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2010 Mike Belopuhov

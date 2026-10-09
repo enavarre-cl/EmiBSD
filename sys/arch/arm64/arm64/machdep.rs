@@ -1,4 +1,3 @@
-/* $OpenBSD: machdep.c,v 1.101 2026/09/06 18:25:22 mglocker Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>

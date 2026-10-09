@@ -1,7 +1,3 @@
-/*	$OpenBSD: uvm_map.h,v 1.96 2025/09/14 13:06:02 mpi Exp $	*/
-/*	$NetBSD: uvm_map.h,v 1.24 2001/02/18 21:19:08 chs Exp $	*/
-/*	$OpenBSD: uvm_map.c,v 1.356 2026/06/25 08:27:34 kettenis Exp $	*/
-/*	$NetBSD: uvm_map.c,v 1.86 2000/11/27 08:40:03 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2011 Ariane van der Steldt <ariane@openbsd.org>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: exec_subr.c,v 1.72 2026/08/15 18:52:28 kettenis Exp $	*/
-/*	$NetBSD: exec_subr.c,v 1.9 1994/12/04 03:10:42 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1993, 1994 Christopher G. Demetriou

@@ -1,5 +1,3 @@
-/* $OpenBSD: vgareg.h,v 1.5 2009/02/01 14:37:22 miod Exp $ */
-/* $NetBSD: vgareg.h,v 1.2 1998/05/28 16:48:41 drochner Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

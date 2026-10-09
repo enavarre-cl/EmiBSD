@@ -1,5 +1,3 @@
-/*	$OpenBSD: msdosfs_conv.c,v 1.22 2024/09/12 09:07:28 claudio Exp $	*/
-/*	$NetBSD: msdosfs_conv.c,v 1.24 1997/10/17 11:23:54 ws Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (C) 1995, 1997 Wolfgang Solfrank.

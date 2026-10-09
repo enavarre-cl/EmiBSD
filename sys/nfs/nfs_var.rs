@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_var.h,v 1.71 2026/06/09 02:55:17 jsg Exp $	*/
-/*	$NetBSD: nfs_var.h,v 1.3 1996/02/18 11:53:54 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Christos Zoulas.  All rights reserved.

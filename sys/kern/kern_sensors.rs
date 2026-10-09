@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_sensors.c,v 1.40 2022/12/05 23:18:37 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 David Gwynne <dlg@openbsd.org>

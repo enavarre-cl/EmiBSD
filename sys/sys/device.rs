@@ -1,5 +1,3 @@
-/*	$OpenBSD: device.h,v 1.72 2026/09/07 21:30:59 kettenis Exp $	*/
-/*	$NetBSD: device.h,v 1.15 1996/04/09 20:55:24 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1992, 1993

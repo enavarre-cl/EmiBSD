@@ -1,6 +1,3 @@
-/* $OpenBSD: wsdisplay_usl_io.h,v 1.4 2016/04/24 17:30:31 matthieu Exp $ */
-/* $NetBSD: wsdisplay_usl_io.h,v 1.1 1998/06/11 22:00:04 drochner Exp $ */
-
 /* <CODE> */
 //! `<dev/wscons/wsdisplay_usl_io.h>`: the USL (System V) virtual terminal and keyboard
 //! ioctls `wsdisplay_compat_usl.c` emulates (`VT_*`, `KD*`), as X servers and other programs

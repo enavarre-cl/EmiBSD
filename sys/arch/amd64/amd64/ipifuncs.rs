@@ -1,5 +1,3 @@
-/*	$OpenBSD: ipifuncs.c,v 1.40 2025/11/10 12:34:52 dlg Exp $	*/
-/*	$NetBSD: ipifuncs.c,v 1.1 2003/04/26 18:39:28 fvdl Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.

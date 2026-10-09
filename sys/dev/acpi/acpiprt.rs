@@ -1,4 +1,3 @@
-/* $OpenBSD: acpiprt.c,v 1.53 2025/09/16 12:18:10 hshoexer Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2006 Mark Kettenis <kettenis@openbsd.org>

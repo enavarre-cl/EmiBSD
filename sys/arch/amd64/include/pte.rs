@@ -1,5 +1,3 @@
-/*	$OpenBSD: pte.h,v 1.18 2024/07/09 19:11:06 bluhm Exp $	*/
-/*	$NetBSD: pte.h,v 1.1 2003/04/26 18:39:47 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.

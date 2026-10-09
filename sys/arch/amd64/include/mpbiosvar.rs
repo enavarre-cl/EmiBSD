@@ -1,5 +1,3 @@
-/*	$OpenBSD: mpbiosvar.h,v 1.7 2025/09/05 16:57:48 kettenis Exp $	*/
-/* $NetBSD: mpbiosvar.h,v 1.2 2003/04/02 07:53:57 thorpej Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.

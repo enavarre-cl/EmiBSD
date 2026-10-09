@@ -1,5 +1,3 @@
-/*	$OpenBSD: reboot.h,v 1.21 2025/09/16 12:18:10 hshoexer Exp $	*/
-/*	$NetBSD: reboot.h,v 1.9 1996/04/22 01:23:25 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1993, 1994

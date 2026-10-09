@@ -1,4 +1,3 @@
-/*	$OpenBSD: icmp6.c,v 1.281 2025/11/12 19:11:10 bluhm Exp $	*/
 /*	$KAME: icmp6.c,v 1.217 2001/06/20 15:03:29 jinmei Exp $	*/
 /* <LICENSES> */
 /*

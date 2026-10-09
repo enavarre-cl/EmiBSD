@@ -1,4 +1,3 @@
-/* $FreeBSD: head/sys/boot/efi/include/efifs.h 163898 2006-11-02 02:42:48Z marcel $ */
 /* <LICENSES> */
 /*++
 

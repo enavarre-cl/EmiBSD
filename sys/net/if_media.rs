@@ -1,7 +1,3 @@
-/*	$OpenBSD: if_media.h,v 1.47 2026/03/19 16:50:32 chris Exp $	*/
-/*	$NetBSD: if_media.h,v 1.22 2000/02/17 21:53:16 sommerfeld Exp $	*/
-/*	$OpenBSD: if_media.c,v 1.40 2025/07/07 02:28:50 jsg Exp $	*/
-/*	$NetBSD: if_media.c,v 1.10 2000/03/13 23:52:39 soren Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 2000 The NetBSD Foundation, Inc.

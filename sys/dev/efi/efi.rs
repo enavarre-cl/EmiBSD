@@ -1,4 +1,3 @@
-/* $OpenBSD: efi.h,v 1.4 2023/01/14 12:11:11 kettenis Exp $ */
 /* <LICENSES> */
 /* Public Domain */
 /* </LICENSES> */

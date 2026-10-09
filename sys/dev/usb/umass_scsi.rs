@@ -1,7 +1,3 @@
-/* $OpenBSD: umass_scsi.h,v 1.6 2016/08/03 13:44:49 krw Exp $ */
-/*	$NetBSD: umass_scsipi.h,v 1.1 2001/12/24 13:25:53 augustss Exp $	*/
-/*	$OpenBSD: umass_scsi.c,v 1.65 2024/05/23 03:21:09 jsg Exp $ */
-/*	$NetBSD: umass_scsipi.c,v 1.9 2003/02/16 23:14:08 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.

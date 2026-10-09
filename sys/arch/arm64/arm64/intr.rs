@@ -1,4 +1,3 @@
-/* $OpenBSD: intr.c,v 1.39 2026/03/09 06:38:02 tb Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2011 Dale Rahn <drahn@openbsd.org>

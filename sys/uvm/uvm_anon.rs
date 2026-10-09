@@ -1,7 +1,3 @@
-/*	$OpenBSD: uvm_anon.h,v 1.24 2025/12/15 13:02:18 mpi Exp $	*/
-/*	$NetBSD: uvm_anon.h,v 1.13 2000/12/27 09:17:04 chs Exp $	*/
-/*	$OpenBSD: uvm_anon.c,v 1.67 2026/02/11 22:34:40 deraadt Exp $	*/
-/*	$NetBSD: uvm_anon.c,v 1.10 2000/11/25 06:27:59 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

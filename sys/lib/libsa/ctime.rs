@@ -1,4 +1,3 @@
-/*	$OpenBSD: ctime.c,v 1.6 2018/05/23 16:23:48 cheloha Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 Michael Shalayeff

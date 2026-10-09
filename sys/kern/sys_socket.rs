@@ -1,5 +1,3 @@
-/*	$OpenBSD: sys_socket.c,v 1.68 2025/02/13 12:39:15 bluhm Exp $	*/
-/*	$NetBSD: sys_socket.c,v 1.13 1995/08/12 23:59:09 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1990, 1993

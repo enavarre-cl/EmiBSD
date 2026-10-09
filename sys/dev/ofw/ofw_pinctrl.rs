@@ -1,5 +1,3 @@
-/*	$OpenBSD: ofw_pinctrl.h,v 1.2 2016/08/21 14:41:51 kettenis Exp $	*/
-/*	$OpenBSD: ofw_pinctrl.c,v 1.3 2020/06/06 16:59:43 patrick Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Mark Kettenis

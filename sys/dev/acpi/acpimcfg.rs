@@ -1,4 +1,3 @@
-/* $OpenBSD: acpimcfg.c,v 1.6 2025/09/16 12:18:10 hshoexer Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2010 Mark Kettenis <kettenis@openbsd.org>

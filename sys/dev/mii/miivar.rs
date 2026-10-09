@@ -1,5 +1,3 @@
-/*	$OpenBSD: miivar.h,v 1.38 2023/07/08 08:18:30 kettenis Exp $	*/
-/*	$NetBSD: miivar.h,v 1.17 2000/03/06 20:56:57 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999, 2000 The NetBSD Foundation, Inc.

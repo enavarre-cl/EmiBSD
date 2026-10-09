@@ -1,5 +1,3 @@
-/*	$OpenBSD: malloc.h,v 1.127 2025/02/05 18:29:17 mvs Exp $	*/
-/*	$NetBSD: malloc.h,v 1.39 1998/07/12 19:52:01 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1987, 1993

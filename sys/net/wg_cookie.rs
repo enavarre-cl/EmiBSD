@@ -1,5 +1,3 @@
-/*	$OpenBSD: wg_cookie.h,v 1.2 2020/12/09 05:53:33 tb Exp $ */
-/*	$OpenBSD: wg_cookie.c,v 1.5 2023/08/18 08:11:47 jsg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (C) 2015-2020 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.

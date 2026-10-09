@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvm_pmemrange.h,v 1.21 2026/07/24 15:03:50 kettenis Exp $	*/
-/*	$OpenBSD: uvm_pmemrange.c,v 1.83 2026/07/24 15:03:50 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2024 Martin Pieuchot <mpi@openbsd.org>

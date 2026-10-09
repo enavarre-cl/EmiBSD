@@ -1,5 +1,3 @@
-/*	$OpenBSD: closeall.c,v 1.5 2003/08/11 06:23:09 deraadt Exp $	*/
-/*	$NetBSD: close.c,v 1.5 1995/09/06 19:53:29 pk Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

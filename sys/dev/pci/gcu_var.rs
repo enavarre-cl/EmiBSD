@@ -1,4 +1,3 @@
-/*	$OpenBSD: gcu_var.h,v 1.1 2015/03/18 12:04:26 dlg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2009 Dariusz Swiderski <sfires@sfires.net>

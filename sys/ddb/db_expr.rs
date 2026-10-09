@@ -1,5 +1,3 @@
-/*	$OpenBSD: db_expr.c,v 1.18 2020/10/15 03:14:00 deraadt Exp $	*/
-/*	$NetBSD: db_expr.c,v 1.5 1996/02/05 01:56:58 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

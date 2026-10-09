@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvm_mmap.c,v 1.204 2026/02/11 22:34:41 deraadt Exp $	*/
-/*	$NetBSD: uvm_mmap.c,v 1.49 2001/02/18 21:19:08 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

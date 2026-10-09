@@ -1,5 +1,3 @@
-/*	$OpenBSD: db_input.c,v 1.20 2026/04/23 01:15:07 dlg Exp $	*/
-/*	$NetBSD: db_input.c,v 1.7 1996/02/05 01:57:02 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

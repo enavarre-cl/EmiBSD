@@ -1,5 +1,3 @@
-/*	$OpenBSD: socket.h,v 1.108 2025/08/04 04:59:30 guenther Exp $	*/
-/*	$NetBSD: socket.h,v 1.14 1996/02/09 18:25:36 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1985, 1986, 1988, 1993, 1994

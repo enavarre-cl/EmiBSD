@@ -1,4 +1,3 @@
-/*	$OpenBSD: getchar.c,v 1.1 2014/07/12 21:54:58 jasper Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1990, 1993

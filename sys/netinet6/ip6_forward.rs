@@ -1,4 +1,3 @@
-/*	$OpenBSD: ip6_forward.c,v 1.130 2026/06/23 15:45:00 bluhm Exp $	*/
 /*	$KAME: ip6_forward.c,v 1.75 2001/06/29 12:42:13 jinmei Exp $	*/
 /* <LICENSES> */
 /*

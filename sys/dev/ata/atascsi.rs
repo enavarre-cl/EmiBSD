@@ -1,5 +1,3 @@
-/*	$OpenBSD: atascsi.c,v 1.156 2024/09/04 07:54:52 mglocker Exp $ */
-/*	$OpenBSD: atascsi.h,v 1.54 2022/04/09 20:10:26 naddy Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2007 David Gwynne <dlg@openbsd.org>

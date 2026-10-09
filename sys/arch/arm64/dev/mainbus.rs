@@ -1,4 +1,3 @@
-/* $OpenBSD: mainbus.c,v 1.37 2026/06/22 12:20:52 deraadt Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Patrick Wildt <patrick@blueri.se>

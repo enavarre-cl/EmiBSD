@@ -1,4 +1,3 @@
-/*	$OpenBSD: efifb.c,v 1.34 2022/07/15 17:57:25 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>

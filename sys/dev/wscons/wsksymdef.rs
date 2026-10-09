@@ -1,5 +1,3 @@
-/*	$OpenBSD: wsksymdef.h,v 1.43 2025/11/09 16:21:56 matthieu Exp $	*/
-/*	$NetBSD: wsksymdef.h,v 1.34.4.1 2000/07/07 09:49:54 hannken Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.

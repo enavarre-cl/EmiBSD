@@ -1,6 +1,3 @@
-/*	$OpenBSD: usbhid.h,v 1.21 2016/01/09 04:10:36 jcs Exp $ */
-/*	$NetBSD: usbhid.h,v 1.11 2001/12/28 00:20:24 augustss Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/usbhid.h,v 1.7 1999/11/17 22:33:51 n_hibma Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

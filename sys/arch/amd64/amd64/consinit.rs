@@ -1,5 +1,3 @@
-/*	$OpenBSD: consinit.c,v 1.7 2017/10/14 04:44:43 jsg Exp $	*/
-/*	$NetBSD: consinit.c,v 1.2 2003/03/02 18:27:14 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

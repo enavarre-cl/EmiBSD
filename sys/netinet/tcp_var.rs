@@ -1,5 +1,3 @@
-/*	$OpenBSD: tcp_var.h,v 1.196 2025/09/16 17:29:35 bluhm Exp $	*/
-/*	$NetBSD: tcp_var.h,v 1.17 1996/02/13 23:44:24 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993, 1994

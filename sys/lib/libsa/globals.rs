@@ -1,5 +1,3 @@
-/*	$OpenBSD: globals.c,v 1.4 2014/07/13 15:31:20 mpi Exp $	*/
-/*	$NetBSD: globals.c,v 1.3 1995/09/18 21:19:27 pk Exp $	*/
 /* <LICENSES> */
 /*
  *	globals.c:

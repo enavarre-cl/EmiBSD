@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_srvcache.c,v 1.32 2024/09/18 05:21:19 jsg Exp $	*/
-/*	$NetBSD: nfs_srvcache.c,v 1.12 1996/02/18 11:53:49 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

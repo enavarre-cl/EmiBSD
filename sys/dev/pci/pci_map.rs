@@ -1,5 +1,3 @@
-/*      $OpenBSD: pci_map.c,v 1.33 2023/04/13 15:07:43 miod Exp $     */
-/*	$NetBSD: pci_map.c,v 1.7 2000/05/10 16:58:42 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 2000 The NetBSD Foundation, Inc.

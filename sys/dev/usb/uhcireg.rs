@@ -1,6 +1,3 @@
-/*	$OpenBSD: uhcireg.h,v 1.16 2016/12/27 14:41:45 kettenis Exp $ */
-/*	$NetBSD: uhcireg.h,v 1.16 2002/07/11 21:14:29 augustss Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/uhcireg.h,v 1.12 1999/11/17 22:33:42 n_hibma Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

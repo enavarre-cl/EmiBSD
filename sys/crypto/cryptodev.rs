@@ -1,4 +1,3 @@
-/*	$OpenBSD: cryptodev.h,v 1.82 2022/05/03 09:18:11 claudio Exp $	*/
 /* <LICENSES> */
 /*
  * The author of this code is Angelos D. Keromytis (angelos@cis.upenn.edu)

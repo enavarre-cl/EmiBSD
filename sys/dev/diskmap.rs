@@ -1,4 +1,3 @@
-/*	$OpenBSD: diskmap.c,v 1.27 2023/04/13 02:19:05 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2009, 2010 Joel Sing <jsing@openbsd.org>

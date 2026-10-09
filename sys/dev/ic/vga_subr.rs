@@ -1,5 +1,3 @@
-/* $OpenBSD: vga_subr.c,v 1.5 2015/07/18 00:48:05 miod Exp $ */
-/* $NetBSD: vga_subr.c,v 1.6 2000/01/25 02:44:03 ad Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

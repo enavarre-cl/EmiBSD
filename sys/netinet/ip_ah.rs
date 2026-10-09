@@ -1,5 +1,3 @@
-/*	$OpenBSD: ip_ah.h,v 1.37 2020/09/01 01:53:34 gnezdo Exp $	*/
-/*	$OpenBSD: ip_ah.c,v 1.181 2026/08/12 18:23:14 bluhm Exp $ */
 /* <LICENSES> */
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),

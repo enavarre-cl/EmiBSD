@@ -1,4 +1,3 @@
-/*	$OpenBSD: cpu_full.h,v 1.5 2019/05/17 19:07:47 guenther Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2018 Philip Guenther <guenther@openbsd.org>

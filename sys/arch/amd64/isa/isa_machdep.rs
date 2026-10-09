@@ -1,5 +1,3 @@
-/*	$OpenBSD: isa_machdep.c,v 1.31 2020/09/29 03:06:34 guenther Exp $	*/
-/*	$NetBSD: isa_machdep.c,v 1.22 1997/06/12 23:57:32 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.

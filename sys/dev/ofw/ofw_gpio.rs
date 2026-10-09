@@ -1,5 +1,3 @@
-/*	$OpenBSD: ofw_gpio.h,v 1.6 2025/01/09 19:38:13 kettenis Exp $	*/
-/*	$OpenBSD: ofw_gpio.c,v 1.4 2025/01/09 19:38:13 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Mark Kettenis

@@ -1,6 +1,3 @@
-/*	$OpenBSD: mld6.h,v 1.2 2010/03/22 21:29:22 jsg Exp $	*/
-/*	$FreeBSD: mld6.h,v 1.1 2009/04/29 11:31:23 bms Exp $	*/
-/*	$OpenBSD: mld6.c,v 1.76 2026/09/17 15:56:59 bluhm Exp $	*/
 /*	$KAME: mld6.c,v 1.26 2001/02/16 14:50:35 itojun Exp $	*/
 /* <LICENSES> */
 /*-

@@ -1,4 +1,3 @@
-/*	$OpenBSD: tree.h,v 1.31 2023/03/08 04:43:09 guenther Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>

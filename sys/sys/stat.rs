@@ -1,5 +1,3 @@
-/*	$OpenBSD: stat.h,v 1.29 2022/01/11 23:59:55 jsg Exp $	*/
-/*	$NetBSD: stat.h,v 1.20 1996/05/16 22:17:49 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1989, 1993

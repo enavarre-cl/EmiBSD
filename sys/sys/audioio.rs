@@ -1,5 +1,3 @@
-/*	$OpenBSD: audioio.h,v 1.27 2016/09/14 06:12:20 ratchov Exp $	*/
-/*	$NetBSD: audioio.h,v 1.24 1998/08/13 06:28:41 mrg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991-1993 Regents of the University of California.

@@ -1,7 +1,3 @@
-/*	$OpenBSD: uvm_fault.h,v 1.16 2020/11/06 11:52:39 mpi Exp $	*/
-/*	$NetBSD: uvm_fault.h,v 1.14 2000/06/26 14:21:17 mrg Exp $	*/
-/*	$OpenBSD: uvm_fault.c,v 1.173 2025/12/10 08:38:18 mpi Exp $	*/
-/*	$NetBSD: uvm_fault.c,v 1.51 2000/08/06 00:22:53 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

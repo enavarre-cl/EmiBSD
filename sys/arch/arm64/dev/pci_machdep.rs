@@ -1,4 +1,3 @@
-/*	$OpenBSD: pci_machdep.c,v 1.7 2024/07/05 22:53:57 patrick Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2019 Mark Kettenis <kettenis@openbsd.org>

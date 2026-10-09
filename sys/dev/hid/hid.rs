@@ -1,7 +1,3 @@
-/*	$OpenBSD: hid.c,v 1.10 2025/11/03 01:41:22 jmatthew Exp $ */
-/*	$NetBSD: hid.c,v 1.23 2002/07/11 21:14:25 augustss Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/hid.c,v 1.11 1999/11/17 22:33:39 n_hibma Exp $ */
-/*	$OpenBSD: hid.h,v 1.13 2025/10/28 15:36:46 jcs Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

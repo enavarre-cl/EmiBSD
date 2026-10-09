@@ -1,4 +1,3 @@
-/*	$OpenBSD: futex.h,v 1.3 2025/05/07 00:39:09 dlg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Martin Pieuchot

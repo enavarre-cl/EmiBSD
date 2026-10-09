@@ -1,5 +1,3 @@
-/*	$OpenBSD: rasops32.c,v 1.14 2024/07/21 13:18:15 fcambus Exp $	*/
-/*	$NetBSD: rasops32.c,v 1.7 2000/04/12 14:22:29 pk Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.

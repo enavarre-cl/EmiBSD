@@ -1,4 +1,3 @@
-/* $OpenBSD: copy.S,v 1.10 2023/08/12 06:28:13 miod Exp $ */
 /*
  * Copyright (c) 2015 Dale Rahn <drahn@dalerahn.com>
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>

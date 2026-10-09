@@ -1,5 +1,3 @@
-/*	$OpenBSD: dir.h,v 1.13 2024/01/09 03:15:59 guenther Exp $	*/
-/*	$NetBSD: dir.h,v 1.8 1996/03/09 19:42:41 scottr Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

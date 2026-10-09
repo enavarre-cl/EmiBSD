@@ -1,5 +1,3 @@
-/*	$OpenBSD: ehcireg.h,v 1.21 2016/10/02 06:36:39 kettenis Exp $ */
-/*	$NetBSD: ehcireg.h,v 1.17 2004/06/23 06:45:56 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001, 2004 The NetBSD Foundation, Inc.

@@ -1,7 +1,3 @@
-/*	$OpenBSD: bpf.h,v 1.78 2026/09/10 18:31:39 claudio Exp $	*/
-/*	$NetBSD: bpf.h,v 1.15 1996/12/13 07:57:33 mikel Exp $	*/
-/*	$OpenBSD: bpf.c,v 1.238 2026/09/10 18:31:39 claudio Exp $	*/
-/*	$NetBSD: bpf.c,v 1.33 1997/02/21 23:59:35 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1990, 1991, 1993

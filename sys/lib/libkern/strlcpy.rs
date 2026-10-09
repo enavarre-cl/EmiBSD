@@ -1,4 +1,3 @@
-/*	$OpenBSD: strlcpy.c,v 1.9 2019/01/25 00:19:26 millert Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998, 2015 Todd C. Miller <millert@openbsd.org>

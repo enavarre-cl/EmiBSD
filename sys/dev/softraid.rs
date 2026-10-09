@@ -1,4 +1,3 @@
-/* $OpenBSD: softraid.c,v 1.440 2026/09/29 22:49:58 krw Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2007, 2008, 2009 Marco Peereboom <marco@peereboom.us>

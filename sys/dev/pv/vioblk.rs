@@ -1,4 +1,3 @@
-/*	$OpenBSD: vioblk.c,v 1.47 2025/09/16 12:18:10 hshoexer Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2012 Stefan Fritsch.

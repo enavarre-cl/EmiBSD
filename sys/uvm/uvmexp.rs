@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvmexp.h,v 1.27 2026/03/08 17:06:10 deraadt Exp $	*/
-
 /* <CODE> */
 //! The exported VM statistics: `<uvm/uvmexp.h>` (which carries no licence block of its own
 //! upstream; it was split out of `uvm_extern.h`).

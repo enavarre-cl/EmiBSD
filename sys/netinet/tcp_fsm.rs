@@ -1,5 +1,3 @@
-/*	$OpenBSD: tcp_fsm.h,v 1.10 2024/12/20 21:30:17 bluhm Exp $	*/
-/*	$NetBSD: tcp_fsm.h,v 1.6 1994/10/14 16:01:48 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

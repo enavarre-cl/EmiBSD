@@ -1,4 +1,3 @@
-/*	$OpenBSD: vioblkreg.h,v 1.5 2024/07/26 07:55:23 sf Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2012 Stefan Fritsch.

@@ -1,4 +1,3 @@
-/* $OpenBSD: softraid_concat.c,v 1.27 2020/04/25 14:37:43 krw Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2008 Marco Peereboom <marco@peereboom.us>

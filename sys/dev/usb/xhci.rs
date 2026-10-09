@@ -1,4 +1,3 @@
-/* $OpenBSD: xhci.c,v 1.136 2025/03/01 14:43:03 kirill Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2014-2015 Martin Pieuchot

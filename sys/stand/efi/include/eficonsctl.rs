@@ -1,4 +1,3 @@
-/* $FreeBSD: head/sys/boot/efi/include/eficonsctl.h 272105 2014-09-25 13:31:08Z emaste $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2004 - 2010, Intel Corporation. All rights reserved.

@@ -1,4 +1,3 @@
-/* $OpenBSD: kern_intrmap.c,v 1.4 2025/06/13 09:48:45 jsg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1980, 1986, 1993

@@ -1,5 +1,3 @@
-/*	$OpenBSD: vnd.c,v 1.183 2025/11/17 14:27:43 jsg Exp $	*/
-/*	$NetBSD: vnd.c,v 1.26 1996/03/30 23:06:11 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988 University of Utah.

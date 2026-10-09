@@ -1,4 +1,3 @@
-/* $OpenBSD: exec.h,v 1.3 2025/07/31 16:09:59 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>

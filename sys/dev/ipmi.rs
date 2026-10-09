@@ -1,4 +1,3 @@
-/*	$OpenBSD: ipmi.c,v 1.119 2024/04/03 18:32:47 gkoehler Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 Masao Uebayashi

@@ -1,5 +1,3 @@
-/*	$OpenBSD: ffs_extern.h,v 1.51 2024/10/08 02:58:26 jsg Exp $	*/
-/*	$NetBSD: ffs_extern.h,v 1.4 1996/02/09 22:22:22 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993, 1994

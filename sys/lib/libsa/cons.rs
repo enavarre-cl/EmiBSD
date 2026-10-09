@@ -1,4 +1,3 @@
-/*	$OpenBSD: cons.c,v 1.14 2010/05/09 15:30:28 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988 University of Utah.

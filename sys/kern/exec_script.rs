@@ -1,5 +1,3 @@
-/*	$OpenBSD: exec_script.c,v 1.51 2026/09/17 19:45:07 dgl Exp $	*/
-/*	$NetBSD: exec_script.c,v 1.13 1996/02/04 02:15:06 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1993, 1994 Christopher G. Demetriou

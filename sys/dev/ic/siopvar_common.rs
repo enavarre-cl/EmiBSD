@@ -1,5 +1,3 @@
-/*	$OpenBSD: siopvar_common.h,v 1.32 2020/07/22 13:16:04 krw Exp $ */
-/*	$NetBSD: siopvar_common.h,v 1.33 2005/11/18 23:10:32 bouyer Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2000 Manuel Bouyer.

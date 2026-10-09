@@ -1,5 +1,3 @@
-/*	$OpenBSD: cd9660_vfsops.c,v 1.99 2025/09/20 13:53:36 mpi Exp $	*/
-/*	$NetBSD: cd9660_vfsops.c,v 1.26 1997/06/13 15:38:58 pk Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994

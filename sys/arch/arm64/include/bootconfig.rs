@@ -1,5 +1,3 @@
-/*	$OpenBSD: bootconfig.h,v 1.4 2023/12/05 05:27:26 jsg Exp $	*/
-/*	$NetBSD: bootconfig.h,v 1.2 2001/06/21 22:08:28 chris Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 2013 Andrew Turner <andrew@freebsd.org>

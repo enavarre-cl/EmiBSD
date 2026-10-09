@@ -1,5 +1,3 @@
-/*	$OpenBSD: mfsnode.h,v 1.15 2016/11/07 00:26:33 guenther Exp $	*/
-/*	$NetBSD: mfsnode.h,v 1.3 1996/02/09 22:31:31 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

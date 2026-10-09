@@ -1,5 +1,3 @@
-/*	$OpenBSD: trap.h,v 1.6 2025/06/23 11:33:39 bluhm Exp $	*/
-/*	$NetBSD: trap.h,v 1.4 1994/10/27 04:16:30 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.

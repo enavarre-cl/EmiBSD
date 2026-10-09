@@ -1,4 +1,3 @@
-/*	$OpenBSD: acpi_machdep.c,v 1.115 2026/04/10 16:23:32 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>

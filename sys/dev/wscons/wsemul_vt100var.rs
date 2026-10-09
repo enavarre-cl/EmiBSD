@@ -1,5 +1,3 @@
-/* $OpenBSD: wsemul_vt100var.h,v 1.16 2026/08/31 07:18:07 dgl Exp $ */
-/* $NetBSD: wsemul_vt100var.h,v 1.5 2000/04/28 21:56:17 mycroft Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

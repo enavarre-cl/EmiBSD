@@ -1,5 +1,3 @@
-/*	$OpenBSD: uuid.h,v 1.5 2025/07/11 19:12:49 krw Exp $	*/
-/*	$NetBSD: uuid.h,v 1.5 2008/11/18 14:01:03 joerg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2002 Marcel Moolenaar

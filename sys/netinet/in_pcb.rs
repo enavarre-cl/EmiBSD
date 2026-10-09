@@ -1,7 +1,3 @@
-/*	$OpenBSD: in_pcb.h,v 1.174 2026/02/05 03:26:00 dlg Exp $	*/
-/*	$NetBSD: in_pcb.h,v 1.14 1996/02/13 23:42:00 christos Exp $	*/
-/*	$OpenBSD: in_pcb.c,v 1.322 2025/12/02 15:52:04 bluhm Exp $	*/
-/*	$NetBSD: in_pcb.c,v 1.25 1996/02/13 23:41:53 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.

@@ -1,5 +1,3 @@
-/*	$OpenBSD: ataio.h,v 1.5 2003/09/26 21:43:32 miod Exp $	*/
-/*	$NetBSD: ataio.h,v 1.2 1998/11/23 22:58:23 kenh Exp $	*/
 /* <LICENSES> */
 /* </LICENSES> */
 

@@ -1,5 +1,3 @@
-/*	$OpenBSD: msdosfs_denode.c,v 1.69 2026/06/30 14:04:04 kirill Exp $	*/
-/*	$NetBSD: msdosfs_denode.c,v 1.23 1997/10/17 11:23:58 ws Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (C) 1994, 1995, 1997 Wolfgang Solfrank.

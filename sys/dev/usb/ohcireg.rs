@@ -1,6 +1,3 @@
-/*	$OpenBSD: ohcireg.h,v 1.14 2013/04/15 09:23:01 mglocker Exp $ */
-/*	$NetBSD: ohcireg.h,v 1.19 2002/07/11 21:14:27 augustss Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/ohcireg.h,v 1.8 1999/11/17 22:33:40 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

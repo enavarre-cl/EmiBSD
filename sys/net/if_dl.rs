@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_dl.h,v 1.13 2023/11/12 17:51:40 bluhm Exp $	*/
-/*	$NetBSD: if_dl.h,v 1.8 1995/03/26 20:30:13 jtc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1990, 1993

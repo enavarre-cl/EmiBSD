@@ -1,4 +1,3 @@
-/*	$OpenBSD: pledge.h,v 1.55 2026/09/19 17:21:52 dv Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>

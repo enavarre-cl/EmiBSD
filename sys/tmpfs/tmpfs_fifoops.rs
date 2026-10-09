@@ -1,5 +1,3 @@
-/*	$OpenBSD: tmpfs_fifoops.c,v 1.9 2024/05/14 08:26:13 jsg Exp $	*/
-/*	$NetBSD: tmpfs_fifoops.c,v 1.9 2011/05/24 20:17:49 rmind Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 The NetBSD Foundation, Inc.

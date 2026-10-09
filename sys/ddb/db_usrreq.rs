@@ -1,4 +1,3 @@
-/*	$OpenBSD: db_usrreq.c,v 1.23 2025/05/19 21:48:28 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Michael Shalayeff.  All rights reserved.

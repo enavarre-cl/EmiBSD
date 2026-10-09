@@ -1,4 +1,3 @@
-/* $OpenBSD: bus.h,v 1.13 2026/06/22 07:54:19 deraadt Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2003-2004 Opsycon AB Sweden.  All rights reserved.

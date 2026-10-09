@@ -1,4 +1,3 @@
-/* $OpenBSD: refcnt.h,v 1.10 2024/05/13 01:15:53 jsg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 David Gwynne <dlg@openbsd.org>

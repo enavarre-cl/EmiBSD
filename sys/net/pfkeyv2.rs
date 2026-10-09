@@ -1,5 +1,3 @@
-/* $OpenBSD: pfkeyv2.h,v 1.95 2024/05/13 01:15:53 jsg Exp $ */
-/* $OpenBSD: pfkeyv2.c,v 1.273 2026/02/10 20:24:34 tobhe Exp $ */
 /* <LICENSES> */
 /*
  *	@(#)COPYRIGHT	1.1 (NRL) January 1998

@@ -1,5 +1,3 @@
-/*	$OpenBSD: igmp_var.h,v 1.17 2026/02/26 00:53:18 bluhm Exp $	*/
-/*	$NetBSD: igmp_var.h,v 1.9 1996/02/13 23:41:31 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988 Stephen Deering.

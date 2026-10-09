@@ -1,5 +1,3 @@
-/*	$OpenBSD: sdvar.h,v 1.52 2020/09/23 15:24:16 krw Exp $	*/
-/*	$NetBSD: sdvar.h,v 1.7 1998/08/17 00:49:03 mycroft Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

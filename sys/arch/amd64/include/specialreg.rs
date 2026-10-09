@@ -1,6 +1,3 @@
-/*	$OpenBSD: specialreg.h,v 1.129 2026/09/19 16:11:07 mlarkin Exp $	*/
-/*	$NetBSD: specialreg.h,v 1.1 2003/04/26 18:39:48 fvdl Exp $	*/
-/*	$NetBSD: x86/specialreg.h,v 1.2 2003/04/25 21:54:30 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1991 The Regents of the University of California.

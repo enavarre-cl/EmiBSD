@@ -1,4 +1,3 @@
-/* $OpenBSD: locore0.S,v 1.11 2026/06/23 11:45:54 kettenis Exp $ */
 /*-
  * Copyright (c) 2012-2014 Andrew Turner
  * All rights reserved.

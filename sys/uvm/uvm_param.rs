@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvm_param.h,v 1.18 2015/02/07 08:21:24 miod Exp $	*/
-/*	$NetBSD: uvm_param.h,v 1.5 2001/03/09 01:02:12 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993

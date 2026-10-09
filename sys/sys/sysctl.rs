@@ -1,5 +1,3 @@
-/*	$OpenBSD: sysctl.h,v 1.248 2026/04/16 14:47:24 deraadt Exp $	*/
-/*	$NetBSD: sysctl.h,v 1.16 1996/04/09 20:55:36 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

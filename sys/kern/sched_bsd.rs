@@ -1,5 +1,3 @@
-/*	$OpenBSD: sched_bsd.c,v 1.105 2025/09/25 08:46:50 mvs Exp $	*/
-/*	$NetBSD: kern_synch.c,v 1.37 1996/04/22 01:38:37 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1990, 1991, 1993

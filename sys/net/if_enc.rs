@@ -1,5 +1,3 @@
-/*	$OpenBSD: if_enc.h,v 1.13 2021/12/01 21:48:00 deraadt Exp $	*/
-/*	$OpenBSD: if_enc.c,v 1.79 2022/08/29 07:51:45 bluhm Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2010 Reyk Floeter <reyk@vantronix.net>

@@ -1,7 +1,3 @@
-/*	$OpenBSD: net.c,v 1.20 2015/10/26 14:48:54 mmcc Exp $	*/
-/*	$NetBSD: net.c,v 1.14 1996/10/13 02:29:02 christos Exp $	*/
-/*	$OpenBSD: net.h,v 1.11 2020/05/18 17:01:02 patrick Exp $	*/
-/*	$NetBSD: net.h,v 1.10 1995/10/20 00:46:30 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1992 Regents of the University of California.

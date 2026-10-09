@@ -1,5 +1,3 @@
-/*	$OpenBSD: domain.h,v 1.25 2024/10/26 05:39:03 jsg Exp $	*/
-/*	$NetBSD: domain.h,v 1.10 1996/02/09 18:25:07 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

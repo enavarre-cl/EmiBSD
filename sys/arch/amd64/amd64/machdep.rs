@@ -1,5 +1,3 @@
-/*	$OpenBSD: machdep.c,v 1.314 2026/09/28 14:14:03 deraadt Exp $	*/
-/*	$NetBSD: machdep.c,v 1.3 2003/05/07 22:58:18 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996, 1997, 1998, 2000 The NetBSD Foundation, Inc.

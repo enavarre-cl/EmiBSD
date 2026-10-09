@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_pledge.c,v 1.369 2026/09/21 00:46:13 jan Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 Nicholas Marriott <nicm@openbsd.org>

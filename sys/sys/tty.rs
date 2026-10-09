@@ -1,5 +1,3 @@
-/*	$OpenBSD: tty.h,v 1.46 2026/08/06 20:38:02 claudio Exp $	*/
-/*	$NetBSD: tty.h,v 1.30.4.1 1996/06/02 09:08:13 mrg Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1993

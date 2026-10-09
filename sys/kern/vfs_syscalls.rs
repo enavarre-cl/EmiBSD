@@ -1,5 +1,3 @@
-/*	$OpenBSD: vfs_syscalls.c,v 1.388 2026/08/15 22:07:04 gnezdo Exp $	*/
-/*	$NetBSD: vfs_syscalls.c,v 1.71 1996/04/23 10:29:02 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

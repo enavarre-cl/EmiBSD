@@ -1,4 +1,3 @@
-/* $OpenBSD: ldscript.arm64,v 1.4 2022/07/29 21:34:59 kettenis Exp $ */
 
 /*
  * EmiBSD: OpenBSD's ldscript.arm64 for lld and the Rust objects. The hand-made PE header

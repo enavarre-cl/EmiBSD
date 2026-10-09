@@ -1,5 +1,3 @@
-/*	$OpenBSD: cread.c,v 1.15 2016/09/18 15:14:52 jsing Exp $	*/
-/*	$NetBSD: cread.c,v 1.2 1997/02/04 18:38:20 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996

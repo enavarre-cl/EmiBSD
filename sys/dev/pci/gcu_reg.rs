@@ -1,4 +1,3 @@
-/*	$OpenBSD: gcu_reg.h,v 1.1 2009/11/25 13:28:13 dms Exp $	*/
 /* <LICENSES> */
 
 /*

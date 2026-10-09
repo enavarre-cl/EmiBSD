@@ -1,5 +1,3 @@
-/*	$OpenBSD: intr.h,v 1.37 2025/11/10 12:34:52 dlg Exp $	*/
-/*	$NetBSD: intr.h,v 1.2 2003/05/04 22:01:56 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 2001 The NetBSD Foundation, Inc.

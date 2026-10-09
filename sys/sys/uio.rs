@@ -1,5 +1,3 @@
-/*	$OpenBSD: uio.h,v 1.20 2024/10/26 05:39:03 jsg Exp $	*/
-/*	$NetBSD: uio.h,v 1.12 1996/02/09 18:25:45 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993, 1994

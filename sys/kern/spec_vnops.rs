@@ -1,5 +1,3 @@
-/*	$OpenBSD: spec_vnops.c,v 1.114 2025/03/27 23:30:54 tedu Exp $	*/
-/*	$NetBSD: spec_vnops.c,v 1.29 1996/04/22 01:42:38 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

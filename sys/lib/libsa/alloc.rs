@@ -1,5 +1,3 @@
-/*	$OpenBSD: alloc.c,v 1.13 2018/12/16 08:31:50 otto Exp $	*/
-/*	$NetBSD: alloc.c,v 1.6 1997/02/04 18:36:33 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Christopher G. Demetriou.  All rights reserved.

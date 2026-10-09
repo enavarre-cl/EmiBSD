@@ -1,5 +1,3 @@
-/*	$OpenBSD: rijndael.h,v 1.13 2008/06/09 07:49:45 djm Exp $ */
-/*	$OpenBSD: rijndael.c,v 1.20 2014/11/17 12:27:47 mikeb Exp $ */
 /* <LICENSES> */
 /* *
  * rijndael-alg-fst.h

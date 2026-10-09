@@ -1,4 +1,3 @@
-/*	$OpenBSD: inet_nat64.c,v 1.3 2025/07/08 00:47:41 jsg Exp $	*/
 /*	$vantronix: inet_nat64.c,v 1.2 2011/02/28 14:57:58 mike Exp $	*/
 /* <LICENSES> */
 /*

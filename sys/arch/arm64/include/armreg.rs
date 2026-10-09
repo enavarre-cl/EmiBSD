@@ -1,4 +1,3 @@
-/* $OpenBSD: armreg.h,v 1.45 2026/05/04 20:43:42 kettenis Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2013, 2014 Andrew Turner

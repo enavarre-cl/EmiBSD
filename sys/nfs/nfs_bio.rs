@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_bio.c,v 1.87 2024/09/18 05:21:19 jsg Exp $	*/
-/*	$NetBSD: nfs_bio.c,v 1.25.4.2 1996/07/08 20:47:04 jtc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

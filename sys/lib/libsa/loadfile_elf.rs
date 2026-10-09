@@ -1,7 +1,3 @@
-/* $NetBSD: loadfile.c,v 1.10 2000/12/03 02:53:04 tsutsui Exp $ */
-/* $OpenBSD: loadfile_elf.c,v 1.17 2020/10/26 04:04:31 visa Exp $ */
-/*	$OpenBSD: elf32.c,v 1.1 2007/05/30 01:25:43 tom Exp $	*/
-/*	$OpenBSD: elf64.c,v 1.1 2007/05/30 01:25:43 tom Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997 The NetBSD Foundation, Inc.

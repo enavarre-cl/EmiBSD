@@ -1,5 +1,3 @@
-/*	$OpenBSD: gdt.c,v 1.26 2018/02/21 19:24:15 guenther Exp $	*/
-/*	$NetBSD: gdt.c,v 1.1 2003/04/26 18:39:28 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.

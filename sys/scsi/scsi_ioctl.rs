@@ -1,5 +1,3 @@
-/*	$OpenBSD: scsi_ioctl.c,v 1.67 2020/09/22 19:32:53 krw Exp $	*/
-/*	$NetBSD: scsi_ioctl.c,v 1.23 1996/10/12 23:23:17 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1994 Charles Hannum.  All rights reserved.

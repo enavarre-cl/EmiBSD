@@ -1,5 +1,3 @@
-/*	$OpenBSD: open.c,v 1.11 2016/03/14 23:08:06 krw Exp $	*/
-/*	$NetBSD: open.c,v 1.12 1996/09/30 16:01:21 ws Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

@@ -1,5 +1,3 @@
-/*	$OpenBSD: rpcv2.h,v 1.8 2008/07/04 16:49:28 blambert Exp $	*/
-/*	$NetBSD: rpcv2.h,v 1.8 1996/02/18 11:54:11 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

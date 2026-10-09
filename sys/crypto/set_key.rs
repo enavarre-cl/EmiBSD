@@ -1,4 +1,3 @@
-/*	$OpenBSD: set_key.c,v 1.6 2025/10/27 16:56:00 tb Exp $	*/
 /* <LICENSES> */
 /* lib/des/set_key.c */
 

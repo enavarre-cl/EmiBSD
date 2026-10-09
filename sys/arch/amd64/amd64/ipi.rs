@@ -1,5 +1,3 @@
-/*	$OpenBSD: ipi.c,v 1.18 2022/11/10 08:26:54 jmatthew Exp $	*/
-/*	$NetBSD: ipi.c,v 1.2 2003/03/01 13:05:37 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.

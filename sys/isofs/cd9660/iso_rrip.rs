@@ -1,5 +1,3 @@
-/*	$OpenBSD: iso_rrip.h,v 1.7 2013/06/11 16:42:15 deraadt Exp $	*/
-/*	$NetBSD: iso_rrip.h,v 1.3 1994/06/29 06:32:02 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993, 1994

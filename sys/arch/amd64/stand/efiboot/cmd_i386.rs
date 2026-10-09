@@ -1,4 +1,3 @@
-/*	$OpenBSD: cmd_i386.c,v 1.4 2025/09/16 05:07:33 yasuoka Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997-1999 Michael Shalayeff

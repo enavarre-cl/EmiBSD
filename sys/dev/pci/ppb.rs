@@ -1,5 +1,3 @@
-/*	$OpenBSD: ppb.c,v 1.73 2025/09/16 12:18:10 hshoexer Exp $	*/
-/*	$NetBSD: ppb.c,v 1.16 1997/06/06 23:48:05 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.

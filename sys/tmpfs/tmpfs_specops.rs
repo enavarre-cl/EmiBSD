@@ -1,5 +1,3 @@
-/*	$OpenBSD: tmpfs_specops.c,v 1.9 2022/06/26 05:20:42 visa Exp $	*/
-/*	$NetBSD: tmpfs_specops.c,v 1.10 2011/05/24 20:17:49 rmind Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 The NetBSD Foundation, Inc.

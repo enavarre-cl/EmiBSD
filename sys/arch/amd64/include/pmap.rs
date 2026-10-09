@@ -1,5 +1,3 @@
-/*	$OpenBSD: pmap.h,v 1.95 2026/06/04 05:22:04 mlarkin Exp $	*/
-/*	$NetBSD: pmap.h,v 1.1 2003/04/26 18:39:46 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

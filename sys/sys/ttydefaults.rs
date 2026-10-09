@@ -1,5 +1,3 @@
-/*	$OpenBSD: ttydefaults.h,v 1.7 2019/03/12 11:01:25 nicm Exp $	*/
-/*	$NetBSD: ttydefaults.h,v 1.8 1996/04/09 20:55:45 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1993

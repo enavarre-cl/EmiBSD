@@ -1,7 +1,3 @@
-/*	$OpenBSD: db_variables.c,v 1.22 2023/03/08 04:43:07 guenther Exp $	*/
-/*	$NetBSD: db_variables.c,v 1.8 1996/02/05 01:57:19 christos Exp $	*/
-/*	$OpenBSD: db_variables.h,v 1.8 2016/01/25 14:30:30 mpi Exp $	*/
-/*	$NetBSD: db_variables.h,v 1.5 1996/02/05 01:57:21 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

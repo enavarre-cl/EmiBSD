@@ -1,7 +1,3 @@
-/*	$OpenBSD: uvm_amap.h,v 1.36 2025/05/25 01:52:00 gnezdo Exp $	*/
-/*	$NetBSD: uvm_amap.h,v 1.14 2001/02/18 21:19:08 chs Exp $	*/
-/*	$OpenBSD: uvm_amap.c,v 1.101 2026/08/12 14:49:25 gnezdo Exp $	*/
-/*	$NetBSD: uvm_amap.c,v 1.27 2000/11/25 06:27:59 chs Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

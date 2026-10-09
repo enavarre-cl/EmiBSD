@@ -1,5 +1,3 @@
-/*	$OpenBSD: hidmsvar.h,v 1.3 2023/08/12 20:47:06 miod Exp $ */
-/*	$NetBSD: ums.c,v 1.60 2003/03/11 16:44:00 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

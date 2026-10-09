@@ -1,5 +1,3 @@
-/*	$OpenBSD: ukphy_subr.c,v 1.10 2008/10/24 16:50:01 brad Exp $	*/
-/*	$NetBSD: ukphy_subr.c,v 1.2 1998/11/05 04:08:02 thorpej Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

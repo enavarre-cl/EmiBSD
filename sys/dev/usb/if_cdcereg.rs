@@ -1,4 +1,3 @@
-/*	$OpenBSD: if_cdcereg.h,v 1.9 2024/01/04 08:41:59 kevlo Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1997, 1998, 1999, 2000-2003 Bill Paul <wpaul@windriver.com>

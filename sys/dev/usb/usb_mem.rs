@@ -1,8 +1,3 @@
-/*	$OpenBSD: usb_mem.h,v 1.18 2024/10/08 19:42:31 kettenis Exp $ */
-/*	$NetBSD: usb_mem.h,v 1.20 2003/05/03 18:11:42 wiz Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/usb_mem.h,v 1.9 1999/11/17 22:33:47 n_hibma Exp $	*/
-/*	$OpenBSD: usb_mem.c,v 1.36 2024/10/08 19:42:31 kettenis Exp $ */
-/*	$NetBSD: usb_mem.c,v 1.26 2003/02/01 06:23:40 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

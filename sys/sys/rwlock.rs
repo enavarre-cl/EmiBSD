@@ -1,4 +1,3 @@
-/*	$OpenBSD: rwlock.h,v 1.34 2025/07/21 20:36:41 bluhm Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2002 Artur Grabowski <art@openbsd.org>

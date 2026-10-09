@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_timeout.c,v 1.112 2025/07/28 05:25:44 dlg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2001 Thomas Nordin <nordin@openbsd.org>

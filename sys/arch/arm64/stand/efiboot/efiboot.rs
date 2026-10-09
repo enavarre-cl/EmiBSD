@@ -1,7 +1,3 @@
-/*	$OpenBSD: efiboot.c,v 1.72 2026/09/04 17:48:11 mglocker Exp $	*/
-/*	$OpenBSD: efiboot.h,v 1.6 2022/04/06 21:27:03 kettenis Exp $	*/
-/*	$OpenBSD: efidt.h,v 1.1 2024/06/14 19:49:17 kettenis Exp $	*/
-/*	$OpenBSD: libsa.h,v 1.3 2023/02/23 19:48:22 miod Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>

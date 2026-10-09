@@ -1,5 +1,3 @@
-/* $OpenBSD: wsemulvar.h,v 1.20 2024/11/05 08:12:08 miod Exp $ */
-/* $NetBSD: wsemulvar.h,v 1.6 1999/01/17 15:46:15 drochner Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2009 Miodrag Vallat.

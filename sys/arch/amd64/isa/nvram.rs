@@ -1,5 +1,3 @@
-/*	$OpenBSD: nvram.h,v 1.1 2007/08/02 16:40:27 deraadt Exp $	*/
-/*	$NetBSD: nvram.h,v 1.5 1995/05/05 22:08:43 mycroft Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990, 1993

@@ -1,5 +1,3 @@
-/*	$OpenBSD: pucdata.c,v 1.122 2025/07/04 04:31:48 tb Exp $	*/
-/*	$NetBSD: pucdata.c,v 1.6 1999/07/03 05:55:23 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998, 1999 Christopher G. Demetriou.  All rights reserved.

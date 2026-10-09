@@ -1,4 +1,3 @@
-/*	$OpenBSD: run_i386.S,v 1.3 2022/12/08 01:25:44 guenther Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 YASUOKA Masahiko <yasuoka@yasuoka.net>

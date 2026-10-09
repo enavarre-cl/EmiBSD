@@ -1,5 +1,3 @@
-/*	$OpenBSD: dkcksum.c,v 1.6 2014/11/19 20:28:56 miod Exp $	*/
-/*	$NetBSD: disklabel.c,v 1.3 1994/10/26 05:44:42 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

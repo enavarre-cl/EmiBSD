@@ -1,5 +1,3 @@
-/*	$OpenBSD: raw_ip.c,v 1.168 2026/07/16 12:21:40 bluhm Exp $	*/
-/*	$NetBSD: raw_ip.c,v 1.25 1996/02/18 18:58:33 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1993

@@ -1,4 +1,3 @@
-/*	$OpenBSD: ahci.c,v 1.43 2024/11/22 09:29:41 jan Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2006 David Gwynne <dlg@openbsd.org>

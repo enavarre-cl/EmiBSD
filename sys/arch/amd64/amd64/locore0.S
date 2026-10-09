@@ -1,5 +1,3 @@
-/*	$OpenBSD: locore0.S,v 1.36 2026/08/19 08:56:28 hshoexer Exp $	*/
-/*	$NetBSD: locore.S,v 1.13 2004/03/25 18:33:17 drochner Exp $	*/
 
 /*
  * Copyright-o-rama!

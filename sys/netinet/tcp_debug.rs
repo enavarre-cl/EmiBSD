@@ -1,7 +1,3 @@
-/*	$OpenBSD: tcp_debug.h,v 1.11 2018/05/10 13:30:25 bluhm Exp $	*/
-/*	$NetBSD: tcp_debug.h,v 1.5 1994/06/29 06:38:38 cgd Exp $	*/
-/*	$OpenBSD: tcp_debug.c,v 1.33 2025/07/08 00:47:41 jsg Exp $	*/
-/*	$NetBSD: tcp_debug.c,v 1.10 1996/02/13 23:43:36 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

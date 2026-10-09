@@ -1,5 +1,3 @@
-/*	$OpenBSD: inode.h,v 1.54 2024/02/03 18:51:58 beck Exp $	*/
-/*	$NetBSD: inode.h,v 1.8 1995/06/15 23:22:50 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1989, 1993

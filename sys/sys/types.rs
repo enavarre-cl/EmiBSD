@@ -1,5 +1,3 @@
-/*	$OpenBSD: types.h,v 1.50 2026/03/26 21:46:24 daniel Exp $	*/
-/*	$NetBSD: types.h,v 1.29 1996/11/15 22:48:25 jtc Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1991, 1993
@@ -36,8 +34,6 @@
  *
  *	@(#)types.h	8.4 (Berkeley) 1/21/94
  */
-
-/*	$OpenBSD: _types.h,v 1.10 2022/08/06 13:31:13 semarie Exp $	*/
 
 /*-
  * Copyright (c) 1990, 1993

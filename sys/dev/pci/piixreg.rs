@@ -1,4 +1,3 @@
-/*	$OpenBSD: piixreg.h,v 1.6 2020/01/21 06:37:24 claudio Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Alexander Yurchenko <grange@openbsd.org>

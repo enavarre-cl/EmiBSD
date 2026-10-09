@@ -1,5 +1,3 @@
-/*	$OpenBSD: sys_generic.c,v 1.161 2026/03/09 02:44:04 deraadt Exp $	*/
-/*	$NetBSD: sys_generic.c,v 1.24 1996/03/29 00:25:32 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Theo de Raadt

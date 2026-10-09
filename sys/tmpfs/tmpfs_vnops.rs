@@ -1,7 +1,3 @@
-/*	$OpenBSD: tmpfs_vnops.h,v 1.7 2022/06/26 05:20:42 visa Exp $	*/
-/*	$NetBSD: tmpfs_vnops.h,v 1.13 2011/05/24 20:17:49 rmind Exp $	*/
-/*	$OpenBSD: tmpfs_vnops.c,v 1.57 2025/09/20 13:53:36 mpi Exp $	*/
-/*	$NetBSD: tmpfs_vnops.c,v 1.100 2012/11/05 17:27:39 dholland Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005, 2006 The NetBSD Foundation, Inc.

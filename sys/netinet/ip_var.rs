@@ -1,5 +1,3 @@
-/*	$OpenBSD: ip_var.h,v 1.127 2026/08/11 14:28:59 bluhm Exp $	*/
-/*	$NetBSD: ip_var.h,v 1.16 1996/02/13 23:43:20 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

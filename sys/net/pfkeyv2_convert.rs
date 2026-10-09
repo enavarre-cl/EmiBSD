@@ -1,4 +1,3 @@
-/*	$OpenBSD: pfkeyv2_convert.c,v 1.85 2026/08/12 18:23:14 bluhm Exp $	*/
 /* <LICENSES> */
 /*
  * The author of this code is Angelos D. Keromytis (angelos@keromytis.org)

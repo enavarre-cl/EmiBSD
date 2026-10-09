@@ -1,5 +1,3 @@
-/*	$OpenBSD: ffs_vnops.c,v 1.103 2025/03/27 23:30:54 tedu Exp $	*/
-/*	$NetBSD: ffs_vnops.c,v 1.7 1996/05/11 18:27:24 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

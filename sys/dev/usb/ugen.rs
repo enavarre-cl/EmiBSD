@@ -1,6 +1,3 @@
-/*	$OpenBSD: ugen.c,v 1.119 2024/12/30 02:46:00 guenther Exp $ */
-/*	$NetBSD: ugen.c,v 1.63 2002/11/26 18:49:48 christos Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/ugen.c,v 1.26 1999/11/17 22:33:41 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

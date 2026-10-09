@@ -1,5 +1,3 @@
-/*	$OpenBSD: ufs_lookup.c,v 1.61 2024/02/03 18:51:58 beck Exp $	*/
-/*	$NetBSD: ufs_lookup.c,v 1.7 1996/02/09 22:36:06 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

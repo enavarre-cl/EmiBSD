@@ -1,4 +1,3 @@
-/*	$OpenBSD: efi_machdep.c,v 1.6 2023/01/14 12:11:11 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2017 Mark Kettenis <kettenis@openbsd.org>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_vnops.c,v 1.215 2026/07/02 03:14:52 jsg Exp $	*/
-/*	$NetBSD: nfs_vnops.c,v 1.62.4.1 1996/07/08 20:26:52 jtc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

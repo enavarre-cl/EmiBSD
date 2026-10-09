@@ -1,5 +1,3 @@
-/*	$OpenBSD: cd9660_bmap.c,v 1.10 2021/03/05 07:01:36 jsg Exp $	*/
-/*	$NetBSD: cd9660_bmap.c,v 1.7 1997/01/24 00:27:29 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994

@@ -1,5 +1,3 @@
-/*	$OpenBSD: subr_disk.c,v 1.287 2026/08/09 19:22:49 gnezdo Exp $	*/
-/*	$NetBSD: subr_disk.c,v 1.17 1996/03/16 23:17:08 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995 Jason R. Thorpe.  All rights reserved.

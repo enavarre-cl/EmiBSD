@@ -1,5 +1,3 @@
-/* $OpenBSD: wsdisplayvar.h,v 1.38 2020/09/13 10:05:46 fcambus Exp $ */
-/* $NetBSD: wsdisplayvar.h,v 1.30 2005/02/04 02:10:49 perry Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.

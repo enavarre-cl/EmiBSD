@@ -1,4 +1,3 @@
-/*	$OpenBSD: efivar.h,v 1.2 2024/07/10 10:53:55 kettenis Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2022 Mark Kettenis <kettenis@openbsd.org>

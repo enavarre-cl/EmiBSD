@@ -1,5 +1,3 @@
-/*	$OpenBSD: i8253reg.h,v 1.3 2003/06/02 23:28:02 millert Exp $	*/
-/*	$NetBSD: i8253reg.h,v 1.5 1998/01/19 11:38:00 drochner Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993 The Regents of the University of California.

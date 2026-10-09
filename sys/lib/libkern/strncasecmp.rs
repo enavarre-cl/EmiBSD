@@ -1,4 +1,3 @@
-/*	$OpenBSD: strncasecmp.c,v 1.6 2014/06/10 04:16:57 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1994 Christian E. Hopps

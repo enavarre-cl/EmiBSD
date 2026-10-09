@@ -1,7 +1,3 @@
-/*	$OpenBSD: ntfs_compr.h,v 1.2 2003/05/20 03:23:11 mickey Exp $	*/
-/*	$NetBSD: ntfs_compr.h,v 1.1 2002/12/23 17:38:32 jdolecek Exp $	*/
-/*	$OpenBSD: ntfs_compr.c,v 1.7 2013/11/24 16:02:30 jsing Exp $	*/
-/*	$NetBSD: ntfs_compr.c,v 1.1 2002/12/23 17:38:31 jdolecek Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1998, 1999 Semen Ustimenko

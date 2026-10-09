@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_socket.c,v 1.158 2026/06/09 03:20:01 jsg Exp $	*/
-/*	$NetBSD: nfs_socket.c,v 1.27 1996/04/15 20:20:00 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1991, 1993, 1995

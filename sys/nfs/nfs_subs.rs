@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfs_subs.c,v 1.153 2026/09/01 02:33:27 jsg Exp $	*/
-/*	$NetBSD: nfs_subs.c,v 1.27.4.3 1996/07/08 20:34:24 jtc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

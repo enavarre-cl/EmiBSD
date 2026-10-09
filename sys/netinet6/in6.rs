@@ -1,6 +1,4 @@
-/*	$OpenBSD: in6.h,v 1.125 2025/09/16 09:19:16 florian Exp $	*/
 /*	$KAME: in6.h,v 1.83 2001/03/29 02:55:07 jinmei Exp $	*/
-/*	$OpenBSD: in6.c,v 1.279 2026/03/22 23:14:00 bluhm Exp $	*/
 /*	$KAME: in6.c,v 1.372 2004/06/14 08:14:21 itojun Exp $	*/
 /* <LICENSES> */
 /*

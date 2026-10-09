@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_sig.c,v 1.366 2026/08/23 17:06:56 daniel Exp $	*/
-/*	$NetBSD: kern_sig.c,v 1.54 1996/04/22 01:38:32 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Theo de Raadt. All rights reserved.

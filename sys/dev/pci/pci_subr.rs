@@ -1,5 +1,3 @@
-/*	$OpenBSD: pci_subr.c,v 1.22 2017/03/22 07:21:39 jsg Exp $	*/
-/*	$NetBSD: pci_subr.c,v 1.19 1996/10/13 01:38:29 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Christopher G. Demetriou.  All rights reserved.

@@ -1,6 +1,3 @@
-/*	$OpenBSD: re.c,v 1.224 2026/08/05 08:05:43 bluhm Exp $	*/
-/*	$FreeBSD: if_re.c,v 1.31 2004/09/04 07:54:05 ru Exp $	*/
-/*	$OpenBSD: revar.h,v 1.8 2024/01/19 03:46:15 dlg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997, 1998-2003

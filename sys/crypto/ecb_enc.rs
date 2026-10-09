@@ -1,4 +1,3 @@
-/*	$OpenBSD: ecb_enc.c,v 1.6 2015/12/10 21:00:51 naddy Exp $	*/
 /* <LICENSES> */
 /* lib/des/ecb_enc.c */
 

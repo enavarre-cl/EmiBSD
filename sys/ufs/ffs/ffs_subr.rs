@@ -1,5 +1,3 @@
-/*	$OpenBSD: ffs_subr.c,v 1.35 2024/10/08 02:58:26 jsg Exp $	*/
-/*	$NetBSD: ffs_subr.c,v 1.6 1996/03/17 02:16:23 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

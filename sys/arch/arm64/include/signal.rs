@@ -1,4 +1,3 @@
-/* $OpenBSD: signal.h,v 1.2 2017/03/12 17:57:12 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1992, 1993

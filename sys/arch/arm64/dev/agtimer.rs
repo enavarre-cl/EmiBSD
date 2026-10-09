@@ -1,4 +1,3 @@
-/* $OpenBSD: agtimer.c,v 1.30 2026/05/04 20:43:41 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2011 Dale Rahn <drahn@openbsd.org>

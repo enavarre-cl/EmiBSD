@@ -1,4 +1,3 @@
-/*	$OpenBSD: diskprobe.c,v 1.4 2026/05/03 13:10:46 stsp Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Tobias Weingartner

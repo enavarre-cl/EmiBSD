@@ -1,6 +1,3 @@
-/*	$OpenBSD: ohci.c,v 1.165 2022/04/12 19:41:11 naddy Exp $ */
-/*	$NetBSD: ohci.c,v 1.139 2003/02/22 05:24:16 tsutsui Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/ohci.c,v 1.22 1999/11/17 22:33:40 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

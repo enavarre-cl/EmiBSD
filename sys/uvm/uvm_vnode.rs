@@ -1,7 +1,3 @@
-/*	$OpenBSD: uvm_vnode.h,v 1.24 2025/11/10 15:53:06 mpi Exp $	*/
-/*	$NetBSD: uvm_vnode.h,v 1.9 2000/03/26 20:54:48 kleink Exp $	*/
-/*	$OpenBSD: uvm_vnode.c,v 1.151 2025/12/29 16:07:14 mpi Exp $	*/
-/*	$NetBSD: uvm_vnode.c,v 1.36 2000/11/24 20:34:01 chs Exp $	*/
 /* <LICENSES> */
 /*
  *

@@ -1,5 +1,3 @@
-/*	$OpenBSD: hidms.c,v 1.12 2026/06/01 18:04:05 mglocker Exp $ */
-/*	$NetBSD: ums.c,v 1.60 2003/03/11 16:44:00 augustss Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

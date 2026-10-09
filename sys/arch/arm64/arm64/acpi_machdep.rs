@@ -1,4 +1,3 @@
-/*	$OpenBSD: acpi_machdep.c,v 1.22 2024/05/22 05:51:49 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2018 Mark Kettenis

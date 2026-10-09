@@ -1,4 +1,3 @@
-/*	$OpenBSD: ichiic.c,v 1.58 2025/08/21 03:06:20 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005, 2006 Alexander Yurchenko <grange@openbsd.org>

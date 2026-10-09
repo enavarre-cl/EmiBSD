@@ -1,5 +1,3 @@
-/* $OpenBSD: wsemul_vt100_chars.c,v 1.10 2023/04/13 18:29:36 miod Exp $ */
-/* $NetBSD: wsemul_vt100_chars.c,v 1.12 2009/02/18 04:17:44 snj Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

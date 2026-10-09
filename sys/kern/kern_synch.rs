@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_synch.c,v 1.217 2026/08/19 13:05:12 claudio Exp $	*/
-/*	$NetBSD: kern_synch.c,v 1.37 1996/04/22 01:38:37 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1990, 1991, 1993

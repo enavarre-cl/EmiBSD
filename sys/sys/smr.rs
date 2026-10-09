@@ -1,4 +1,3 @@
-/*	$OpenBSD: smr.h,v 1.9 2022/07/25 08:06:44 visa Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2019 Visa Hankala

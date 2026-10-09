@@ -1,4 +1,3 @@
-/*	$OpenBSD: smbios.c,v 1.1 2022/12/07 23:04:26 patrick Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2006 Gordon Willem Klok <gklok@cogeco.ca>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: ufs_extern.h,v 1.41 2024/07/07 01:39:06 jsg Exp $	*/
-/*	$NetBSD: ufs_extern.h,v 1.5 1996/02/09 22:36:03 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1991, 1993, 1994

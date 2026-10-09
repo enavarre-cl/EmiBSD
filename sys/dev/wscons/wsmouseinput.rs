@@ -1,4 +1,3 @@
-/* $OpenBSD: wsmouseinput.h,v 1.15 2021/03/21 16:20:49 bru Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2015, 2016 Ulf Brosziewski

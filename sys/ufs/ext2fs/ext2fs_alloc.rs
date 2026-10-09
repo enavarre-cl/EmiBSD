@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_alloc.c,v 1.39 2021/05/16 15:10:20 deraadt Exp $	*/
-/*	$NetBSD: ext2fs_alloc.c,v 1.10 2001/07/05 08:38:27 toshii Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.

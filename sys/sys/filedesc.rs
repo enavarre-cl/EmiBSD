@@ -1,5 +1,3 @@
-/*	$OpenBSD: filedesc.h,v 1.49 2026/03/08 16:41:19 deraadt Exp $	*/
-/*	$NetBSD: filedesc.h,v 1.14 1996/04/09 20:55:28 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1990, 1993

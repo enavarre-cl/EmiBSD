@@ -1,5 +1,3 @@
-/*	$OpenBSD: uvm_pdaemon.c,v 1.162 2026/08/31 17:06:54 kettenis Exp $	*/
-/*	$NetBSD: uvm_pdaemon.c,v 1.23 2000/08/20 10:24:14 bjh21 Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.

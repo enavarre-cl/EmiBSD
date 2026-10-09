@@ -1,4 +1,3 @@
-/*	$OpenBSD: pfvar_priv.h,v 1.43 2026/09/10 12:28:04 deraadt Exp $	*/
 /* <LICENSES> */
 
 /*

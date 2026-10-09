@@ -1,5 +1,3 @@
-/*	$OpenBSD: i82093reg.h,v 1.9 2025/09/05 16:57:48 kettenis Exp $	*/
-/* 	$NetBSD: i82093reg.h,v 1.1 2003/02/26 21:26:10 fvdl Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.

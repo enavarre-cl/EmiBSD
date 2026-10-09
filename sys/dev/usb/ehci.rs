@@ -1,5 +1,3 @@
-/*	$OpenBSD: ehci.c,v 1.222 2024/10/11 09:55:24 kettenis Exp $ */
-/*	$NetBSD: ehci.c,v 1.66 2004/06/30 03:11:56 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2014-2015 Martin Pieuchot

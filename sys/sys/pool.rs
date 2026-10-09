@@ -1,5 +1,3 @@
-/*	$OpenBSD: pool.h,v 1.81 2025/05/21 09:33:49 mvs Exp $	*/
-/*	$NetBSD: pool.h,v 1.27 2001/06/06 22:00:17 rafal Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1997, 1998, 1999, 2000 The NetBSD Foundation, Inc.

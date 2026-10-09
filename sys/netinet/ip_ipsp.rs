@@ -1,5 +1,3 @@
-/*	$OpenBSD: ip_ipsp.h,v 1.251 2026/08/12 18:23:14 bluhm Exp $	*/
-/*	$OpenBSD: ip_ipsp.c,v 1.282 2026/07/17 18:51:29 bluhm Exp $	*/
 /* <LICENSES> */
 /*
  * The authors of this code are John Ioannidis (ji@tla.org),

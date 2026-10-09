@@ -1,7 +1,3 @@
-/*	$OpenBSD: route.h,v 1.218 2025/07/14 08:48:51 dlg Exp $	*/
-/*	$NetBSD: route.h,v 1.9 1996/02/13 22:00:49 christos Exp $	*/
-/*	$OpenBSD: route.c,v 1.451 2026/04/22 15:17:43 claudio Exp $	*/
-/*	$NetBSD: route.c,v 1.14 1996/02/13 22:00:46 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1980, 1986, 1993

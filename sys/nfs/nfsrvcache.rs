@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfsrvcache.h,v 1.8 2013/11/26 20:41:27 beck Exp $	*/
-/*	$NetBSD: nfsrvcache.h,v 1.10 1996/02/18 11:54:08 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

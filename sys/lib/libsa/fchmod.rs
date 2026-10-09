@@ -1,5 +1,3 @@
-/*	$OpenBSD: fchmod.c,v 1.3 2023/04/08 18:12:08 kn Exp $	*/
-/*	$NetBSD: stat.c,v 1.3 1994/10/26 05:45:07 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

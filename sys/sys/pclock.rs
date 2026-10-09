@@ -1,4 +1,3 @@
-/*	$OpenBSD: pclock.h,v 1.1 2025/05/31 10:24:50 dlg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2023 David Gwynne <dlg@openbsd.org>

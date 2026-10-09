@@ -1,5 +1,3 @@
-/*	$OpenBSD: vfs_lockf.c,v 1.50 2022/08/14 01:58:28 jsg Exp $	*/
-/*	$NetBSD: vfs_lockf.c,v 1.7 1996/02/04 02:18:21 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993

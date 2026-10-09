@@ -1,4 +1,3 @@
-/*	$OpenBSD: xhci_pci.c,v 1.18 2025/10/29 16:26:08 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2001, 2002 The NetBSD Foundation, Inc.

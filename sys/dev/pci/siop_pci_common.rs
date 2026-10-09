@@ -1,7 +1,3 @@
-/*	$OpenBSD: siop_pci_common.h,v 1.7 2010/07/23 07:47:13 jsg Exp $ */
-/*	$NetBSD: siop_pci_common.h,v 1.6 2005/02/27 00:27:34 perry Exp $ */
-/*	$OpenBSD: siop_pci_common.c,v 1.20 2024/05/24 06:02:58 jsg Exp $ */
-/*	$NetBSD: siop_pci_common.c,v 1.25 2005/06/28 00:28:42 thorpej Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2000 Manuel Bouyer.

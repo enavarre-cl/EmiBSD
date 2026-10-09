@@ -1,5 +1,3 @@
-/*	$OpenBSD: netudp.c,v 1.4 2018/03/31 17:09:56 patrick Exp $	*/
-/*	$NetBSD: net.c,v 1.14 1996/10/13 02:29:02 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1992 Regents of the University of California.

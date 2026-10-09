@@ -1,5 +1,3 @@
-/*	$OpenBSD: ntfs_conv.c,v 1.9 2013/11/24 16:02:30 jsing Exp $	*/
-/*	$NetBSD: ntfs_conv.c,v 1.1 2002/12/23 17:38:32 jdolecek Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 2001 The NetBSD Foundation, Inc.

@@ -1,4 +1,3 @@
-/* $OpenBSD: usbpcap.h,v 1.2 2018/02/26 13:06:49 mpi Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2018 Martin Pieuchot

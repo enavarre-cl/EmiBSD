@@ -1,4 +1,3 @@
-/*	$OpenBSD: auich.c,v 1.120 2024/09/04 07:54:52 mglocker Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2000,2001 Michael Shalayeff

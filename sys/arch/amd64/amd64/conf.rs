@@ -1,4 +1,3 @@
-/*	$OpenBSD: conf.c,v 1.84 2025/11/12 11:34:36 hshoexer Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1994, 1995 Charles M. Hannum.  All rights reserved.

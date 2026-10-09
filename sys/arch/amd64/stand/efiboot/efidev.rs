@@ -1,5 +1,3 @@
-/*	$OpenBSD: efidev.c,v 1.45 2025/11/29 09:25:22 dlg Exp $	*/
-/*	$OpenBSD: efidev.h,v 1.5 2025/11/28 22:51:59 dlg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Michael Shalayeff

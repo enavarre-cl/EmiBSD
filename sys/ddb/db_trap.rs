@@ -1,5 +1,3 @@
-/*	$OpenBSD: db_trap.c,v 1.30 2019/11/06 07:30:08 mpi Exp $	*/
-/*	$NetBSD: db_trap.c,v 1.9 1996/02/05 01:57:18 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Mach Operating System

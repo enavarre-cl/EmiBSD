@@ -1,4 +1,3 @@
-/* $OpenBSD: simplebus.c,v 1.25 2026/08/19 20:14:06 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Patrick Wildt <patrick@blueri.se>

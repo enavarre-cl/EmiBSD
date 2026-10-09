@@ -1,4 +1,3 @@
-/*	$OpenBSD: piixpm.c,v 1.44 2024/05/24 06:02:58 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2005, 2006 Alexander Yurchenko <grange@openbsd.org>

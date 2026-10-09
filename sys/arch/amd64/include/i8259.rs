@@ -1,5 +1,3 @@
-/*	$OpenBSD: i8259.h,v 1.5 2026/01/15 15:43:45 sf Exp $	*/
-/*	$NetBSD: i8259.h,v 1.3 2003/05/04 22:01:56 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.

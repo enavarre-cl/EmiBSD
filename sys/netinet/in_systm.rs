@@ -1,5 +1,3 @@
-/*	$OpenBSD: in_systm.h,v 1.7 2014/07/13 13:57:56 mpi Exp $	*/
-/*	$NetBSD: in_systm.h,v 1.8 1995/04/13 06:29:22 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

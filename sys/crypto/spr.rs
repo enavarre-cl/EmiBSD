@@ -1,4 +1,3 @@
-/*	$OpenBSD: spr.h,v 1.2 2002/10/27 13:24:26 miod Exp $	*/
 /* <LICENSES> */
 /* lib/des/spr.h */
 

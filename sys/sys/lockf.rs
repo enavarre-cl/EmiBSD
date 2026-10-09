@@ -1,5 +1,3 @@
-/*	$OpenBSD: lockf.h,v 1.17 2019/04/20 08:28:59 anton Exp $	*/
-/*	$NetBSD: lockf.h,v 1.5 1994/06/29 06:44:33 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993

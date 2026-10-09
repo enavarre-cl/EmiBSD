@@ -1,4 +1,3 @@
-/*	$OpenBSD: rnd.c,v 1.230 2024/12/30 02:46:00 guenther Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2011,2020 Theo de Raadt.

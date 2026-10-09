@@ -1,5 +1,3 @@
-/*	$OpenBSD: ext2fs_bswap.c,v 1.8 2014/07/31 17:37:52 pelikan Exp $	*/
-/*	$NetBSD: ext2fs_bswap.c,v 1.6 2000/07/24 00:23:10 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997 Manuel Bouyer.

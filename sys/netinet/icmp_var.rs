@@ -1,5 +1,3 @@
-/*	$OpenBSD: icmp_var.h,v 1.16 2020/08/22 17:55:54 gnezdo Exp $	*/
-/*	$NetBSD: icmp_var.h,v 1.8 1995/03/26 20:32:19 jtc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993

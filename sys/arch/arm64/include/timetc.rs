@@ -1,4 +1,3 @@
-/*	$OpenBSD: timetc.h,v 1.3 2023/01/09 15:22:53 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2020 Paul Irofti <paul@irofti.net>

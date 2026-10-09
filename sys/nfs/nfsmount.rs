@@ -1,5 +1,3 @@
-/*	$OpenBSD: nfsmount.h,v 1.28 2018/04/09 09:39:53 mpi Exp $	*/
-/*	$NetBSD: nfsmount.h,v 1.10 1996/02/18 11:54:03 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1993

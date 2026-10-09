@@ -1,5 +1,3 @@
-/* $OpenBSD: wsdisplay_compat_usl.c,v 1.34 2024/04/13 23:44:11 jsg Exp $ */
-/* $NetBSD: wsdisplay_compat_usl.c,v 1.12 2000/03/23 07:01:47 thorpej Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1998

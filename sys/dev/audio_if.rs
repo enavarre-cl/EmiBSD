@@ -1,5 +1,3 @@
-/*	$OpenBSD: audio_if.h,v 1.43 2025/11/02 14:33:06 ratchov Exp $	*/
-/*	$NetBSD: audio_if.h,v 1.24 1998/01/10 14:07:25 tv Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1994 Havard Eidnes.

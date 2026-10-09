@@ -1,7 +1,3 @@
-/*	$OpenBSD: radix.h,v 1.30 2017/06/19 09:42:45 mpi Exp $	*/
-/*	$NetBSD: radix.h,v 1.8 1996/02/13 22:00:37 christos Exp $	*/
-/*	$OpenBSD: radix.c,v 1.61 2022/01/02 22:36:04 jsg Exp $	*/
-/*	$NetBSD: radix.c,v 1.20 2003/08/07 16:32:56 agc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1988, 1989, 1993

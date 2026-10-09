@@ -1,5 +1,3 @@
-/*	$OpenBSD: i2c.c,v 1.19 2022/04/06 18:59:28 naddy Exp $	*/
-/*	$NetBSD: i2c.c,v 1.1 2003/09/30 00:35:31 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.

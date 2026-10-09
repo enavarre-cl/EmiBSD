@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_sysctl.c,v 1.497 2026/09/19 17:29:23 dgl Exp $	*/
-/*	$NetBSD: kern_sysctl.c,v 1.17 1996/05/20 17:49:05 mrg Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1989, 1993

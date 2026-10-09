@@ -1,4 +1,3 @@
-/* $OpenBSD: smmu.c,v 1.29 2026/01/06 11:57:33 patrick Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2008-2009,2014-2016 Dale Rahn <drahn@dalerahn.com>

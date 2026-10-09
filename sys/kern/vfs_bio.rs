@@ -1,5 +1,3 @@
-/*	$OpenBSD: vfs_bio.c,v 1.219 2026/06/12 06:34:19 jsg Exp $	*/
-/*	$NetBSD: vfs_bio.c,v 1.44 1996/06/11 11:15:36 pk Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1994 Christopher G. Demetriou

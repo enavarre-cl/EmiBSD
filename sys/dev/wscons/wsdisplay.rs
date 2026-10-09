@@ -1,6 +1,3 @@
-/* $OpenBSD: wsdisplay.c,v 1.156 2026/04/17 06:18:19 deraadt Exp $ */
-/* $NetBSD: wsdisplay.c,v 1.82 2005/02/27 00:27:52 perry Exp $ */
-/* $OpenBSD: wsmoused.h,v 1.10 2014/10/27 13:55:05 mpi Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.

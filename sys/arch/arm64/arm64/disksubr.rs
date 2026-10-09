@@ -1,5 +1,3 @@
-/*	$OpenBSD: disksubr.c,v 1.3 2018/05/28 19:33:54 kettenis Exp $	*/
-/*	$NetBSD: disksubr.c,v 1.21 1996/05/03 19:42:03 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1996 Theo de Raadt

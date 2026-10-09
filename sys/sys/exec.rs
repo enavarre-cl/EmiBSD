@@ -1,5 +1,3 @@
-/*	$OpenBSD: exec.h,v 1.61 2026/09/17 19:45:07 dgl Exp $	*/
-/*	$NetBSD: exec.h,v 1.59 1996/02/09 18:25:09 christos Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994 Christopher G. Demetriou

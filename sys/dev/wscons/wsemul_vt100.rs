@@ -1,5 +1,3 @@
-/* $OpenBSD: wsemul_vt100.c,v 1.49 2026/08/30 06:44:10 miod Exp $ */
-/* $NetBSD: wsemul_vt100.c,v 1.13 2000/04/28 21:56:16 mycroft Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2007, 2013 Miodrag Vallat.

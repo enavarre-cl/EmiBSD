@@ -1,7 +1,3 @@
-/*	$OpenBSD: cd9660_node.h,v 1.23 2024/05/13 01:15:53 jsg Exp $	*/
-/*	$NetBSD: cd9660_node.h,v 1.15 1997/04/11 21:52:01 kleink Exp $	*/
-/*	$OpenBSD: cd9660_node.c,v 1.40 2026/07/02 06:18:57 jsg Exp $	*/
-/*	$NetBSD: cd9660_node.c,v 1.17 1997/05/05 07:13:57 mycroft Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994

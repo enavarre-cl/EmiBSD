@@ -1,4 +1,3 @@
-/*	$OpenBSD: zopenbsd.c,v 1.10 2021/07/22 16:40:20 tb Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2011 Theo de Raadt <deraadt@openbsd.org>

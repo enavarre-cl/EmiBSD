@@ -1,5 +1,3 @@
-/*	$OpenBSD: stand.h,v 1.72 2021/12/01 17:25:35 kettenis Exp $	*/
-/*	$NetBSD: stand.h,v 1.18 1996/11/30 04:35:51 gwr Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

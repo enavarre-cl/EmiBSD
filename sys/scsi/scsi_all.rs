@@ -1,5 +1,3 @@
-/*	$OpenBSD: scsi_all.h,v 1.65 2022/01/11 23:10:11 jsg Exp $	*/
-/*	$NetBSD: scsi_all.h,v 1.10 1996/09/12 01:57:17 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * SCSI general  interface description

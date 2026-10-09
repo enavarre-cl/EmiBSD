@@ -1,5 +1,3 @@
-/*	$OpenBSD: msgbuf.h,v 1.13 2020/10/25 10:55:42 visa Exp $	*/
-/*	$NetBSD: msgbuf.h,v 1.8 1995/03/26 20:24:27 jtc Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1981, 1984, 1993

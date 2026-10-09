@@ -1,4 +1,3 @@
-/* $OpenBSD: start.S,v 1.5 2022/07/30 21:06:54 patrick Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2014 Andrew Turner

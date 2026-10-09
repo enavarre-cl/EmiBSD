@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_resource.c,v 1.97 2026/02/11 22:34:41 deraadt Exp $	*/
-/*	$NetBSD: kern_resource.c,v 1.38 1996/10/23 07:19:38 matthias Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1991, 1993

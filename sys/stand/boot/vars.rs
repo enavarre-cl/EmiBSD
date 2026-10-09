@@ -1,4 +1,3 @@
-/*	$OpenBSD: vars.c,v 1.17 2023/03/13 20:19:22 miod Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998-2000 Michael Shalayeff

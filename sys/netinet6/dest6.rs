@@ -1,4 +1,3 @@
-/*	$OpenBSD: dest6.c,v 1.25 2026/05/26 20:27:27 bluhm Exp $	*/
 /*	$KAME: dest6.c,v 1.25 2001/02/22 01:39:16 itojun Exp $	*/
 /* <LICENSES> */
 /*

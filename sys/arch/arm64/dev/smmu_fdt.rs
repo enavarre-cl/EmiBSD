@@ -1,4 +1,3 @@
-/* $OpenBSD: smmu_fdt.c,v 1.13 2026/01/24 16:07:09 kettenis Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2021 Patrick Wildt <patrick@blueri.se>

@@ -1,5 +1,3 @@
-/* $OpenBSD: vgavar.h,v 1.13 2015/07/26 03:17:07 miod Exp $ */
-/* $NetBSD: vgavar.h,v 1.4 2000/06/17 07:11:50 soda Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 1995, 1996 Carnegie-Mellon University.

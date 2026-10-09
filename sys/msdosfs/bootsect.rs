@@ -1,5 +1,3 @@
-/*	$OpenBSD: bootsect.h,v 1.8 2025/08/01 13:00:18 jsg Exp $	*/
-/*	$NetBSD: bootsect.h,v 1.8 1997/10/17 11:23:29 ws Exp $	*/
 /* <LICENSES> */
 /*
  * Written by Paul Popelka (paulp@uts.amdahl.com)

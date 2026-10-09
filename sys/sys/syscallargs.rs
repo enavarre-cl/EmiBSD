@@ -1,5 +1,3 @@
-/*	$OpenBSD: syscallargs.h,v 1.289 2026/08/12 15:05:21 naddy Exp $	*/
-
 /* <CODE> */
 //! `<sys/syscallargs.h>`: system call argument lists.
 //!

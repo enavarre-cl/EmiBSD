@@ -1,5 +1,3 @@
-/*	$OpenBSD: ether.c,v 1.10 2014/11/19 20:28:56 miod Exp $	*/
-/*	$NetBSD: ether.c,v 1.8 1996/10/13 02:29:00 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1992 Regents of the University of California.

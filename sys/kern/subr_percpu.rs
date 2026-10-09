@@ -1,4 +1,3 @@
-/*	$OpenBSD: subr_percpu.c,v 1.11 2023/09/16 09:33:27 mpi Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 David Gwynne <dlg@openbsd.org>

@@ -1,5 +1,3 @@
-/*	$OpenBSD: fat.h,v 1.13 2021/07/11 04:34:13 jsg Exp $	*/
-/*	$NetBSD: fat.h,v 1.11 1997/10/17 11:23:49 ws Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (C) 1994, 1997 Wolfgang Solfrank.

@@ -1,4 +1,3 @@
-/*	$OpenBSD: pf_ioctl.c,v 1.434 2026/09/10 12:28:04 deraadt Exp $ */
 /* <LICENSES> */
 
 /*

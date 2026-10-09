@@ -1,4 +1,3 @@
-/* $OpenBSD: xhcireg.h,v 1.20 2024/09/04 07:54:52 mglocker Exp $ */
 /* <LICENSES> */
 /*-
  * Copyright (c) 2014 Martin Pieuchot. All rights reserved.

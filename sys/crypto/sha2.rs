@@ -1,5 +1,3 @@
-/*	$OpenBSD: sha2.h,v 1.5 2014/11/16 17:39:09 tedu Exp $	*/
-/*	$OpenBSD: sha2.c,v 1.21 2022/12/27 20:13:03 patrick Exp $	*/
 /* <LICENSES> */
 /*
  * FILE:	sha2.h

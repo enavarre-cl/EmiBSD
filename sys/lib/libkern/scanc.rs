@@ -1,5 +1,3 @@
-/*	$OpenBSD: scanc.c,v 1.5 2004/08/07 00:38:33 deraadt Exp $	*/
-/*	$NetBSD: scanc.c,v 1.3 1996/03/14 18:52:16 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989 Regents of the University of California.

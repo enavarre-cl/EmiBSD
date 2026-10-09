@@ -1,5 +1,3 @@
-/*	$OpenBSD: resourcevar.h,v 1.35 2024/10/24 23:24:58 jsg Exp $	*/
-/*	$NetBSD: resourcevar.h,v 1.12 1995/11/22 23:01:53 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993

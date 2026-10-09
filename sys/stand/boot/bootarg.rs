@@ -1,5 +1,3 @@
-/*	$OpenBSD: bootarg.c,v 1.12 2015/09/02 01:52:26 yasuoka Exp $	*/
-/*	$OpenBSD: bootarg.h,v 1.17 2020/05/25 15:49:42 deraadt Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1997,1998 Michael Shalayeff

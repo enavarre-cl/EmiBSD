@@ -1,5 +1,3 @@
-/*	$OpenBSD: subr_prf.c,v 1.107 2026/09/16 19:53:45 jan Exp $	*/
-/*	$NetBSD: subr_prf.c,v 1.45 1997/10/24 18:14:25 chuck Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1986, 1988, 1991, 1993

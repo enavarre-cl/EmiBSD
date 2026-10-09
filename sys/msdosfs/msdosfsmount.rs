@@ -1,5 +1,3 @@
-/*	$OpenBSD: msdosfsmount.h,v 1.23 2024/05/13 01:15:53 jsg Exp $	*/
-/*	$NetBSD: msdosfsmount.h,v 1.16 1997/10/17 11:24:24 ws Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (C) 1994, 1995, 1997 Wolfgang Solfrank.

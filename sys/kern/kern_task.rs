@@ -1,4 +1,3 @@
-/*	$OpenBSD: kern_task.c,v 1.36 2025/01/13 03:21:10 mvs Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2013 David Gwynne <dlg@openbsd.org>

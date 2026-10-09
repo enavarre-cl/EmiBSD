@@ -1,5 +1,3 @@
-/*	$OpenBSD: xform.h,v 1.32 2021/10/22 12:30:53 bluhm Exp $	*/
-/*	$OpenBSD: xform.c,v 1.61 2021/10/22 12:30:53 bluhm Exp $	*/
 /* <LICENSES> */
 /*
  * The author of this code is Angelos D. Keromytis (angelos@cis.upenn.edu)

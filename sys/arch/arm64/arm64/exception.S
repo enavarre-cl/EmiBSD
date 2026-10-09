@@ -1,4 +1,3 @@
-/* $OpenBSD: exception.S,v 1.17 2024/03/12 13:32:53 kettenis Exp $ */
 /*-
  * Copyright (c) 2014 Andrew Turner
  * All rights reserved.

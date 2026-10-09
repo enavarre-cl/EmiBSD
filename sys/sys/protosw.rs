@@ -1,5 +1,3 @@
-/*	$OpenBSD: protosw.h,v 1.73 2025/10/24 15:09:56 bluhm Exp $	*/
-/*	$NetBSD: protosw.h,v 1.10 1996/04/09 20:55:32 cgd Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1993

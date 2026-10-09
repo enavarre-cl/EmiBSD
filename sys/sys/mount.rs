@@ -1,5 +1,3 @@
-/*	$OpenBSD: mount.h,v 1.154 2026/06/10 00:04:38 beck Exp $	*/
-/*	$NetBSD: mount.h,v 1.48 1996/02/18 11:55:47 fvdl Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1989, 1991, 1993

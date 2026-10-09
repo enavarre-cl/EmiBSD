@@ -1,4 +1,3 @@
-/* $OpenBSD: acpidmar.c,v 1.20 2026/08/10 15:14:57 hshoexer Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2015 Jordan Hargrave <jordan_hargrave@hotmail.com>

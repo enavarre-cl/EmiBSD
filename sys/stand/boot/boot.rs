@@ -1,4 +1,3 @@
-/*	$OpenBSD: boot.c,v 1.57 2023/02/23 19:48:22 miod Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2003 Dale Rahn

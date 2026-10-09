@@ -1,5 +1,3 @@
-/*	$OpenBSD: kern_physio.c,v 1.49 2024/02/03 18:51:58 beck Exp $	*/
-/*	$NetBSD: kern_physio.c,v 1.28 1997/05/19 10:43:28 pk Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1994 Christopher G. Demetriou

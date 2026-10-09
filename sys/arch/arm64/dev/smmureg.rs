@@ -1,4 +1,3 @@
-/* $OpenBSD: smmureg.h,v 1.4 2025/08/24 19:49:16 patrick Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2021 Patrick Wildt <patrick@blueri.se>

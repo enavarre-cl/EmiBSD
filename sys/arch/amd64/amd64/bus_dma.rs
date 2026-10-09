@@ -1,5 +1,3 @@
-/*	$OpenBSD: bus_dma.c,v 1.62 2026/06/04 05:22:04 mlarkin Exp $	*/
-/*	$NetBSD: bus_dma.c,v 1.3 2003/05/07 21:33:58 fvdl Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1996, 1997, 1998 The NetBSD Foundation, Inc.

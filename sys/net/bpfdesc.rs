@@ -1,5 +1,3 @@
-/*	$OpenBSD: bpfdesc.h,v 1.50 2024/11/19 23:26:35 dlg Exp $	*/
-/*	$NetBSD: bpfdesc.h,v 1.11 1995/09/27 18:30:42 thorpej Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1990, 1991, 1993

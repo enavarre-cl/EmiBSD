@@ -1,5 +1,3 @@
-/*	$OpenBSD: ip6_id.c,v 1.20 2025/07/08 00:47:41 jsg Exp $	*/
-/*	$NetBSD: ip6_id.c,v 1.7 2003/09/13 21:32:59 itojun Exp $	*/
 /*	$KAME: ip6_id.c,v 1.8 2003/09/06 13:41:06 itojun Exp $	*/
 /* <LICENSES> */
 /*

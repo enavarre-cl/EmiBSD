@@ -1,4 +1,3 @@
-/*	$OpenBSD: vfs_vops.c,v 1.39 2026/06/10 00:04:38 beck Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2010 Thordur I. Bjornsson <thib@openbsd.org>

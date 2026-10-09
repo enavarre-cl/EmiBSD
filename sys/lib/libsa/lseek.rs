@@ -1,5 +1,3 @@
-/*	$OpenBSD: lseek.c,v 1.7 2003/08/11 06:23:09 deraadt Exp $	*/
-/*	$NetBSD: lseek.c,v 1.3 1996/06/21 20:09:03 pk Exp $	*/
 /* <LICENSES> */
 /*-
  * Copyright (c) 1993

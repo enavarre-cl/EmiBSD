@@ -1,4 +1,3 @@
-/* $OpenBSD: fuse_file.c,v 1.12 2026/06/20 13:45:13 helg Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2012-2013 Sylvestre Gallon <ccna.syl@gmail.com>

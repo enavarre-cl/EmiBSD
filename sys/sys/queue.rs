@@ -1,5 +1,3 @@
-/*	$OpenBSD: queue.h,v 1.47 2026/06/12 01:04:42 millert Exp $	*/
-/*	$NetBSD: queue.h,v 1.11 1996/05/16 05:17:14 mycroft Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993

@@ -1,4 +1,3 @@
-/*	$OpenBSD: crypto.c,v 1.92 2021/10/24 14:50:42 tobhe Exp $	*/
 /* <LICENSES> */
 /*
  * The author of this code is Angelos D. Keromytis (angelos@cis.upenn.edu)

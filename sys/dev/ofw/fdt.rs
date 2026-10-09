@@ -1,4 +1,3 @@
-/*	$OpenBSD: fdt.c,v 1.41 2026/07/19 03:15:38 jsg Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 2009 Dariusz Swiderski <sfires@sfires.net>

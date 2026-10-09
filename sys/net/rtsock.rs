@@ -1,5 +1,3 @@
-/*	$OpenBSD: rtsock.c,v 1.391 2026/04/17 18:30:45 claudio Exp $	*/
-/*	$NetBSD: rtsock.c,v 1.18 1996/03/29 00:32:10 cgd Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.

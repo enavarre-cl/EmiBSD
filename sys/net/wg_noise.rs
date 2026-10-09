@@ -1,5 +1,3 @@
-/*	$OpenBSD: wg_noise.h,v 1.3 2024/03/05 17:48:01 mvs Exp $ */
-/*	$OpenBSD: wg_noise.c,v 1.8 2025/10/27 17:36:33 mvs Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (C) 2015-2020 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.

@@ -1,6 +1,3 @@
-/*	$OpenBSD: usb_subr.c,v 1.168 2026/09/08 00:24:30 deraadt Exp $ */
-/*	$NetBSD: usb_subr.c,v 1.103 2003/01/10 11:19:13 augustss Exp $	*/
-/*	$FreeBSD: src/sys/dev/usb/usb_subr.c,v 1.18 1999/11/17 22:33:47 n_hibma Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.

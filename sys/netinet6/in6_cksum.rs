@@ -1,4 +1,3 @@
-/*	$OpenBSD: in6_cksum.c,v 1.18 2019/04/22 22:47:49 bluhm Exp $	*/
 /*	$KAME: in6_cksum.c,v 1.10 2000/12/03 00:53:59 itojun Exp $	*/
 /* <LICENSES> */
 /*

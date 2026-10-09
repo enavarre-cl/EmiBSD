@@ -1,4 +1,3 @@
-/* $OpenBSD: acpi.c,v 1.458 2026/07/31 18:17:22 jan Exp $ */
 /* <LICENSES> */
 /*
  * Copyright (c) 2005 Thorsten Lockert <tholo@sigmasoft.com>
