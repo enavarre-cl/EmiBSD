@@ -3082,12 +3082,12 @@ status = "inherited"
 [[module]]
 rust = "sys/lib/libkern/crc32c.rs"
 lz = ["sys/lib/libkern/crc32c.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/lib/libkern/explicit_bzero.rs"
 lz = ["sys/lib/libkern/explicit_bzero.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/lib/libkern/getsn.rs"
@@ -3117,12 +3117,12 @@ status = "inherited"
 [[module]]
 rust = "sys/lib/libkern/strlcat.rs"
 lz = ["sys/lib/libkern/strlcat.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/lib/libkern/strlcpy.rs"
 lz = ["sys/lib/libkern/strlcpy.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/lib/libkern/strncasecmp.rs"
@@ -3137,7 +3137,7 @@ status = "inherited"
 [[module]]
 rust = "sys/lib/libkern/timingsafe_bcmp.rs"
 lz = ["sys/lib/libkern/timingsafe_bcmp.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/lib/libsa/alloc.rs"

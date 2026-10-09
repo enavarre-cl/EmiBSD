@@ -49,11 +49,19 @@
 //! CRC-32C (Castagnoli, polynomial `0x1edc6f41`), one byte at a time through a 256-entry table.
 //!
 //! Upstream: sys/lib/libkern/crc32c.h @ 3ce1f3f79392
+//! LZ: sys/lib/libkern/crc32c.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The lookup table is computed at compile time from the reflected polynomial (`0x82f63b78`)
 //!   instead of being spelled out; `just test-ref` checks all 256 entries against the header.
 //! - `crc32c_byte` is private: the header exposes it only as an inline helper of `crc32c`.
+//!
+//! ## Redesign
+//! - Tests and one cast only. `crc32c_byte` widens its byte with `u32::from` (no `as`), so it is
+//!   a plain `fn` instead of a `const fn` (`From` is not const); nothing uses it in a const
+//!   context. The table is still built by `build_table`.
+//! - New tests: the RFC 3720 appendix B.4 vectors, chunk splits at every offset, a table
+//!   cross-check against a bitwise reference CRC.
 
 /// The CRC-32C polynomial `0x1edc6f41`, bit-reflected for the right-shifting table algorithm.
 const CRC32C_POLY_REFLECTED: u32 = 0x82f6_3b78;
@@ -82,8 +90,8 @@ const fn build_table() -> [u32; 256] {
 }
 
 /// `crc32c_byte`: folds one byte into the running (inverted) CRC.
-const fn crc32c_byte(ccrc: u32, b: u8) -> u32 {
-    CRC32C_LOOKUP[((ccrc ^ b as u32) & 0xff) as usize] ^ (ccrc >> 8)
+fn crc32c_byte(ccrc: u32, b: u8) -> u32 {
+    CRC32C_LOOKUP[usize::from((ccrc ^ u32::from(b)) as u8)] ^ (ccrc >> 8)
 }
 
 /// The CRC-32C of `data`, continuing from `crc` (pass `0` to start). The running value is
@@ -121,6 +129,64 @@ mod tests {
         assert_eq!(crc32c(0, b""), 0);
         assert_eq!(crc32c(0, &[0u8; 32]), 0x8a91_36aa);
         assert_eq!(crc32c(0, &[0xffu8; 32]), 0x62a8_ab43);
+    }
+
+    #[test]
+    fn rfc3720_appendix_b4_vectors() {
+        let inc: std::vec::Vec<u8> = (0..32).collect();
+        let dec: std::vec::Vec<u8> = (0..32).rev().collect();
+        assert_eq!(crc32c(0, &inc), 0x46dd_794e);
+        assert_eq!(crc32c(0, &dec), 0x113f_db5c);
+        // iSCSI SCSI Read (10) command PDU.
+        let pdu: [u8; 48] = [
+            0x01, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x14,
+            0x00, 0x00, 0x00, 0x18, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(crc32c(0, &pdu), 0xd996_3a56);
+    }
+
+    #[test]
+    fn every_split_point_chains() {
+        let data: std::vec::Vec<u8> = (0..=255u8)
+            .map(|i| i.wrapping_mul(7).wrapping_add(3))
+            .collect();
+        let whole = crc32c(0, &data);
+        for at in 0..=data.len() {
+            let (a, b) = data.split_at(at);
+            assert_eq!(crc32c(crc32c(0, a), b), whole, "split at {at}");
+        }
+    }
+
+    #[test]
+    fn matches_a_bitwise_reference() {
+        fn reference(data: &[u8]) -> u32 {
+            let mut crc = 0xffff_ffffu32;
+            for &b in data {
+                crc ^= u32::from(b);
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 {
+                        (crc >> 1) ^ 0x82f6_3b78
+                    } else {
+                        crc >> 1
+                    };
+                }
+            }
+            !crc
+        }
+        let mut x = 0x2545_f491u32;
+        for len in 0..200usize {
+            let data: std::vec::Vec<u8> = (0..len)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 17;
+                    x ^= x << 5;
+                    x as u8
+                })
+                .collect();
+            assert_eq!(crc32c(0, &data), reference(&data), "len {len}");
+        }
     }
 
     #[test]

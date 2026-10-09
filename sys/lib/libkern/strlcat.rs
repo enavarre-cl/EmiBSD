@@ -36,10 +36,16 @@
 //! `strlcat(3)`: size-bounded string concatenation.
 //!
 //! Upstream: sys/lib/libkern/strlcat.c @ 3ce1f3f79392
+//! LZ: sys/lib/libkern/strlcat.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - Operates on byte slices: the destination size is `dst.len()`, not a separate argument, and
 //!   `src` ends at its first NUL or at `src.len()`, whichever comes first.
+//!
+//! ## Redesign
+//! - Tests only: a property test against a model written from the man page (append
+//!   `min(strlen(src), size - strlen(dst) - 1)` bytes, terminate, return
+//!   `strlen(src) + min(size, strlen(dst))`), including a destination with no NUL within its size.
 
 use crate::strnlen;
 
@@ -96,6 +102,43 @@ mod tests {
                 &dst[..],
                 want_dst,
                 "contents after strlcat({initial:?}, {src:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn matches_the_model_on_random_input() {
+        let mut x = 0x9e37_79b9u32;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        for _ in 0..3000 {
+            let size = (next() % 13) as usize;
+            let init: std::vec::Vec<u8> = (0..size).map(|_| (next() % 4) as u8).collect();
+            let srclen = (next() % 10) as usize;
+            let src: std::vec::Vec<u8> = (0..srclen).map(|_| (next() % 3) as u8).collect();
+
+            let mut dst = init.clone();
+            let ret = strlcat(&mut dst, &src);
+
+            let dlen = init.iter().position(|&b| b == 0).unwrap_or(size);
+            let slen = src.iter().position(|&b| b == 0).unwrap_or(src.len());
+            assert_eq!(ret, dlen + slen, "return, dst {init:?} src {src:?}");
+            if dlen == size {
+                assert_eq!(dst, init, "no NUL within size: untouched");
+                continue;
+            }
+            let n = slen.min(size - dlen - 1);
+            assert_eq!(&dst[..dlen], &init[..dlen]);
+            assert_eq!(&dst[dlen..dlen + n], &src[..n]);
+            assert_eq!(dst[dlen + n], 0);
+            assert_eq!(
+                &dst[dlen + n + 1..],
+                &init[dlen + n + 1..],
+                "tail untouched"
             );
         }
     }
