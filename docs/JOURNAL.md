@@ -53,3 +53,54 @@ Boundary: the `docs: N0 met` commit. Range `lz-origin..` that commit (f5985f1d05
 Effort: _(user)_
 
 Time: _(user)_
+
+## N1 Leaves
+
+Boundary: the `docs: N1 met` commit. Range `8e090e1..` that commit (N1's libkern and libz
+commits, 33785a0..d6cfca6, landed just before N0's close and belong here).
+
+- Went well: one subagent per area (libkern on Sonnet; libz, crypto-hash and crypto-cipher on
+  Opus), each in its own worktree with a brief and a handoff note, and an independent Opus
+  reviewer per security-sensitive branch. Every output stayed bit-identical: zlib's byte-for-byte
+  vectors, the standards' known-answer vectors (FIPS 180-4, RFC 1321, 2104/4231, 7693, FIPS 197,
+  SP 800-38D, RFC 8439, 7748, FIPS 81, RFC 2144) and `diff-openbsd` equal on both archs after
+  every branch. libz lost its two `unsafe` (fallible allocation through `Vec::try_reserve_exact`
+  and `Box<[T; 1]>`). The reviews found an inherited gap and closed it: LZ's cryptosoft "wiped"
+  key schedules and HMAC states by storing an enum tag, leaving keys in freed session memory;
+  every schedule and keyed context now zeroes itself on drop, as the C's `explicit_bzero` does.
+- Failed: the first reviewer's trailer was pasted with its heading ("Security-Review: (trailer
+  text) Security-Review: ...") into the seven published crypto-hash commits (8abd30a..417452c);
+  left as published. A subagent's rebase left intermediate commits unbuilt; a per-commit
+  `cargo check` on host, amd64 and arm64 proved all twelve. The cipher reviewer approved with
+  four minor findings (a zero-round AES panic, three contexts without a wiping `Drop`, a stack
+  copy of softraid's mask-key schedule, `PartialEq` on a key schedule); fixed in five commits and
+  re-reviewed. The worktrees started at `lz-origin`, not `main`: every agent reset to `main`.
+- Idioms: three rows in docs/IDIOMS.md: a C status code -> `Result` (libz), a hash/MAC context
+  with free functions -> a type with `new`/`update`/`finalize(&mut self)` that wipes in place
+  (`finalize(self)` would wipe a copy), and a key schedule wiped by its own `Drop`, no longer
+  `Copy`.
+- Rules: none changed; the brief for crypto (security-review.md applied in full) is the pattern
+  for N8.
+- Numbers:
+  - `cargo xtask unsafe-report`: lib/libkern 10 -> 10, lib/libz 2 -> 0, crypto 5 -> 5; kernel
+    total 10357 -> 10355.
+  - `cargo xtask lz status`: 37 redesigned, 26 adapted (call sites only), 965 inherited; 111
+    `[[module.fn]]` rows. libkern 5 redesigned, libz 10 (adler32 and crc32 for their tests),
+    crypto 22 (spr, sk and podd stay inherited: constant tables).
+  - Host tests (`just ci`): 2605 -> 2695 passed, 0 failed, 229 ignored; libz alone 85 -> 123
+    (the user found 90 too few: dictionaries, the zlib and raw wrappers, every truncation and
+    single-bit flip of eight streams, byte-at-a-time streaming with every flush mode,
+    inflateBack, 60480 init parameter combinations, deflateBound, resets, checksums; no bug).
+  - `just ci`: 67 of 67 smokes after each branch (1131-1404 s); at the close smoke-uhci failed
+    once on arm64 with the inherited EDK2 UhciDxe ASSERT before the kernel, then passed on both
+    archs, as did the checks after it; `just ci-full`: green in two parts: 66 of 67 smokes on `-smp 4`; `smoke-softraid` hung 2 h 30 min in
+    macOS `_dyld_start` (xtask never reached `main`, QEMU never started, so its own time limit never
+    ran), was killed and passed alone on 4 CPUs; then the checks and the installer end to end on
+    amd64, arm64 and arm64 ACPI (install 98, 155 and 162 s, each booted; 554 s).
+  - `just diff-openbsd`: amd64 and arm64, 102 steps, 99 equal, 3 expected, 0 unexpected.
+  - LZ sync: no LZ commit after 44edb2c; `lz drift --security` empty.
+  - Commits: 30 (`git log --oneline 8e090e1..` this commit, plus 33785a0..d6cfca6).
+
+Effort: _(user)_
+
+Time: _(user)_
