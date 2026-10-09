@@ -3394,7 +3394,8 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/inflate.rs"
 lz = ["sys/lib/libz/inflate.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/lib/libz/zopenbsd.rs"]
 license = "zlib"
 
 [[module]]
@@ -3418,13 +3419,14 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/zlib.rs"
 lz = ["sys/lib/libz/zlib.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/lib/libz/zopenbsd.rs"]
 license = "zlib"
 
 [[module]]
 rust = "sys/lib/libz/zopenbsd.rs"
 lz = ["sys/lib/libz/zopenbsd.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/lib/libz/zutil.rs"

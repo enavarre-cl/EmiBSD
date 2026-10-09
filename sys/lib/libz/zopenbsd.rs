@@ -36,6 +36,7 @@
 //! Space allocation and freeing routines for use by zlib routines in the kernel.
 //!
 //! Upstream: sys/lib/libz/zopenbsd.c @ 3ce1f3f79392
+//! LZ: sys/lib/libz/zopenbsd.rs@f5985f1d055a
 //!
 //! The C's `zcalloc` is `mallocarray(items, size, M_DEVBUF, M_NOWAIT)`: it may fail, and zlib
 //! turns the failure into `Z_MEM_ERROR`. The Rust functions keep that: they allocate through
@@ -49,10 +50,39 @@
 //!   safer); [`zcalloc_box`] allocates one value, for the stream states. `M_DEVBUF` has no
 //!   counterpart: the global allocator has one malloc type.
 //! - `zcfree` drops what `zcalloc` returned; the size the C passes to free(9) is the `Vec`'s.
+//!
+//! ## Redesign
+//! - LZ's `zcalloc_box` allocated with `alloc::alloc::alloc`, wrote the value through the raw
+//!   pointer and rebuilt a `Box` with `Box::from_raw` (two `unsafe` blocks), because
+//!   `Box::try_new` is not stable. It now reserves a one-element `Vec` with
+//!   `try_reserve_exact` (the fallible step, `None` on failure as before), pushes the value
+//!   and turns the vector into a `Box<[T; 1]>` in place (its capacity is exactly one, so the
+//!   conversion never reallocates). [`ZBox`] wraps that box and dereferences to the one
+//!   value, so the stream states keep the shape of a `Box<T>`. No `unsafe` is left.
 
-use alloc::alloc::{Layout, alloc};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::ops::{Deref, DerefMut};
+
+/// One value on the heap, allocated fallibly by [`zcalloc_box`]: what `ZALLOC` returns for a
+/// stream state. It dereferences to the value and frees it when dropped.
+pub struct ZBox<T>(Box<[T; 1]>);
+
+impl<T> Deref for ZBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        let [value] = &*self.0;
+        value
+    }
+}
+
+impl<T> DerefMut for ZBox<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        let [value] = &mut *self.0;
+        value
+    }
+}
 
 /// `zcalloc`: `items` elements of `T`, zero-filled (`T::default()`), or `None` when the
 /// allocator has no memory (the C's `M_NOWAIT` returning `NULL`).
@@ -65,25 +95,13 @@ pub fn zcalloc<T: Copy + Default>(items: usize) -> Option<Vec<T>> {
 
 /// `ZALLOC` of one object: `value` moved to the heap, or `None` when the allocator has no
 /// memory.
-pub fn zcalloc_box<T>(value: T) -> Option<Box<T>> {
-    let layout = Layout::new::<T>();
-    if layout.size() == 0 {
-        // A zero-sized value needs no memory; Box::new does not allocate for it.
-        return Some(Box::new(value));
-    }
-    // SAFETY: `layout` has a non-zero size (checked above), as `alloc` requires.
-    let p = unsafe { alloc(layout) }.cast::<T>();
-    if p.is_null() {
-        return None;
-    }
-    // SAFETY: `p` is non-null, was just allocated by the global allocator with
-    // `Layout::new::<T>()` (so it is valid for writes of a `T` and aligned), and nothing else
-    // refers to it. Writing `value` initialises it, which is what `Box::from_raw` requires of
-    // memory allocated that way; the Box then owns and frees it with the same layout.
-    unsafe {
-        p.write(value);
-        Some(Box::from_raw(p))
-    }
+pub fn zcalloc_box<T>(value: T) -> Option<ZBox<T>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(1).ok()?;
+    v.push(value);
+    // The capacity is one (zero-sized values have no allocation at all), so the conversion
+    // reuses the allocation; it cannot fail with exactly one element.
+    Box::<[T; 1]>::try_from(v).ok().map(ZBox)
 }
 
 /// `zcfree`: free what [`zcalloc`] or [`zcalloc_box`] returned.
@@ -107,10 +125,23 @@ mod tests {
 
     #[test]
     fn zcalloc_box_holds_the_value() {
-        let b = zcalloc_box([7u64; 64]).unwrap();
+        let mut b = zcalloc_box([7u64; 64]).unwrap();
         assert!(b.iter().all(|&x| x == 7));
+        b[3] = 9;
+        assert_eq!(b[3], 9);
         assert_eq!(*zcalloc_box(()).unwrap(), ());
         zcfree(b);
+    }
+
+    #[test]
+    fn zcalloc_box_owns_and_drops_its_value() {
+        use std::rc::Rc;
+        let shared = Rc::new(5u8);
+        let b = zcalloc_box(Rc::clone(&shared)).unwrap();
+        assert_eq!(Rc::strong_count(&shared), 2);
+        assert_eq!(**b, 5);
+        zcfree(b);
+        assert_eq!(Rc::strong_count(&shared), 1);
     }
 
     #[test]

@@ -173,12 +173,12 @@ pub(crate) enum InternalState {
     #[default]
     None,
     /// A compression stream (`deflate.rs`).
-    Deflate(alloc::boxed::Box<crate::deflate::DeflateState>),
+    Deflate(crate::zopenbsd::ZBox<crate::deflate::DeflateState>),
     /// A decompression stream (`inflate.rs`).
-    Inflate(alloc::boxed::Box<crate::inflate::InflateState>),
+    Inflate(crate::zopenbsd::ZBox<crate::inflate::InflateState>),
     /// A call-back decompression stream (`infback.rs`). The C's `inflateStateCheck` rejects
     /// it, so it is not an `Inflate`.
-    InflateBack(alloc::boxed::Box<crate::inflate::InflateState>),
+    InflateBack(crate::zopenbsd::ZBox<crate::inflate::InflateState>),
 }
 
 /// `struct z_stream_s` (`z_stream`): a compression or decompression stream.

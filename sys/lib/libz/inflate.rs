@@ -119,7 +119,6 @@
 
 #![allow(non_snake_case)] // zlib's API names are camelCase in C (inflateInit2_, inflateReset2)
 
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::adler32::adler32;
@@ -131,7 +130,7 @@ use crate::zlib::{
     Z_NEED_DICT, Z_OK, Z_STREAM_END, Z_STREAM_ERROR, Z_TREES, Z_VERSION_ERROR, ZLIB_VERSION,
     ZStream,
 };
-use crate::zopenbsd::{zcalloc, zcalloc_box, zcfree};
+use crate::zopenbsd::{ZBox, zcalloc, zcalloc_box, zcfree};
 use crate::zutil::{DEF_WBITS, SLOW, SMALL};
 
 /// `inflate_mode`: the possible inflate modes between `inflate()` calls. The values start at
@@ -305,7 +304,7 @@ pub(crate) struct InflateState {
 impl InflateState {
     /// `ZALLOC` + `zmemzero` of a state: everything zero, no window, mode `HEAD`. `None` when
     /// the allocator has no memory.
-    pub(crate) fn new() -> Option<Box<Self>> {
+    pub(crate) fn new() -> Option<ZBox<Self>> {
         let lens = zcalloc(320)?;
         let work = zcalloc(288)?;
         let codes = zcalloc(ENOUGH)?;
@@ -357,7 +356,7 @@ impl InflateState {
 
     /// The `inflateCopy` copy of the state: new buffers with the same contents (of the
     /// window, its valid bytes). `None` when the allocator has no memory.
-    fn try_clone(&self) -> Option<Box<Self>> {
+    fn try_clone(&self) -> Option<ZBox<Self>> {
         let mut lens = zcalloc(self.lens.len())?;
         lens.copy_from_slice(&self.lens);
         let mut work = zcalloc(self.work.len())?;
