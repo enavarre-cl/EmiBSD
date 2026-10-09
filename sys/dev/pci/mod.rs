@@ -44,6 +44,7 @@ pub mod gcu_reg;
 pub mod gcu_var;
 pub mod ichiic;
 pub mod ichreg;
+pub mod if_dc_pci;
 pub mod if_em;
 pub mod if_em_hw;
 pub mod if_em_osdep;

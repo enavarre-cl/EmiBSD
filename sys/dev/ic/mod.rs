@@ -28,6 +28,7 @@ pub mod ax88190reg;
 pub mod com;
 pub mod comreg;
 pub mod comvar;
+pub mod dc;
 pub mod dcreg;
 pub mod dp8390;
 pub mod dp8390reg;

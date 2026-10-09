@@ -2054,6 +2054,12 @@ lz = ["sys/dev/ic/comvar.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ic/dc.rs"
+lz = ["sys/dev/ic/dc.rs"]
+status = "inherited"
+notes = "M16c: license: BSD-4 (Bill Paul), kept whole; the whole file (EEPROM and bit-banged MII access, the PNIC/AL981 PHY paths, the 21143/ADMtek/ASIX/Xircom filters, dc_setcfg, SROM leaf parsing, rings, PNIC rx bug workaround, rxeof/txeof/tick/intr/start/init/ioctl/watchdog/stop/activate/detach); not MP-safe as in C (if_start, IPL_NET); deviations: dc_read_eeprom fills a byte slice; mac_offset read into a zeroed word; Conexant address from the SROM (the C's &sc->dc_srom + off reads the softc); ASIX PAR1 word from the last two address bytes and two zeros; SROM reads bounds-checked (0 past the end, dc_apply_fixup stops); dc_pnic_rx_bug_war and dc_rxeof bounded by the PNIC buffer and the cluster; dc_detach unmaps the whole list (the C passes nseg as size); BUS_DMA_OVERRUN 0; pure helpers host-tested (dc_crc_le_bits, dc_eeprom_word_bytes, dc_srom_blocks, dc_leaf_mii_info, dc_fixup_words, dc_sia_media, dc_pnic_salvage); smoke-dc: QEMU's tulip behaves as on OpenBSD 8.0 (attach, lxtphy0, tx idle messages, no frame received)"
+
+[[module]]
 rust = "sys/dev/ic/dcreg.rs"
 lz = ["sys/dev/ic/dcreg.rs"]
 status = "inherited"
@@ -2462,6 +2468,12 @@ status = "inherited"
 rust = "sys/dev/pci/ichreg.rs"
 lz = ["sys/dev/pci/ichreg.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/pci/if_dc_pci.rs"
+lz = ["sys/dev/pci/if_dc_pci.rs"]
+status = "inherited"
+notes = "M16c: license: BSD-4 (Bill Paul), kept whole; the whole file: dc_devs[] (no terminator), dc_pci_match (pure dc_pci_match_id, host-tested), dc_pci_attach (I/O space: DC_USEIOSPACE; chip switch as dc_pci_chip), dc_pci_detach (Result), dc_pci_ca with dc_activate; ca_devsize is sizeof(struct dc_pci_softc) (the C's sizeof(struct dc_softc) is a bug); __sparc64__ and SRM_MEDIA not compiled; dc* at pci? on amd64 (GENERIC; cardbus out of scope)"
 
 [[module]]
 rust = "sys/dev/pci/if_em.rs"
