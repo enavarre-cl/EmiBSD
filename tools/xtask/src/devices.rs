@@ -64,7 +64,11 @@
 //!   (`azalia(4)`), `AC97` (`auich(4)`) or (M16b) a `usb-audio` speaker on the
 //!   [`UsbHc`] bus (full speed: `xhci`, `uhci` or `ohci`) (`uaudio(4)`; the controller comes with it, the stick and the `usb-kbd` only with
 //!   `--usb`).
-//! - `--speakers` (with `--audio`): QEMU's `coreaudio` backend instead of `wav`, so what the
+//! - `--audio es1370` (M16d, amd64): QEMU's `ES1370`, an Ensoniq AudioPCI (`eap(4)`), into
+//!   the same backend. `--pcspk` (M16d, amd64): the PC speaker (`pcppi(4)`, i8254 channel 2
+//!   gated by port 0x61) is heard through the same backend (`-machine pcspk-audiodev=snd0`),
+//!   with or without `--audio`, so `--expect-tone` checks the console bell.
+//! - `--speakers` (with `--audio` or `--pcspk`): QEMU's `coreaudio` backend instead of `wav`, so what the
 //!   guest plays comes out of the Mac's speakers; nothing is recorded, so it excludes
 //!   `--expect-tone` (`just play-audio`, by ear, outside `smoke`).
 //! - `--expect-tone`: after a successful run, the WAV file must hold a tone: at least a
@@ -116,6 +120,8 @@ pub(crate) enum Audio {
     Ac97,
     /// `usb-audio` on the [`UsbHc`] bus: `uaudio(4)`.
     Usb,
+    /// `ES1370`, an Ensoniq AudioPCI: `eap(4)` (M16d, amd64).
+    Es1370,
 }
 
 /// The USB host controller `--usb-hc` puts the devices on.
@@ -192,8 +198,10 @@ pub(crate) struct Devices {
     pub usb_serial_send: Vec<(String, String)>,
     /// `--expect-usb-serial TEXT`, each.
     pub expect_usb_serial: Vec<String>,
-    /// `--audio hda|ac97|usb`.
+    /// `--audio hda|ac97|usb|es1370`.
     pub audio: Option<Audio>,
+    /// `--pcspk` (M16d): the PC speaker's sound goes to the audio backend.
+    pub pcspk: bool,
     /// `--expect-tone`.
     pub expect_tone: bool,
     /// `--speakers`.
@@ -205,7 +213,8 @@ static DEVICES: OnceLock<Devices> = OnceLock::new();
 /// Parses `--usb`, `--usb-hc <xhci|ehci|uhci|ohci>`, `--usb-mouse`, `--usb-tablet`,
 /// `--usb-wacom-tablet`, `--usb-ccid`, `--usb-net`, `--usb-serial`,
 /// `--usb-serial-send-after`/`--usb-serial-send`, `--expect-usb-serial`,
-/// `--audio <hda|ac97|usb>`, `--speakers` and `--expect-tone` and records them for the run.
+/// `--audio <hda|ac97|usb|es1370>`, `--pcspk`, `--speakers` and `--expect-tone` and records
+/// them for the run.
 pub(crate) fn set_from_args(args: &[&str]) -> Result<()> {
     let _ = DEVICES.set(parse(args)?);
     Ok(())
@@ -219,18 +228,29 @@ fn parse(args: &[&str]) -> Result<Devices> {
             Some("hda") => Some(Audio::Hda),
             Some("ac97") => Some(Audio::Ac97),
             Some("usb") => Some(Audio::Usb),
+            Some("es1370") => Some(Audio::Es1370),
             other => {
-                return Err(format!("--audio {other:?}: expected `hda`, `ac97` or `usb`").into());
+                return Err(format!(
+                    "--audio {other:?}: expected `hda`, `ac97`, `usb` or `es1370`"
+                )
+                .into());
             }
         },
     };
+    let pcspk = args.contains(&"--pcspk");
+    let arm64 = args.windows(2).any(|w| w == ["--arch", "arm64"]);
+    if arm64 && (pcspk || audio == Some(Audio::Es1370)) {
+        return Err(
+            "--pcspk and --audio es1370: amd64 only (arm64's GENERIC has no pcppi or eap)".into(),
+        );
+    }
     let expect_tone = args.contains(&"--expect-tone");
-    if expect_tone && audio.is_none() {
-        return Err("--expect-tone needs --audio".into());
+    if expect_tone && audio.is_none() && !pcspk {
+        return Err("--expect-tone needs --audio or --pcspk".into());
     }
     let speakers = args.contains(&"--speakers");
-    if speakers && audio.is_none() {
-        return Err("--speakers needs --audio".into());
+    if speakers && audio.is_none() && !pcspk {
+        return Err("--speakers needs --audio or --pcspk".into());
     }
     if speakers && expect_tone {
         return Err("--speakers records nothing for --expect-tone".into());
@@ -274,6 +294,7 @@ fn parse(args: &[&str]) -> Result<Devices> {
         usb_serial_send,
         expect_usb_serial,
         audio,
+        pcspk,
         expect_tone,
         speakers,
     })
@@ -406,7 +427,7 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
             format!("usb-serial,chardev=usbser0,bus={USB_HC_ID}.0,always-plugged=on"),
         ]);
     }
-    if let Some(audio) = d.audio {
+    if d.audio.is_some() || d.pcspk {
         args.push("-audiodev".to_string());
         if d.speakers {
             args.push("coreaudio,id=snd0".to_string());
@@ -417,6 +438,12 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
             }
             args.push(format!("wav,id=snd0,path={}", wav.display()));
         }
+        if d.pcspk {
+            // QEMU merges the `-machine` options: this adds to the `-M q35` (or `pc`) given.
+            args.extend(["-machine", "pcspk-audiodev=snd0"].map(String::from));
+        }
+    }
+    if let Some(audio) = d.audio {
         match audio {
             Audio::Hda => args.extend(
                 [
@@ -432,6 +459,7 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
                 "-device".to_string(),
                 format!("usb-audio,bus={USB_HC_ID}.0,audiodev=snd0"),
             ]),
+            Audio::Es1370 => args.extend(["-device", "ES1370,audiodev=snd0"].map(String::from)),
         }
     }
     Ok(args)
@@ -479,6 +507,31 @@ pub(crate) fn after_smoke(image: &Path) -> Result<()> {
         .into());
     }
     Ok(())
+}
+
+/// `diff-openbsd probe` (M16d): what the WAV file of `image` holds, printed whatever it is
+/// (a probe records what OpenBSD does; nothing is required).
+pub(crate) fn probe_report(image: &Path) {
+    let d = devices();
+    if d.audio.is_none() && !d.pcspk {
+        return;
+    }
+    let wav = wav_path(image);
+    match fs::read(&wav)
+        .map_err(|e| e.to_string())
+        .and_then(|b| tone(&b))
+    {
+        Ok(t) => println!(
+            "xtask: {}: {} Hz, {} channel(s), {} frames, {} loud sample(s), peak {}",
+            wav.display(),
+            t.rate,
+            t.channels,
+            t.frames,
+            t.loud,
+            t.peak
+        ),
+        Err(e) => println!("xtask: {}: {e}", wav.display()),
+    }
 }
 
 /// What [`tone`] measured in a WAV file.
@@ -690,6 +743,17 @@ mod tests {
         assert!(parse(&["--audio", "sb"]).is_err());
         assert!(parse(&["--speakers"]).is_err());
         assert!(parse(&["--audio", "hda", "--speakers", "--expect-tone"]).is_err());
+    }
+
+    #[test]
+    fn pcspk_and_es1370() {
+        let d = parse(&["--arch", "amd64", "--pcspk", "--expect-tone"]).unwrap();
+        assert!(d.pcspk && d.expect_tone && d.audio.is_none());
+        let d = parse(&["--audio", "es1370", "--expect-tone"]).unwrap();
+        assert_eq!(d.audio, Some(Audio::Es1370));
+        assert!(!d.pcspk);
+        assert!(parse(&["--arch", "arm64", "--pcspk"]).is_err());
+        assert!(parse(&["--arch", "arm64", "--audio", "es1370"]).is_err());
     }
 
     #[test]

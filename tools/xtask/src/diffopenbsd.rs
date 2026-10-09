@@ -23,7 +23,10 @@
 //! ```text
 //! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run | powerbtn]
 //! cargo xtask diff-openbsd --arch A [--ipmi] [--nic MODEL] [--usb] [--usb-hc xhci|ehci|uhci|ohci] [--ukc CMD]...
-//!                           [--machine pc] [--ide|--megasas|...|--floppy FILE]... [--sh CMD] probe
+//!                           [--virtio-rng] [--balloon] [--virtio-gpu] [--parallel FILE] [--pcspk]
+//!                           [--audio MODEL] [--sendkey-after LINE --sendkeys KEYS]...
+//!                           [--monitor-after LINE --monitor CMD]... [--machine pc]
+//!                           [--ide|--megasas|...|--floppy FILE]... [--sh CMD] probe
 //! ```
 //!
 //! - `fetch`: the OpenBSD -current snapshot recorded in `tools/xtask/openbsd-snapshot.toml`
@@ -63,7 +66,14 @@
 //!   OpenBSD user enables a GENERIC line marked `disable`. It is how M16e checked what
 //!   OpenBSD 8.0 does with ichiic(4) under OVMF and with ipmi(4) on QEMU's simulated BMC,
 //!   and M16b what it does with ehci(4) on QEMU's `usb-ehci`, and M16c what its network
-//!   drivers do on QEMU's NIC models.
+//!   drivers do on QEMU's NIC models. M16d added the console, virtio and legacy devices
+//!   (`hwopts.rs`: `--virtio-rng`, `--balloon`, `--virtio-gpu`, `--parallel FILE`;
+//!   `devices.rs`: `--pcspk`, `--audio es1370`) and the smokes' monitor pairs: while `--sh`
+//!   runs, each `--sendkey-after LINE --sendkeys KEYS` and `--monitor-after LINE --monitor
+//!   CMD` fires once LINE is in its output (the VM's monitor is then the smokes' socket,
+//!   `hwopts::poll_monitor`); afterwards the probe prints what the `--parallel` file holds
+//!   and what the WAV file of `--audio`/`--pcspk` measures (`openbsd-probe.wav`), without
+//!   requiring anything.
 //!
 //! The OpenBSD binaries are test fixtures under `target/` only: never committed, never
 //! redistributed. Per-run files (logs, scripts, reports, the OpenBSD VM's variable store) go
@@ -139,8 +149,10 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
             "--sh" => sh = Some(*it.next().ok_or("--sh needs a value")?),
             // A device option: `hwopts::set` or `devices::set_from_args` (main) has recorded
             // it; `probe` adds the device.
-            "--ipmi" | "--usb" => {}
-            "--usb-hc" | "--nic" | "--machine" => {
+            "--ipmi" | "--usb" | "--virtio-rng" | "--balloon" | "--virtio-gpu" | "--pcspk"
+            | "--expect-tone" => {}
+            "--usb-hc" | "--nic" | "--audio" | "--parallel" | "--monitor-after" | "--monitor"
+            | "--sendkey-after" | "--sendkeys" | "--machine" => {
                 it.next();
             }
             // M16a: a storage controller and its disk (`storage.rs`).
@@ -594,7 +606,11 @@ fn powerbtn(root: &Path, arch: Arch) -> Result<()> {
 /// `hwopts` recorded, after the UKC commands `ukc` (none: a plain boot).
 fn probe(root: &Path, arch: Arch, ukc: &[&str], sh: Option<&str>) -> Result<()> {
     let work = work_dir(root, arch)?;
-    let sock = std::env::temp_dir().join(format!("emibsd-obsd-{}.sock", std::process::id()));
+    // With `--monitor-after`/`--sendkey-after` (M16d) the monitor is the smokes' socket, so
+    // `hwopts::poll_monitor` drives it while `sh` runs.
+    let sock = crate::hwopts::monitor_sock_path().unwrap_or_else(|| {
+        std::env::temp_dir().join(format!("emibsd-obsd-{}.sock", std::process::id()))
+    });
     let _ = fs::remove_file(&sock);
     let mut cmd = openbsd_qemu(root, arch, &Boot::Probe(&sock))?;
     crate::hwopts::add_devices(&mut cmd, root, arch)?;
@@ -619,11 +635,31 @@ fn probe(root: &Path, arch: Arch, ukc: &[&str], sh: Option<&str>) -> Result<()> 
         "dmesg; {} 2>&1; echo @@PROBED\n",
         sh.unwrap_or("true")
     ))?;
-    vm.wait_for("@@PROBED\r\n", boot::time_limit(Duration::from_secs(300)))?;
+    // The monitor commands and keys wait for their lines in what `sh` prints.
+    let limit = boot::time_limit(Duration::from_secs(300));
+    let started = Instant::now();
+    while vm
+        .wait_for("@@PROBED\r\n", Duration::from_millis(500))
+        .is_err()
+    {
+        if started.elapsed() > limit || vm.exited() {
+            return Err(format!(
+                "openbsd-{} probe: QEMU exited or no @@PROBED in {}s",
+                arch.name(),
+                limit.as_secs()
+            )
+            .into());
+        }
+        crate::hwopts::poll_monitor(&vm.since(mark))?;
+    }
     vm.wait_for("# ", Duration::from_secs(60))?;
     let out = vm.since(mark);
     let _ = fs::write(&log, vm.text());
     let _ = fs::remove_file(&sock);
+    // What the parallel port printed and the tone in the WAV file (M16d), reported, not
+    // required: a probe records what OpenBSD does.
+    crate::hwopts::probe_report();
+    crate::devices::probe_report(&work.join("openbsd-probe.img"));
     println!(
         "xtask: openbsd-{} probe ({}):\n{}",
         arch.name(),

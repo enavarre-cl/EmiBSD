@@ -169,6 +169,21 @@
 //!   `TPM2_Startup(CLEAR)` once QEMU initialises it, so the TPM answers commands whatever the
 //!   firmware does. Refused on arm64 (its GENERIC has no tpm) and outside `qemu` and
 //!   `smoke`, which start swtpm.
+//! - `--virtio-rng`, `--balloon`, `--virtio-gpu` (`qemu`, `smoke`, M16d, both archs): QEMU's
+//!   virtio entropy device (viornd(4)), memory balloon (viomb(4)) and GPU (viogpu(4)), each a
+//!   `virtio-*-pci` on amd64 (with `--iommu`'s properties) and on arm64 `--acpi`, a
+//!   `virtio-*-device` (virtio-mmio) on arm64 otherwise ([`virtio_dev`]), except the GPU,
+//!   always `virtio-gpu-pci`: QEMU's virtio-mmio devices are legacy ones, which viogpu(4)
+//!   refuses (`viogpu0 at virtio27: requires virtio version 1` on OpenBSD 8.0). They go after the
+//!   other devices ([`add_devices`]), so no PCI slot moves; on arm64 `virt` the virtio-mmio
+//!   slots are handed out from the top down, so they are found before the disks and vio0
+//!   (`virtioN` numbers move, the driver names do not). The balloon is driven from the
+//!   monitor (`--monitor-after LINE --monitor 'balloon MB'`, `info balloon`).
+//! - `--parallel FILE` (`qemu`, `smoke`, M16d, amd64 only, lpt(4)): the first parallel port
+//!   (`-parallel`, QEMU's `isa-parallel` at 0x378, IRQ 7, as GENERIC's `lpt0`) writes what the
+//!   guest prints to FILE in the run directory, made afresh each run. `--expect-parallel TEXT`
+//!   (repeatable, `smoke`) then requires FILE to contain TEXT once the serial expectations
+//!   passed ([`after_smoke`]). An ISA device: nothing on the PCI bus moves.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -340,6 +355,21 @@ static PCI_SERIAL: OnceLock<PathBuf> = OnceLock::new();
 /// The `--expect-pci-serial TEXT` options of this run (set once by `main`).
 static PCI_SERIAL_EXPECT: OnceLock<Vec<String>> = OnceLock::new();
 
+/// `--virtio-rng`: QEMU's virtio entropy device (set once by `main`).
+static VIRTIO_RNG: OnceLock<()> = OnceLock::new();
+
+/// `--balloon`: QEMU's virtio memory balloon (set once by `main`).
+static BALLOON: OnceLock<()> = OnceLock::new();
+
+/// `--virtio-gpu`: QEMU's virtio GPU (set once by `main`).
+static VIRTIO_GPU: OnceLock<()> = OnceLock::new();
+
+/// `--parallel FILE` (in the run directory): the parallel port's output (set once by `main`).
+static PARALLEL: OnceLock<PathBuf> = OnceLock::new();
+
+/// The `--expect-parallel TEXT` options of this run (set once by `main`).
+static PARALLEL_EXPECT: OnceLock<Vec<String>> = OnceLock::new();
+
 /// `--reboot`: this run's VMs restart on a guest reset (set once by `main`).
 static REBOOT: OnceLock<()> = OnceLock::new();
 
@@ -488,7 +518,8 @@ fn parse_gic(v: &str, what: &str) -> Result<u8> {
 
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
 /// `--pci-serial`, `--expect-pci-serial`, `--pci-bridges`, `--ipmi`, `--reboot`, `--vio-mq`,
-/// `--nic`, `--acpi`, `--gic`, `--iommu`, `--machine`, `--tpm`).
+/// `--nic`, `--acpi`, `--gic`, `--iommu`, `--machine`, `--tpm`, `--virtio-rng`, `--balloon`,
+/// `--virtio-gpu`, `--parallel`, `--expect-parallel`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(model) = opt_path(args, "--tpm")? {
         let Some(&(_, dev)) = TPM_MODELS.iter().find(|(m, _)| *m == model) else {
@@ -607,6 +638,32 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
             return Err("--expect-pci-serial: needs --pci-serial".into());
         }
         let _ = PCI_SERIAL_EXPECT.set(expect);
+    }
+    if args.contains(&"--virtio-rng") {
+        let _ = VIRTIO_RNG.set(());
+    }
+    if args.contains(&"--balloon") {
+        let _ = BALLOON.set(());
+    }
+    if args.contains(&"--virtio-gpu") {
+        let _ = VIRTIO_GPU.set(());
+    }
+    if let Some(file) = opt_path(args, "--parallel")? {
+        if args.windows(2).any(|w| w == ["--arch", "arm64"]) {
+            return Err("--parallel: amd64 only (arm64's virt has no parallel port)".into());
+        }
+        let _ = PARALLEL.set(boot::run_dir(root).join(file));
+    }
+    let expect: Vec<String> = args
+        .windows(2)
+        .filter(|w| w[0] == "--expect-parallel")
+        .map(|w| w[1].to_string())
+        .collect();
+    if !expect.is_empty() {
+        if PARALLEL.get().is_none() {
+            return Err("--expect-parallel: needs --parallel".into());
+        }
+        let _ = PARALLEL_EXPECT.set(expect);
     }
     if let Some(iso) = opt_path(args, "--lsi-cd")? {
         if LSI.get().is_none() {
@@ -1014,10 +1071,45 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
             .ok_or("--tpm: swtpm is not running (it is started by `qemu` and `smoke`)")?;
         cmd.args(tpm_args(dev, &sock));
     }
+    for (on, name) in [
+        (VIRTIO_RNG.get().is_some(), "virtio-rng"),
+        (BALLOON.get().is_some(), "virtio-balloon"),
+        (VIRTIO_GPU.get().is_some(), "virtio-gpu"),
+    ] {
+        if on {
+            cmd.args(["-device", &virtio_dev(arch, name)]);
+        }
+    }
+    if let Some(file) = PARALLEL.get() {
+        // QEMU truncates a file chardev when it opens it; a stale file would only matter if
+        // QEMU died before that.
+        let _ = fs::remove_file(file);
+        cmd.arg("-parallel").arg(format!("file:{}", file.display()));
+    }
     if machine_pc() {
         cmd.args(pc_boot_disk_args());
     }
     Ok(())
+}
+
+/// The `-device` argument of the virtio device `name` (`virtio-rng`, `virtio-balloon`,
+/// `virtio-gpu`): `<name>-pci` on amd64 (behind `--iommu` when there is one) and on arm64
+/// with `--acpi`, `<name>-device` (virtio-mmio) on arm64 otherwise, as the disks are; the
+/// GPU is `virtio-gpu-pci` on arm64 too (see the module docs).
+fn virtio_dev(arch: Arch, name: &str) -> String {
+    virtio_dev_arg(arch, acpi(), name, virtio_pci_props())
+}
+
+/// [`virtio_dev`] for the given ACPI choice and PCI properties.
+fn virtio_dev_arg(arch: Arch, acpi: bool, name: &str, pci_props: &str) -> String {
+    match arch {
+        Arch::Amd64 => format!("{name}-pci{pci_props}"),
+        // QEMU's virtio-mmio devices are legacy (version 0.9.5) unless every one of them is
+        // made modern, and viogpu(4) refuses a legacy device ("requires virtio version 1"),
+        // as OpenBSD 8.0 does on `virtio-gpu-device`: the GPU is always on the PCI bus.
+        Arch::Arm64 if acpi || name == "virtio-gpu" => format!("{name}-pci"),
+        Arch::Arm64 => format!("{name}-device"),
+    }
 }
 
 /// The QEMU arguments of `--ipmi`: the simulated BMC with the SDR file `sdr`, behind a KCS
@@ -1232,6 +1324,12 @@ pub(crate) fn monitor_arg() -> String {
         }
         None => "none".into(),
     }
+}
+
+/// The monitor socket `monitor_arg` names, when an option drives QEMU's monitor
+/// (`diff-openbsd probe` gives its VM this one, so [`poll_monitor`] reaches it).
+pub(crate) fn monitor_sock_path() -> Option<PathBuf> {
+    monitor_dir().map(|d| monitor_sock(d))
 }
 
 /// The longest Unix socket path, NUL included: `sizeof(sun_path)` on macOS (108 on Linux).
@@ -1765,6 +1863,21 @@ fn check_screenshot(ppm: &Ppm<'_>, line: &str) -> Result<usize> {
     Ok(lit)
 }
 
+/// `diff-openbsd probe` (M16d): what the `--parallel` file holds, printed whatever it is (a
+/// probe records what OpenBSD does; nothing is required).
+pub(crate) fn probe_report() {
+    if let Some(file) = PARALLEL.get() {
+        match fs::read(file) {
+            Ok(bytes) => println!(
+                "xtask: {}: the parallel port printed {:?}",
+                file.display(),
+                String::from_utf8_lossy(&bytes)
+            ),
+            Err(e) => println!("xtask: {}: {e}", file.display()),
+        }
+    }
+}
+
 /// What a run must leave behind once its serial expectations passed: with
 /// `--expect-pci-serial`, each text in the file the card's UART wrote; with
 /// `--screenshot-after`, a screenshot that shows the kernel's text.
@@ -1811,6 +1924,23 @@ pub(crate) fn after_smoke() -> Result<()> {
                 ppm_path.display(),
                 ppm.width,
                 ppm.height
+            );
+        }
+    }
+    if let (Some(file), Some(expect)) = (PARALLEL.get(), PARALLEL_EXPECT.get()) {
+        let bytes = fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let text = String::from_utf8_lossy(&bytes);
+        for want in expect {
+            if !text.contains(want.as_str()) {
+                return Err(format!(
+                    "{}: the parallel port never printed {want:?} (it printed {text:?})",
+                    file.display()
+                )
+                .into());
+            }
+            println!(
+                "xtask: {}: the parallel port printed {want:?}",
+                file.display()
             );
         }
     }
@@ -2032,6 +2162,31 @@ mod tests {
         assert!(parse_sendkeys(&["--sendkey-after", "x"]).is_err());
         assert!(parse_sendkeys(&["--sendkey-after", "x", "--sendkeys", " "]).is_err());
         assert!(parse_sendkeys(&[]).expect("none").is_empty());
+    }
+
+    #[test]
+    fn virtio_devices_follow_the_disks_transport() {
+        assert_eq!(
+            virtio_dev_arg(Arch::Amd64, false, "virtio-rng", ""),
+            "virtio-rng-pci"
+        );
+        assert_eq!(
+            virtio_dev_arg(
+                Arch::Amd64,
+                false,
+                "virtio-balloon",
+                ",disable-legacy=on,iommu_platform=on"
+            ),
+            "virtio-balloon-pci,disable-legacy=on,iommu_platform=on"
+        );
+        assert_eq!(
+            virtio_dev_arg(Arch::Arm64, false, "virtio-gpu", ""),
+            "virtio-gpu-pci"
+        );
+        assert_eq!(
+            virtio_dev_arg(Arch::Arm64, false, "virtio-rng", ""),
+            "virtio-rng-device"
+        );
     }
 
     #[test]
