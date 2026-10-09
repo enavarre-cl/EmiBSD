@@ -691,11 +691,16 @@ pub fn generate(root: &Path) -> Result<Vec<(&'static str, String)>> {
     ])
 }
 
-/// The generated source in the zones of `layout.rs`: all of it in `<CODE>`. The C files carry
-/// no notice (`license = "none"` in lineage.toml), and their RCS ident lines are not carried
-/// over (decision 20, docs/PHASE2.md): the `//! Upstream:` banner names the pinned source.
+/// The generated source in the zones of `layout.rs`: the author's block alone in `<LICENSES>`
+/// (the C files carry no notice, `license = "none"` in lineage.toml; N0b), then all of the
+/// source in `<CODE>`. The C files' RCS ident lines are not carried over (decision 20,
+/// docs/PHASE2.md): the `//! Upstream:` banner names the pinned source.
 fn zoned(src: &str) -> String {
-    format!("/* <CODE> */\n{}\n/* </CODE> */\n", src.trim())
+    format!(
+        "/* <LICENSES> */\n{}/* </LICENSES> */\n\n/* <CODE> */\n{}\n/* </CODE> */\n",
+        crate::layout::AUTHOR_BLOCK,
+        src.trim()
+    )
 }
 
 /// Formats generated source with the workspace's `rustfmt.toml`, so `just fmt` and

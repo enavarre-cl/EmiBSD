@@ -48,9 +48,10 @@ LZ ports OpenBSD incrementally, and this tree inherits its gaps. These rules kee
    * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
    */
   ```
-  - A file with original blocks (the port of a C file with licence text): the author's block
-    comes after them, as the last block of the zone, after one blank line. The original blocks
-    are never touched: never shortened, reworded, reordered, replaced or moved after it.
+  - A file with original blocks (the port of a C file with licence text): the author's block is
+    the first block of the zone, as the latest change, and the original blocks follow it after
+    one blank line. The original blocks are never touched: never shortened, reworded,
+    reordered or replaced.
   - A module with `license = "none"`, an `[[extra]]`, and every `.rs` outside `lineage.toml`
     (crate roots, `mod.rs`, `sys/machine/`, `sys/stand/`, `sys/arch/host/`, `tools/`): the
     author's block is the only block of the zone, and the zone is the file's first.

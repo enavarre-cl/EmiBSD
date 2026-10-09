@@ -79,8 +79,9 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
   change on the native items that own the code now (`lz-sync.md`).
 - Zone markers: `lz check` validates `/* <LICENSES> */`, `/* <CODE> */` and `/* <TESTS> */` as
   LZ's `ports check` does since M15. `<LICENSES>` is required in every `.rs` under `sys/` and
-  `tools/` and ends with the author's block (N0b): in a module with an `lz` list and a licensed
-  C source it holds that source's blocks, whole, then the author's; with `license = "none"`, in
+  `tools/` and starts with the author's block (N0b): in a module with an `lz` list and a
+  licensed C source the author's comes first, then that source's blocks, whole; with
+  `license = "none"`, in
   an `[[extra]]` and in every file outside `lineage.toml` it holds the author's block alone.
 - `[meta].lz` equals `lz/PINNED.md`; the `Commit:` of `reference/PINNED.md` equals the one LZ
   records at the pinned commit (`git -C reference/emibsd-lz show <PIN>:reference/PINNED.md`).

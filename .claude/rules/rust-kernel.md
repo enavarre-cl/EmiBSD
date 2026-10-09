@@ -47,9 +47,9 @@ paths:
 - File layout (M15): every `.rs` under `sys/` and `tools/` is split into zones, each opened and
   closed by a comment line of its own, in this order, and nothing else sits outside them but
   blank lines (or a generated-file banner); the RCS ident lines are gone since N0 (decision 20):
-  - `/* <LICENSES> */` ... `/* </LICENSES> */`: every file. The licence block(s) of every LZ
-    source come first, verbatim (the markers only mark), then the author's ISC block (N0b,
-    `scope-and-stubs.md`) after one blank line. A module whose C source has no licence text
+  - `/* <LICENSES> */` ... `/* </LICENSES> */`: every file. The author's ISC block (N0b,
+    `scope-and-stubs.md`) comes first, the latest change; then, after one blank line, the
+    licence block(s) of every LZ source, verbatim (the markers only mark). A module whose C source has no licence text
     (`license = "none"`), an `[[extra]]` and a file outside `lineage.toml` hold the author's
     block alone;
   - `/* <CODE> */` ... `/* </CODE> */`: everything that is not a licence or a test, in the

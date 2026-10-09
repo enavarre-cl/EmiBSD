@@ -19,7 +19,7 @@ Everything in this repository (code, comments, docs, commits) is in English.
 - `reference/openbsd-src/`, `reference/emibsd-lz/` and `lz/` are read-only. LZ is never written
   to and never told this repository exists. Never copy C verbatim (`.claude/rules/reference-readonly.md`).
 - Every file keeps the full copyright/licence block(s) of every LZ file it derives from, whole,
-  and every `.rs` under `sys/` and `tools/` ends its `<LICENSES>` zone with the author's ISC block
+  and every `.rs` under `sys/` and `tools/` starts its `<LICENSES>` zone with the author's ISC block
   (N0b, `.claude/rules/scope-and-stubs.md`).
 - `lineage.toml` is updated in the same commit as the change it describes (`.claude/rules/lineage.md`).
 - Every commit carries its numbers: `LZ:` per source file, `Unsafe:` when a count moved

@@ -32,11 +32,15 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::layout::{strip_author_block, trim_licenses_edges};
 use crate::{REFERENCE_DIR, Result, git, is_structural, short, walk_rs};
 
 const LINEAGE_FILE: &str = "lineage.toml";
 const SYNC_FILE: &str = "lz-sync.toml";
 const LZ_PINNED: &str = "lz/PINNED.md";
+/// Whether `lz check` requires the author's block in every `.rs` (N0b): off while the block is
+/// accepted but not yet applied to the tree.
+const AUTHOR_REQUIRED: bool = false;
 const LZ_DIR: &str = "reference/emibsd-lz";
 const REFERENCE_PINNED: &str = "reference/PINNED.md";
 const TABLE_BEGIN: &str = "<!-- lz:begin -->";
@@ -291,6 +295,13 @@ pub(crate) fn strip_ident_lines(src: &str) -> String {
         out.push_str(line);
     }
     out
+}
+
+/// A module's text as `lz check` compares it with its LZ source: without the RCS ident lines
+/// (decision 20) and the author's block (N0b), and with the blank lines that start or end the
+/// LICENSES zone dropped. Applied to both sides.
+fn comparable(src: &str) -> String {
+    trim_licenses_edges(&strip_author_block(&strip_ident_lines(src)))
 }
 
 fn rel_of(root: &Path, f: &Path) -> String {
@@ -754,7 +765,7 @@ pub(crate) fn check(root: &Path) -> Result<()> {
                     ));
                 }
                 let theirs = lz.show(rust).unwrap_or_default();
-                if strip_ident_lines(&src) != strip_ident_lines(&theirs) {
+                if comparable(&src) != comparable(&theirs) {
                     errors.push(format!(
                         "{tag}: differs from LZ at the pin; set status = \"redesigned\" in the commit that changes it"
                     ));
@@ -783,7 +794,7 @@ pub(crate) fn check(root: &Path) -> Result<()> {
                     ));
                 } else {
                     let theirs = lz.show(rust).unwrap_or_default();
-                    if strip_ident_lines(&src) == strip_ident_lines(&theirs) {
+                    if comparable(&src) == comparable(&theirs) {
                         errors.push(format!(
                             "{tag}: identical to LZ at the pin; an unchanged module is `inherited`"
                         ));
@@ -923,16 +934,15 @@ pub(crate) fn check(root: &Path) -> Result<()> {
 
     // Zone markers, with the licence policy of lineage.toml.
     let mut policy: HashMap<&str, Licenses> = HashMap::new();
-    let mut none: HashSet<&str> = HashSet::new();
     for m in &lineage.modules {
         let lic = if m.license == "none" {
-            none.insert(m.rust.as_str());
-            Licenses::Allowed
+            Licenses::AuthorOnly
         } else {
-            Licenses::Required
+            Licenses::Port
         };
         policy.insert(m.rust.as_str(), lic);
     }
+    let mut n_author = 0usize;
     let mut files = Vec::new();
     for tree in ["sys", "tools"] {
         walk_rs(&root.join(tree), &mut files)?;
@@ -949,14 +959,14 @@ pub(crate) fn check(root: &Path) -> Result<()> {
         let lic = policy
             .get(rel.as_str())
             .copied()
-            .unwrap_or(Licenses::Forbidden);
+            .unwrap_or(Licenses::AuthorOnly);
         let src = fs::read_to_string(f).map_err(|e| format!("{rel}: {e}"))?;
-        if none.contains(rel.as_str()) && src.lines().any(|l| l == "/* <LICENSES> */") {
-            errors.push(format!(
-                "{rel}: has a <LICENSES> zone but its {LINEAGE_FILE} module says license = \"none\""
-            ));
-        }
         errors.extend(crate::layout::check(&rel, &src, lic));
+        let author = crate::layout::check_author(&rel, &src, lic, AUTHOR_REQUIRED);
+        if author.is_empty() && src.contains(crate::layout::AUTHOR_BLOCK) {
+            n_author += 1;
+        }
+        errors.extend(author);
     }
 
     for w in &warnings {
@@ -965,6 +975,7 @@ pub(crate) fn check(root: &Path) -> Result<()> {
     for e in &errors {
         println!("error: {e}");
     }
+    let nfiles = files.len();
     let (nmod, nx, nd, nerr, nwarn) = (
         lineage.modules.len(),
         lineage.extras.len(),
@@ -974,7 +985,7 @@ pub(crate) fn check(root: &Path) -> Result<()> {
     );
     let nred = nmod - n_inherited - n_adapted;
     println!(
-        "lz check: {nmod} modules ({n_inherited} inherited, {n_adapted} adapted, {nred} redesigned), {n_rows} fn rows, {nx} extras, {nd} dropped; pin {}: {nerr} error(s), {nwarn} warning(s)",
+        "lz check: {nmod} modules ({n_inherited} inherited, {n_adapted} adapted, {nred} redesigned), {n_rows} fn rows, {nx} extras, {nd} dropped; author's block in {n_author} of {nfiles} .rs; pin {}: {nerr} error(s), {nwarn} warning(s)",
         short(&lz.pin)
     );
     if errors.is_empty() {

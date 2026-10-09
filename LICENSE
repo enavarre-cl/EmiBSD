@@ -35,8 +35,8 @@ reference/PINNED.md. The names of OpenBSD contributors may not be used to
 endorse or promote this project without their written permission
 (BSD-3-Clause, clause 3).
 
-Every Rust file under sys/ and tools/ also carries, after any original
-notices in its <LICENSES> zone (or alone, where the source had none), an ISC
+Every Rust file under sys/ and tools/ also carries, first in its <LICENSES>
+zone and before any original notices (or alone, where the source had none), an ISC
 notice for the Rust work: Copyright (c) 2026 Emilio Navarrete Lineros
 <enavarre@outlook.com>. The original notices are never altered; for a ported
 file, both notices apply.

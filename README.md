@@ -517,7 +517,7 @@ The spikes are Puffy's; the claws are Ferris's.
 ## License
 
 New code is under the ISC license. Ported files keep their OpenBSD copyright notice and license,
-whole, at the top of the file. Every Rust file also carries the author's ISC notice after them (or
+whole, at the top of the file. Every Rust file also carries the author's ISC notice before them (or
 alone, where the source had none). Every license in the pinned OpenBSD tree is accepted.
 The ramdisk's userland keeps the licenses of its sources. See [LICENSE](LICENSE).
 
