@@ -2033,6 +2033,12 @@ status = "inherited"
 notes = "M16c: the 32-bit software model descriptors (lermd, letmd, leinit) and their bits for pcn(4); the int32_t members are u32"
 
 [[module]]
+rust = "sys/dev/ic/ax88190reg.rs"
+lz = ["sys/dev/ic/ax88190reg.rs"]
+status = "inherited"
+notes = "M16c: AX88190 registers"
+
+[[module]]
 rust = "sys/dev/ic/com.rs"
 lz = ["sys/dev/ic/com.rs"]
 status = "inherited"
@@ -2046,6 +2052,27 @@ status = "inherited"
 rust = "sys/dev/ic/comvar.rs"
 lz = ["sys/dev/ic/comvar.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/ic/dp8390.rs"
+lz = ["sys/dev/ic/dp8390.rs"]
+status = "inherited"
+license = "Hannum/Greenman notice"
+notes = "license: Hannum/Greenman notice, kept whole; M16c: the DP8390 core under ne(4). Default memory accessors (region_1) are loops over bus_space_{read,write}_1; NBPFILTER on; DIAGNOSTIC is the diagnostic feature; DEBUG unset; host tests for the multicast filter bit"
+
+[[module]]
+rust = "sys/dev/ic/dp8390reg.rs"
+lz = ["sys/dev/ic/dp8390reg.rs"]
+status = "inherited"
+license = "Greenman notice"
+notes = "license: Greenman notice, kept whole; M16c: the DP8390 registers as usize offsets and u8 bits; struct dp8390_ring is Dp8390Ring"
+
+[[module]]
+rust = "sys/dev/ic/dp8390var.rs"
+lz = ["sys/dev/ic/dp8390var.rs"]
+status = "inherited"
+license = "Hannum/Greenman notice"
+notes = "license: Hannum/Greenman notice, kept whole; M16c: dp8390_softc, a Cell softc (repr(C), device first); NIC_GET/PUT/BARRIER are methods; callbacks are Option<fn>, ring_copy takes a slice"
 
 [[module]]
 rust = "sys/dev/ic/fxp.rs"
@@ -2085,6 +2112,26 @@ status = "inherited"
 rust = "sys/dev/ic/mc6845reg.rs"
 lz = ["sys/dev/ic/mc6845reg.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/ic/ne2000.rs"
+lz = ["sys/dev/ic/ne2000.rs"]
+status = "inherited"
+license = "BSD plus the Hannum/Greenman notice"
+notes = "license: BSD plus the Hannum/Greenman notice, kept whole; M16c: the NE2000 core (PIO through the ASIC data port). GWETHER (never defined) is not ported; readmem drops the byte the C reads past an odd destination; bus_space_{read,write}_multi_1 and _raw_multi_2 added to machine/bus.rs"
+
+[[module]]
+rust = "sys/dev/ic/ne2000reg.rs"
+lz = ["sys/dev/ic/ne2000reg.rs"]
+status = "inherited"
+license = "Greenman notice"
+notes = "license: Greenman notice, kept whole; M16c: NE2000 register group offsets (usize)"
+
+[[module]]
+rust = "sys/dev/ic/ne2000var.rs"
+lz = ["sys/dev/ic/ne2000var.rs"]
+status = "inherited"
+notes = "M16c: ne2000_softc (repr(C), dp8390 softc first); the sc_type enum is Ne2000Type"
 
 [[module]]
 rust = "sys/dev/ic/ns16550reg.rs"
@@ -2142,6 +2189,18 @@ status = "inherited"
 rust = "sys/dev/ic/re.rs"
 lz = ["sys/dev/ic/re.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/ic/rtl80x9.rs"
+lz = ["sys/dev/ic/rtl80x9.rs"]
+status = "inherited"
+notes = "M16c: only prototypes; they are rtl80x9.rs's functions (shares its file); M16c: RTL8029 media (page 3 CONFIG registers); host test for the default media"
+
+[[module]]
+rust = "sys/dev/ic/rtl80x9reg.rs"
+lz = ["sys/dev/ic/rtl80x9reg.rs"]
+status = "inherited"
+notes = "M16c: RTL8019/8029 registers (NERTL_* usize, bits u8)"
 
 [[module]]
 rust = "sys/dev/ic/rtl81x9reg.rs"
@@ -2405,6 +2464,12 @@ rust = "sys/dev/pci/if_fxp_pci.rs"
 lz = ["sys/dev/pci/if_fxp_pci.rs"]
 status = "inherited"
 notes = "M16c: the whole file: fxp_pci_devices, fxp_pci_match, fxp_pci_attach, fxp_pci_detach, fxp_pci_activate; fxp* at pci? in the amd64 ioconf (cfdata[77]); QEMU: fxp0 at pci0 dev 2 function 0 'Intel 82559ER' rev 0x09, i82559S: apic 0 int 22, address 52:54:00:12:34:56"
+
+[[module]]
+rust = "sys/dev/pci/if_ne_pci.rs"
+lz = ["sys/dev/pci/if_ne_pci.rs"]
+status = "inherited"
+notes = "M16c: ne* at pci?, amd64 GENERIC only; QEMU ne2k_pci (Realtek 8029) pings 10.0.2.2 in smoke-ne"
 
 [[module]]
 rust = "sys/dev/pci/if_pcn.rs"

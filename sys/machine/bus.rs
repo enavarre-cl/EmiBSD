@@ -284,6 +284,55 @@ pub fn bus_space_set_region_2(
     }
 }
 
+/// `bus_space_read_multi_1(9)`: reads `values.len()` bytes from the one location `offset`
+/// (a FIFO port), one [`bus_space_read_1`] each, as `rep insb` does on amd64 and the inline
+/// loop of arm64's `<machine/bus.h>`.
+pub fn bus_space_read_multi_1(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    values: &mut [u8],
+) {
+    for v in values.iter_mut() {
+        *v = bus_space_read_1(t, h, offset);
+    }
+}
+
+/// `bus_space_write_multi_1(9)`: writes `values` to the one location `offset`, one
+/// [`bus_space_write_1`] each (`rep outsb` on amd64).
+pub fn bus_space_write_multi_1(t: BusSpaceTag, h: BusSpaceHandle, offset: BusSize, values: &[u8]) {
+    for &v in values {
+        bus_space_write_1(t, h, offset, v);
+    }
+}
+
+/// `bus_space_read_raw_multi_2(9)`: reads `values.len() / 2` 2-byte words from the one
+/// location `offset` into `values` in the bus's byte order, without swapping (the "raw"
+/// variants move bytes, so on a little-endian host a word lands low byte first).
+pub fn bus_space_read_raw_multi_2(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    values: &mut [u8],
+) {
+    for w in values.as_chunks_mut::<2>().0.iter_mut() {
+        w.copy_from_slice(&bus_space_read_2(t, h, offset).to_ne_bytes());
+    }
+}
+
+/// `bus_space_write_raw_multi_2(9)`: writes the 2-byte words of `values` to the one location
+/// `offset`, as [`bus_space_read_raw_multi_2`] reads them.
+pub fn bus_space_write_raw_multi_2(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    values: &[u8],
+) {
+    for w in values.as_chunks::<2>().0.iter() {
+        bus_space_write_2(t, h, offset, u16::from_ne_bytes(*w));
+    }
+}
+
 /// `bus_space_copy_2(9)` on the selected machine.
 pub fn bus_space_copy_2(
     t: BusSpaceTag,

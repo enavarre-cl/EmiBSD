@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-fxp smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
@@ -1620,6 +1620,28 @@ pcn_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' 
     "--expect 'pcn0: restrict all mbufs to low memory' --expect 'rc: multi-user' " + \
     "--expect 'pcn0: flags=' --expect 'media: Ethernet autoselect (autoselect)' " + \
     "--expect 'inet 10.0.2.15 netmask 0xffffff00'"
+
+# M16c: ne(4) on QEMU's ne2k_pci (`--nic ne2k_pci`, PCI 10ec:8029, a Realtek 8029), in vio0's place on
+# the user network, amd64 only (GENERIC has `ne* at pci?` on amd64 alone). As on OpenBSD 8.0 on the same
+# machine (`cargo xtask diff-openbsd probe --nic ne2k_pci`): ne0 takes the board's address from its
+# PROM (52:54:00:12:34:56), its media is read from the 8029's CONFIG2/CONFIG3 pages (10baseT full
+# duplex) and ne(4) does not set IFXF_MBUF_64BIT, so mbuf_dma_64bit_enable prints "restrict all mbufs
+# to low memory". The kernel's self-test gives ne0 10.0.2.15/24; logged in, ifconfig(8) shows its
+# flags, media and address, and ping(8) gets the gateway's reply. Part of `smoke`.
+smoke-ne: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-ne: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic ne2k_pci {{ne_session}} {{em_ping}}
+
+# `smoke-ne`'s login and commands and its expectations.
+ne_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' --send 'emibsd\\n' " + \
+    "--send-after '# ' --send 'ifconfig ne0\\n' --send-after '# ' --send 'ping -c 1 10.0.2.2\\n' " + \
+    "--expect 'ne0 at pci0 dev ' --expect 'rev 0x00: apic 0 int ' --expect 'address 52:54:00:12:34:56' " + \
+    "--expect 'ne0: restrict all mbufs to low memory' --expect 'rc: multi-user' " + \
+    "--expect 'ne0: flags=' --expect 'media: Ethernet 10baseT full-duplex' " + \
+    "--expect 'inet 10.0.2.15 netmask 0xffffff00'"
+
 # M16c: fxp(4) on QEMU's Intel 82559ER (`--nic i82559er`, PCI 8086:1209 revision 0x09, the
 # i82559S of if_fxp_pci.c), in vio0's place on the user network, amd64 only (fxp is in amd64's
 # GENERIC alone). fxp0 attaches with the i82555 PHY mii(4) finds at address 1 (inphy(4)); the
