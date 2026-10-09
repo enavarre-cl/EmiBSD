@@ -58,7 +58,7 @@
 
 use libkern::explicit_bzero;
 
-use super::aes::{AES_Encrypt, AES_Setkey, AesCtx};
+use super::aes::AesCtx;
 use crate::sys::errno::Errno;
 
 /// `GMAC_BLOCK_LEN`.
@@ -81,7 +81,7 @@ pub struct GhashCtx {
 }
 
 /// `AES_GMAC_CTX`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct AesGmacCtx {
     /// `ghash`.
     pub ghash: GhashCtx,
@@ -163,14 +163,13 @@ pub fn AES_GMAC_Setkey(ctx: &mut AesGmacCtx, key: &[u8]) -> Result<(), Errno> {
     if klen < AESCTR_NONCESIZE {
         return Err(Errno::EINVAL);
     }
-    AES_Setkey(&mut ctx.k, &key[..klen - AESCTR_NONCESIZE])?;
+    ctx.k = AesCtx::new(&key[..klen - AESCTR_NONCESIZE])?;
 
     // copy out salt to the counter block
     ctx.j[..AESCTR_NONCESIZE].copy_from_slice(&key[klen - AESCTR_NONCESIZE..]);
 
     // prepare a hash subkey
-    let zero = ctx.ghash.h;
-    AES_Encrypt(&ctx.k, &zero, &mut ctx.ghash.h);
+    ctx.ghash.h = ctx.k.encrypt(&ctx.ghash.h);
     Ok(())
 }
 
@@ -203,11 +202,9 @@ pub fn AES_GMAC_Update(ctx: &mut AesGmacCtx, data: &[u8]) -> Result<(), Errno> {
 /// `AES_GMAC_Final`: the 16-byte tag: the hash xor the encryption of the counter block 1.
 #[allow(non_snake_case)] // the C name
 pub fn AES_GMAC_Final(digest: &mut [u8; GMAC_DIGEST_LEN], ctx: &mut AesGmacCtx) {
-    let mut keystream = [0u8; GMAC_BLOCK_LEN];
-
     // do one round of GCTR
     ctx.j[GMAC_BLOCK_LEN - 1] = 1;
-    AES_Encrypt(&ctx.k, &ctx.j, &mut keystream);
+    let mut keystream = ctx.k.encrypt(&ctx.j);
     for i in 0..GMAC_DIGEST_LEN {
         digest[i] = ctx.ghash.s[i] ^ keystream[i];
     }

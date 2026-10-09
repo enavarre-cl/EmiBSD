@@ -119,7 +119,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use super::aes::{AES_Decrypt, AES_Encrypt, AES_Setkey, AesCtx};
+use super::aes::AesCtx;
 use super::blf::BlfCtx;
 use super::cast::CastKey;
 use super::chachapoly::{
@@ -172,7 +172,7 @@ pub const AES_XTS_ALPHA: u8 = 0x87;
 /// transform's `Init`.
 // The C union is as big as its largest member too; the contexts live in a `Box` in a session.
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub enum AuthCtx {
     /// A context not initialised yet (the C's freshly allocated storage).
     #[default]
@@ -196,7 +196,7 @@ pub enum AuthCtx {
 }
 
 /// `struct aes_ctr_ctx`: the key schedule of AES-CTR and AES-GCM.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct AesCtrCtx {
     /// `ac_key`.
     pub ac_key: AesCtx,
@@ -471,26 +471,22 @@ fn cast5_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
 /// `aes_encrypt`.
 fn aes_encrypt(key: &mut Kschedule, blk: &mut [u8]) {
     let mut input = [0u8; 16];
-    let mut out = [0u8; 16];
     input.copy_from_slice(&blk[..16]);
-    AES_Encrypt(key.aes(), &input, &mut out);
+    let out = key.aes().encrypt(&input);
     blk[..16].copy_from_slice(&out);
 }
 
 /// `aes_decrypt`.
 fn aes_decrypt(key: &mut Kschedule, blk: &mut [u8]) {
     let mut input = [0u8; 16];
-    let mut out = [0u8; 16];
     input.copy_from_slice(&blk[..16]);
-    AES_Decrypt(key.aes(), &input, &mut out);
+    let out = key.aes().decrypt(&input);
     blk[..16].copy_from_slice(&out);
 }
 
 /// `aes_setkey`.
 fn aes_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
-    let mut ctx = AesCtx::default();
-    AES_Setkey(&mut ctx, key)?;
-    *sched = Kschedule::Aes(ctx);
+    *sched = Kschedule::Aes(AesCtx::new(key)?);
     Ok(())
 }
 
@@ -518,7 +514,6 @@ fn aes_gcm_reinit(key: &mut Kschedule, iv: &[u8]) {
 /// `aes_ctr_crypt`: increments the counter and XORs the keystream block into `data`.
 fn aes_ctr_crypt(key: &mut Kschedule, data: &mut [u8]) {
     let ctx = key.aes_ctr();
-    let mut keystream = [0u8; AESCTR_BLOCKSIZE];
 
     // increment counter
     for i in (AESCTR_NONCESIZE + AESCTR_IVSIZE..AESCTR_BLOCKSIZE).rev() {
@@ -528,8 +523,7 @@ fn aes_ctr_crypt(key: &mut Kschedule, data: &mut [u8]) {
             break;
         }
     }
-    let block = ctx.ac_block;
-    AES_Encrypt(&ctx.ac_key, &block, &mut keystream);
+    let mut keystream = ctx.ac_key.encrypt(&ctx.ac_block);
     for i in 0..AESCTR_BLOCKSIZE {
         data[i] ^= keystream[i];
     }
@@ -543,8 +537,10 @@ fn aes_ctr_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
         return Err(Errno::EINVAL);
     }
 
-    let mut ctx = AesCtrCtx::default();
-    AES_Setkey(&mut ctx.ac_key, &key[..len - AESCTR_NONCESIZE])?;
+    let mut ctx = AesCtrCtx {
+        ac_key: AesCtx::new(&key[..len - AESCTR_NONCESIZE])?,
+        ac_block: [0; AESCTR_BLOCKSIZE],
+    };
     ctx.ac_block[..AESCTR_NONCESIZE].copy_from_slice(&key[len - AESCTR_NONCESIZE..]);
     *sched = Kschedule::AesCtr(ctx);
     Ok(())

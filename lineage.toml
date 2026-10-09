@@ -1030,8 +1030,32 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/aes.rs"
 lz = ["sys/crypto/aes.rs"]
-status = "adapted"
-adapted_by = ["sys/crypto/rijndael.rs"]
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/aes.rs::AES_Setkey"
+native = ["AesCtx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/aes.rs::AES_Encrypt_ECB"
+native = ["AesCtx::encrypt_ecb"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/aes.rs::AES_Decrypt_ECB"
+native = ["AesCtx::decrypt_ecb"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/aes.rs::AES_Encrypt"
+native = ["AesCtx::encrypt"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/aes.rs::AES_Decrypt"
+native = ["AesCtx::decrypt"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/blake2s.rs"
@@ -1201,7 +1225,8 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/cryptosoft.rs"
 lz = ["sys/crypto/cryptosoft.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/aes.rs"]
 
 [[module]]
 rust = "sys/crypto/curve25519.rs"
@@ -1231,7 +1256,8 @@ kind = "renamed"
 [[module]]
 rust = "sys/crypto/gmac.rs"
 lz = ["sys/crypto/gmac.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/aes.rs"]
 
 [[module]]
 rust = "sys/crypto/hmac.rs"
@@ -1518,7 +1544,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs", "sys/crypto/rijndael.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs", "sys/crypto/rijndael.rs", "sys/crypto/aes.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"

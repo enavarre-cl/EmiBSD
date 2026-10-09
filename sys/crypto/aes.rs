@@ -74,19 +74,37 @@
 //! once and no table is indexed by a secret.
 //!
 //! Upstream: sys/crypto/aes.h @ 3ce1f3f79392, sys/crypto/aes.c @ 3ce1f3f79392
+//! LZ: sys/crypto/aes.rs@f5985f1d055a
 //!
 //! ## Deviations
-//! - The header and the file share this module; `AES_CTX` is [`AesCtx`] (arrays of 60 and 120
-//!   words and the round count).
+//! - The header and the file share this module; `AES_CTX` is [`AesCtx`].
 //! - The bitsliced state is `&mut [u32; 8]`; the circuit of `aes_ct_bitslice_Sbox` (Boyar and
 //!   Peralta) and the shift/mix steps are the C's, step for step.
 //! - Functions that return a round count or 0 on a bad key size (`aes_keysched_base`,
 //!   `aes_ct_keysched`, `AES_KeySetup_Encrypt`, `AES_KeySetup_Decrypt`) return
-//!   `Result<u32, Errno>` (`EINVAL`); `AES_Setkey` returns `Result<(), Errno>` for 0 or -1.
-//!   Key lengths are in bytes, as in the C.
-//! - Blocks are `[u8; 16]` arrays and ECB runs take slices of `16 * num_blocks` bytes; the
-//!   in-place calls of `xform.c` (`AES_Encrypt(ctx, blk, blk)`) copy the block first.
+//!   `Result<usize, Errno>` (`EINVAL`). Key lengths are the key slice's length, in bytes, as in
+//!   the C.
+//!
+//! ## Redesign
+//! - `AES_Setkey` is the constructor [`AesCtx::new`], which returns the keyed context or
+//!   `EINVAL` (LZ: it filled an `&mut AesCtx` and returned `Result<(), Errno>`).
+//!   `AES_Encrypt` and `AES_Decrypt` are methods returning the block (LZ: `&mut [u8; 16]` out
+//!   parameters, so `xform.c`'s in-place calls needed a copy); `AES_Encrypt_ECB` and
+//!   `AES_Decrypt_ECB` are [`AesCtx::encrypt_ecb`] and [`AesCtx::decrypt_ecb`], which work in
+//!   place on `&mut [[u8; 16]]` (LZ: a source slice, a destination slice and, beside them,
+//!   the block count).
+//! - The schedules are typed: `sk` is `[u32; 60]`, `sk_exp` is fifteen `[u32; 8]` round keys
+//!   (LZ: 120 words indexed with `u << 3`), `num_rounds` is a `usize`; `add_round_key` takes
+//!   one round key. `dec32le`/`enc32le` take and return 4-byte arrays; `SWAPN` returns the
+//!   pair. The functions that are `static` in the C (the circuits, the key schedule steps) are
+//!   private (LZ: `pub`).
+//! - [`AesCtx`] zeroes its schedules when dropped (`docs/IDIOMS.md`), so it is no longer `Copy`
+//!   or `PartialEq`.
+//! - Constant time: every function on key or data is the C's branch-free, table-free circuit;
+//!   the loops run over round numbers and block counts, which are public, and nothing indexes
+//!   a table with a secret, as before.
 
+use super::wipe;
 use crate::sys::errno::Errno;
 
 /// `AES_MAXROUNDS`.
@@ -96,34 +114,98 @@ pub const AES_MAXROUNDS: usize = 14;
 const RCON: [u8; 10] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36];
 
 /// `AES_CTX`: the compressed and the expanded bitsliced subkeys, and the number of rounds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Built by [`AesCtx::new`]; zeroed when dropped.
+#[derive(Clone, Debug)]
 pub struct AesCtx {
     /// `sk`: the compressed subkeys.
     pub sk: [u32; 60],
-    /// `sk_exp`: the expanded subkeys, as `aes_ct_bitslice_encrypt` wants them.
-    pub sk_exp: [u32; 120],
+    /// `sk_exp`: the expanded subkeys, one `[u32; 8]` per round key, as
+    /// `aes_ct_bitslice_encrypt` wants them.
+    pub sk_exp: [[u32; 8]; AES_MAXROUNDS + 1],
     /// `num_rounds`: 10, 12 or 14.
-    pub num_rounds: u32,
+    pub num_rounds: usize,
 }
 
 impl Default for AesCtx {
     fn default() -> Self {
         Self {
             sk: [0; 60],
-            sk_exp: [0; 120],
+            sk_exp: [[0; 8]; AES_MAXROUNDS + 1],
             num_rounds: 0,
         }
     }
 }
 
+impl Drop for AesCtx {
+    /// Wipes the subkeys (`docs/IDIOMS.md`: a key schedule is zeroed when dropped).
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl AesCtx {
+    /// Zeroes the subkeys, with stores the compiler keeps (`crate::crypto::wipe`).
+    pub(crate) fn zeroize(&mut self) {
+        self.sk
+            .iter_mut()
+            .chain(self.sk_exp.iter_mut().flatten())
+            .for_each(wipe);
+        wipe(&mut self.num_rounds);
+    }
+
+    /// `AES_Setkey`: a context keyed with `key` of 16, 24 or 32 bytes (`EINVAL` otherwise).
+    pub fn new(key: &[u8]) -> Result<Self, Errno> {
+        let mut ctx = Self::default();
+        ctx.num_rounds = aes_ct_keysched(&mut ctx.sk, key)?;
+        aes_ct_skey_expand(&mut ctx.sk_exp, ctx.num_rounds, &ctx.sk);
+        Ok(ctx)
+    }
+
+    /// `AES_Encrypt_ECB`: encrypts the blocks in place, two at a time.
+    pub fn encrypt_ecb(&self, blocks: &mut [[u8; 16]]) {
+        for pair in blocks.chunks_mut(2) {
+            let mut q = load_blocks(pair);
+            aes_ct_ortho(&mut q);
+            aes_ct_bitslice_encrypt(self.num_rounds, &self.sk_exp, &mut q);
+            aes_ct_ortho(&mut q);
+            store_blocks(pair, &q);
+        }
+    }
+
+    /// `AES_Decrypt_ECB`: decrypts the blocks in place, two at a time.
+    pub fn decrypt_ecb(&self, blocks: &mut [[u8; 16]]) {
+        for pair in blocks.chunks_mut(2) {
+            let mut q = load_blocks(pair);
+            aes_ct_ortho(&mut q);
+            aes_ct_bitslice_decrypt(self.num_rounds, &self.sk_exp, &mut q);
+            aes_ct_ortho(&mut q);
+            store_blocks(pair, &q);
+        }
+    }
+
+    /// `AES_Encrypt`: the encryption of one block.
+    pub fn encrypt(&self, src: &[u8; 16]) -> [u8; 16] {
+        let mut b = [*src];
+        self.encrypt_ecb(&mut b);
+        b[0]
+    }
+
+    /// `AES_Decrypt`: the decryption of one block.
+    pub fn decrypt(&self, src: &[u8; 16]) -> [u8; 16] {
+        let mut b = [*src];
+        self.decrypt_ecb(&mut b);
+        b[0]
+    }
+}
+
 /// `dec32le`.
-fn dec32le(src: &[u8]) -> u32 {
-    u32::from_le_bytes([src[0], src[1], src[2], src[3]])
+fn dec32le(src: &[u8; 4]) -> u32 {
+    u32::from_le_bytes(*src)
 }
 
 /// `enc32le`.
-fn enc32le(dst: &mut [u8], x: u32) {
-    dst[..4].copy_from_slice(&x.to_le_bytes());
+fn enc32le(x: u32) -> [u8; 4] {
+    x.to_le_bytes()
 }
 
 // This constant-time implementation is "bitsliced": the 128-bit state is split over eight
@@ -166,7 +248,7 @@ fn enc32le(dst: &mut [u8], x: u32) {
 /// Note that variables x* (input) and s* (output) are numbered in "reverse" order (x0 is the
 /// high bit, x7 is the low bit).
 #[allow(non_snake_case)] // the C name
-pub fn aes_ct_bitslice_Sbox(q: &mut [u32; 8]) {
+fn aes_ct_bitslice_Sbox(q: &mut [u32; 8]) {
     let x0 = q[7];
     let x1 = q[6];
     let x2 = q[5];
@@ -309,21 +391,15 @@ pub fn aes_ct_bitslice_Sbox(q: &mut [u32; 8]) {
     q[0] = s7;
 }
 
-/// `SWAPN`: exchanges the bits of `x` and `y` selected by the masks `cl` (low) and `ch`
-/// (high), `s` positions apart.
-fn swapn(cl: u32, ch: u32, s: u32, x: &mut u32, y: &mut u32) {
-    let a = *x;
-    let b = *y;
-    *x = (a & cl) | ((b & cl) << s);
-    *y = ((a & ch) >> s) | (b & ch);
+/// `SWAPN`: the words `a` and `b` with the bits selected by the masks `cl` (low) and `ch`
+/// (high), `s` positions apart, exchanged.
+fn swapn(cl: u32, ch: u32, s: u32, a: u32, b: u32) -> (u32, u32) {
+    ((a & cl) | ((b & cl) << s), ((a & ch) >> s) | (b & ch))
 }
 
 /// `SWAP2`, `SWAP4` and `SWAP8` on `q[i]` and `q[j]`.
 fn swap_pair(q: &mut [u32; 8], i: usize, j: usize, cl: u32, ch: u32, s: u32) {
-    let (mut x, mut y) = (q[i], q[j]);
-    swapn(cl, ch, s, &mut x, &mut y);
-    q[i] = x;
-    q[j] = y;
+    (q[i], q[j]) = swapn(cl, ch, s, q[i], q[j]);
 }
 
 /// `aes_ct_ortho`: perform bytewise orthogonalization of eight 32-bit words. Bytes of q0..q7
@@ -331,7 +407,7 @@ fn swap_pair(q: &mut [u32; 8], i: usize, j: usize, cl: u32, ch: u32, s: u32) {
 /// to 8*i+7 in q[j]), the bit of rank k in x (0 <= k <= 7) goes to q[k] at rank 8*i+j.
 ///
 /// This operation is an involution.
-pub fn aes_ct_ortho(q: &mut [u32; 8]) {
+fn aes_ct_ortho(q: &mut [u32; 8]) {
     for (i, j) in [(0, 1), (2, 3), (4, 5), (6, 7)] {
         swap_pair(q, i, j, 0x55555555, 0xAAAAAAAA, 1);
     }
@@ -356,7 +432,7 @@ fn sub_word(x: u32) -> u32 {
 /// `aes_keysched_base`: base key schedule code. Subkeys are produced in little-endian
 /// convention (but not bitsliced). Key length is expressed in bytes. The number of rounds, or
 /// `EINVAL` for a size other than 16, 24 or 32.
-fn aes_keysched_base(skey: &mut [u32; 60], key: &[u8]) -> Result<u32, Errno> {
+fn aes_keysched_base(skey: &mut [u32; 60], key: &[u8]) -> Result<usize, Errno> {
     let key_len = key.len();
     let num_rounds = match key_len {
         16 => 10,
@@ -365,11 +441,11 @@ fn aes_keysched_base(skey: &mut [u32; 60], key: &[u8]) -> Result<u32, Errno> {
         _ => return Err(Errno::EINVAL),
     };
     let nk = key_len >> 2;
-    let nkf = ((num_rounds + 1) << 2) as usize;
-    for i in 0..nk {
-        skey[i] = dec32le(&key[i << 2..]);
+    let nkf = (num_rounds + 1) << 2;
+    for (w, k) in skey.iter_mut().zip(key.as_chunks::<4>().0) {
+        *w = dec32le(k);
     }
-    let mut tmp = skey[(key_len >> 2) - 1];
+    let mut tmp = skey[nk - 1];
     let (mut j, mut k) = (0, 0);
     for i in nk..nkf {
         if j == 0 {
@@ -392,48 +468,48 @@ fn aes_keysched_base(skey: &mut [u32; 60], key: &[u8]) -> Result<u32, Errno> {
 /// `aes_ct_keysched`: AES key schedule, constant-time version. `comp_skey` is filled with n+1
 /// 128-bit subkeys, where n is the number of rounds (10 to 14, depending on key size). The
 /// number of rounds is returned; `EINVAL` if the key size is invalid (not 16, 24 or 32).
-pub fn aes_ct_keysched(comp_skey: &mut [u32], key: &[u8]) -> Result<u32, Errno> {
+fn aes_ct_keysched(comp_skey: &mut [u32; 60], key: &[u8]) -> Result<usize, Errno> {
     let mut skey = [0u32; 60];
 
     let num_rounds = aes_keysched_base(&mut skey, key)?;
-    for u in 0..=num_rounds as usize {
-        let mut q = [0u32; 8];
-
-        q[0] = skey[u << 2];
-        q[1] = q[0];
-        q[2] = skey[(u << 2) + 1];
-        q[3] = q[2];
-        q[4] = skey[(u << 2) + 2];
-        q[5] = q[4];
-        q[6] = skey[(u << 2) + 3];
-        q[7] = q[6];
+    let comp = comp_skey.as_chunks_mut::<4>().0;
+    for (c, s) in comp
+        .iter_mut()
+        .zip(skey.as_chunks::<4>().0)
+        .take(num_rounds + 1)
+    {
+        let mut q = [s[0], s[0], s[1], s[1], s[2], s[2], s[3], s[3]];
         aes_ct_ortho(&mut q);
-        comp_skey[u << 2] = (q[0] & 0x55555555) | (q[1] & 0xAAAAAAAA);
-        comp_skey[(u << 2) + 1] = (q[2] & 0x55555555) | (q[3] & 0xAAAAAAAA);
-        comp_skey[(u << 2) + 2] = (q[4] & 0x55555555) | (q[5] & 0xAAAAAAAA);
-        comp_skey[(u << 2) + 3] = (q[6] & 0x55555555) | (q[7] & 0xAAAAAAAA);
+        c[0] = (q[0] & 0x55555555) | (q[1] & 0xAAAAAAAA);
+        c[1] = (q[2] & 0x55555555) | (q[3] & 0xAAAAAAAA);
+        c[2] = (q[4] & 0x55555555) | (q[5] & 0xAAAAAAAA);
+        c[3] = (q[6] & 0x55555555) | (q[7] & 0xAAAAAAAA);
     }
     Ok(num_rounds)
 }
 
 /// `aes_ct_skey_expand`: expand AES subkeys as produced by `aes_ct_keysched()`, into a larger
-/// array suitable for `aes_ct_bitslice_encrypt()` and `aes_ct_bitslice_decrypt()`.
-pub fn aes_ct_skey_expand(skey: &mut [u32], num_rounds: u32, comp_skey: &[u32]) {
-    let n = ((num_rounds + 1) << 2) as usize;
-    for (u, v) in (0..n).zip((0..).step_by(2)) {
-        let mut x = comp_skey[u];
-        let mut y = x;
-        x &= 0x55555555;
-        skey[v] = x | (x << 1);
-        y &= 0xAAAAAAAA;
-        skey[v + 1] = y | (y >> 1);
+/// array suitable for `aes_ct_bitslice_encrypt()` and `aes_ct_bitslice_decrypt()`: each
+/// compressed word becomes two, its even and its odd bits each doubled.
+fn aes_ct_skey_expand(
+    skey: &mut [[u32; 8]; AES_MAXROUNDS + 1],
+    num_rounds: usize,
+    comp_skey: &[u32; 60],
+) {
+    let rounds = comp_skey.as_chunks::<4>().0;
+    for (rk, comp) in skey.iter_mut().zip(rounds).take(num_rounds + 1) {
+        for (pair, x) in rk.as_chunks_mut::<2>().0.iter_mut().zip(comp) {
+            let lo = x & 0x55555555;
+            let hi = x & 0xAAAAAAAA;
+            *pair = [lo | (lo << 1), hi | (hi >> 1)];
+        }
     }
 }
 
-/// `add_round_key`.
-fn add_round_key(q: &mut [u32; 8], sk: &[u32]) {
-    for i in 0..8 {
-        q[i] ^= sk[i];
+/// `add_round_key`: xors the round key `sk` into the state.
+fn add_round_key(q: &mut [u32; 8], sk: &[u32; 8]) {
+    for (w, k) in q.iter_mut().zip(sk) {
+        *w ^= k;
     }
 }
 
@@ -480,17 +556,21 @@ fn mix_columns(q: &mut [u32; 8]) {
 
 /// `aes_ct_bitslice_encrypt`: compute AES encryption on bitsliced data. Since input is stored
 /// on eight 32-bit words, two block encryptions are actually performed in parallel.
-pub fn aes_ct_bitslice_encrypt(num_rounds: u32, skey: &[u32], q: &mut [u32; 8]) {
-    add_round_key(q, skey);
-    for u in 1..num_rounds as usize {
+fn aes_ct_bitslice_encrypt(
+    num_rounds: usize,
+    skey: &[[u32; 8]; AES_MAXROUNDS + 1],
+    q: &mut [u32; 8],
+) {
+    add_round_key(q, &skey[0]);
+    for rk in &skey[1..num_rounds] {
         aes_ct_bitslice_Sbox(q);
         shift_rows(q);
         mix_columns(q);
-        add_round_key(q, &skey[u << 3..]);
+        add_round_key(q, rk);
     }
     aes_ct_bitslice_Sbox(q);
     shift_rows(q);
-    add_round_key(q, &skey[(num_rounds as usize) << 3..]);
+    add_round_key(q, &skey[num_rounds]);
 }
 
 /// `aes_ct_bitslice_invSbox`: like `aes_ct_bitslice_Sbox()`, but for the inverse S-box.
@@ -509,7 +589,7 @@ pub fn aes_ct_bitslice_encrypt(num_rounds: u32, skey: &[u32], q: &mut [u32; 8]) 
 /// decryption could be made faster, but it is already quite faster than CBC encryption
 /// because two blocks can be processed in parallel.
 #[allow(non_snake_case)] // the C name
-pub fn aes_ct_bitslice_invSbox(q: &mut [u32; 8]) {
+fn aes_ct_bitslice_invSbox(q: &mut [u32; 8]) {
     // B() of the input, with the 0x63 added (x ^ 0x63 is the complement of bits 0, 1, 5, 6).
     fn b_transform(q: &mut [u32; 8]) {
         let q0 = !q[0];
@@ -593,123 +673,54 @@ fn inv_mix_columns(q: &mut [u32; 8]) {
 
 /// `aes_ct_bitslice_decrypt`: compute AES decryption on bitsliced data. Since input is stored
 /// on eight 32-bit words, two block decryptions are actually performed in parallel.
-pub fn aes_ct_bitslice_decrypt(num_rounds: u32, skey: &[u32], q: &mut [u32; 8]) {
-    add_round_key(q, &skey[(num_rounds as usize) << 3..]);
-    for u in (1..num_rounds as usize).rev() {
+fn aes_ct_bitslice_decrypt(
+    num_rounds: usize,
+    skey: &[[u32; 8]; AES_MAXROUNDS + 1],
+    q: &mut [u32; 8],
+) {
+    add_round_key(q, &skey[num_rounds]);
+    for rk in skey[1..num_rounds].iter().rev() {
         inv_shift_rows(q);
         aes_ct_bitslice_invSbox(q);
-        add_round_key(q, &skey[u << 3..]);
+        add_round_key(q, rk);
         inv_mix_columns(q);
     }
     inv_shift_rows(q);
     aes_ct_bitslice_invSbox(q);
-    add_round_key(q, skey);
+    add_round_key(q, &skey[0]);
 }
 
-/// `AES_Setkey`: sets the key of 16, 24 or 32 bytes.
-#[allow(non_snake_case)] // the C name
-pub fn AES_Setkey(ctx: &mut AesCtx, key: &[u8]) -> Result<(), Errno> {
-    ctx.num_rounds = aes_ct_keysched(&mut ctx.sk, key)?;
-    aes_ct_skey_expand(&mut ctx.sk_exp, ctx.num_rounds, &ctx.sk);
-    Ok(())
-}
-
-/// Loads two blocks (the second may be absent) into the bitsliced state.
-fn load_blocks(src: &[u8], two: bool) -> [u32; 8] {
+/// Loads one or two blocks into the bitsliced state: the first block in the even words, the
+/// second (zero when absent) in the odd ones.
+fn load_blocks(blocks: &[[u8; 16]]) -> [u32; 8] {
     let mut q = [0u32; 8];
 
-    q[0] = dec32le(src);
-    q[2] = dec32le(&src[4..]);
-    q[4] = dec32le(&src[8..]);
-    q[6] = dec32le(&src[12..]);
-    if two {
-        q[1] = dec32le(&src[16..]);
-        q[3] = dec32le(&src[20..]);
-        q[5] = dec32le(&src[24..]);
-        q[7] = dec32le(&src[28..]);
+    for (b, blk) in blocks.iter().take(2).enumerate() {
+        for (i, w) in blk.as_chunks::<4>().0.iter().enumerate() {
+            q[2 * i + b] = dec32le(w);
+        }
     }
     q
 }
 
-/// Stores one or two blocks from the bitsliced state.
-fn store_blocks(dst: &mut [u8], q: &[u32; 8], two: bool) {
-    enc32le(dst, q[0]);
-    enc32le(&mut dst[4..], q[2]);
-    enc32le(&mut dst[8..], q[4]);
-    enc32le(&mut dst[12..], q[6]);
-    if two {
-        enc32le(&mut dst[16..], q[1]);
-        enc32le(&mut dst[20..], q[3]);
-        enc32le(&mut dst[24..], q[5]);
-        enc32le(&mut dst[28..], q[7]);
-    }
-}
-
-/// `AES_Encrypt_ECB`: encrypts `num_blocks` blocks of `src` into `dst`.
-#[allow(non_snake_case)] // the C name
-pub fn AES_Encrypt_ECB(ctx: &AesCtx, src: &[u8], dst: &mut [u8], num_blocks: usize) {
-    let mut num_blocks = num_blocks;
-    let (mut src, mut dst) = (src, dst);
-
-    while num_blocks > 0 {
-        let two = num_blocks > 1;
-        let mut q = load_blocks(src, two);
-        aes_ct_ortho(&mut q);
-        aes_ct_bitslice_encrypt(ctx.num_rounds, &ctx.sk_exp, &mut q);
-        aes_ct_ortho(&mut q);
-        store_blocks(dst, &q, two);
-        if !two {
-            break;
+/// Stores one or two blocks from the bitsliced state (the inverse of `load_blocks`).
+fn store_blocks(blocks: &mut [[u8; 16]], q: &[u32; 8]) {
+    for (b, blk) in blocks.iter_mut().take(2).enumerate() {
+        for (i, w) in blk.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            *w = enc32le(q[2 * i + b]);
         }
-        src = &src[32..];
-        dst = &mut dst[32..];
-        num_blocks -= 2;
     }
-}
-
-/// `AES_Decrypt_ECB`: decrypts `num_blocks` blocks of `src` into `dst`.
-#[allow(non_snake_case)] // the C name
-pub fn AES_Decrypt_ECB(ctx: &AesCtx, src: &[u8], dst: &mut [u8], num_blocks: usize) {
-    let mut num_blocks = num_blocks;
-    let (mut src, mut dst) = (src, dst);
-
-    while num_blocks > 0 {
-        let two = num_blocks > 1;
-        let mut q = load_blocks(src, two);
-        aes_ct_ortho(&mut q);
-        aes_ct_bitslice_decrypt(ctx.num_rounds, &ctx.sk_exp, &mut q);
-        aes_ct_ortho(&mut q);
-        store_blocks(dst, &q, two);
-        if !two {
-            break;
-        }
-        src = &src[32..];
-        dst = &mut dst[32..];
-        num_blocks -= 2;
-    }
-}
-
-/// `AES_Encrypt`: encrypts one block.
-#[allow(non_snake_case)] // the C name
-pub fn AES_Encrypt(ctx: &AesCtx, src: &[u8; 16], dst: &mut [u8; 16]) {
-    AES_Encrypt_ECB(ctx, src, dst, 1);
-}
-
-/// `AES_Decrypt`: decrypts one block.
-#[allow(non_snake_case)] // the C name
-pub fn AES_Decrypt(ctx: &AesCtx, src: &[u8; 16], dst: &mut [u8; 16]) {
-    AES_Decrypt_ECB(ctx, src, dst, 1);
 }
 
 /// `AES_KeySetup_Encrypt`: the encryption subkeys in big-endian words (`4 * (rounds + 1)` of
 /// them); the number of rounds.
 #[allow(non_snake_case)] // the C name
-pub fn AES_KeySetup_Encrypt(skey: &mut [u32], key: &[u8]) -> Result<u32, Errno> {
+pub fn AES_KeySetup_Encrypt(skey: &mut [u32; 60], key: &[u8]) -> Result<usize, Errno> {
     let mut tkey = [0u32; 60];
 
     let r = aes_keysched_base(&mut tkey, key)?;
-    for u in 0..((r + 1) << 2) as usize {
-        skey[u] = tkey[u].swap_bytes();
+    for (s, t) in skey.iter_mut().zip(tkey).take((r + 1) << 2) {
+        *s = t.swap_bytes();
     }
     Ok(r)
 }
@@ -745,11 +756,11 @@ fn mule(x: u32) -> u32 {
 /// decryption wants (big-endian words, `InvMixColumns` applied to all but the first and last
 /// round keys); the number of rounds.
 #[allow(non_snake_case)] // the C name
-pub fn AES_KeySetup_Decrypt(skey: &mut [u32], key: &[u8]) -> Result<u32, Errno> {
+pub fn AES_KeySetup_Decrypt(skey: &mut [u32; 60], key: &[u8]) -> Result<usize, Errno> {
     let mut tkey = [0u32; 60];
 
     // Compute encryption subkeys. We get them in big-endian notation.
-    let r = AES_KeySetup_Encrypt(&mut tkey, key)? as usize;
+    let r = AES_KeySetup_Encrypt(&mut tkey, key)?;
 
     // Copy the subkeys in reverse order. Also, apply InvMixColumns() on the subkeys (except
     // first and last).
@@ -769,7 +780,7 @@ pub fn AES_KeySetup_Decrypt(skey: &mut [u32], key: &[u8]) -> Result<u32, Errno> 
         skey[((r - (u >> 2)) << 2) + (u & 3)] = tk;
     }
 
-    Ok(r as u32)
+    Ok(r)
 }
 /* </CODE> */
 
@@ -801,36 +812,29 @@ mod tests {
             (32, "8ea2b7ca516745bfeafc49904b496089"),
         ];
         for (len, ct) in want {
-            let mut ctx = AesCtx::default();
-            assert_eq!(AES_Setkey(&mut ctx, &key(len)), Ok(()));
-            assert_eq!(ctx.num_rounds, len as u32 / 4 + 6);
+            let ctx = AesCtx::new(&key(len)).expect("AES key size");
+            assert_eq!(ctx.num_rounds, len / 4 + 6);
 
             let pt: [u8; 16] = hexn(PT);
-            let mut out = [0u8; 16];
-            AES_Encrypt(&ctx, &pt, &mut out);
+            let out = ctx.encrypt(&pt);
             assert_eq!(out.to_vec(), hex(ct), "encrypt {len}");
-            let mut back = [0u8; 16];
-            AES_Decrypt(&ctx, &out, &mut back);
-            assert_eq!(back, pt, "decrypt {len}");
+            assert_eq!(ctx.decrypt(&out), pt, "decrypt {len}");
         }
     }
 
     #[test]
     fn fips197_appendix_b() {
         let k: [u8; 16] = hexn("2b7e151628aed2a6abf7158809cf4f3c");
-        let mut ctx = AesCtx::default();
-        assert_eq!(AES_Setkey(&mut ctx, &k), Ok(()));
-        let mut out = [0u8; 16];
-        AES_Encrypt(&ctx, &hexn("3243f6a8885a308d313198a2e0370734"), &mut out);
+        let ctx = AesCtx::new(&k).expect("AES key size");
+        let out = ctx.encrypt(&hexn("3243f6a8885a308d313198a2e0370734"));
         assert_eq!(out.to_vec(), hex("3925841d02dc09fbdc118597196a0b32"));
     }
 
     #[test]
     fn bad_key_sizes_are_rejected() {
-        let mut ctx = AesCtx::default();
         for len in [0usize, 1, 15, 17, 20, 23, 25, 31, 33, 64] {
             let k = key(len);
-            assert_eq!(AES_Setkey(&mut ctx, &k), Err(Errno::EINVAL), "{len}");
+            assert_eq!(AesCtx::new(&k).map(drop), Err(Errno::EINVAL), "{len}");
             let mut sk = [0u32; 60];
             assert_eq!(
                 AES_KeySetup_Encrypt(&mut sk, &k),
@@ -884,29 +888,22 @@ mod tests {
 
     #[test]
     fn ecb_runs_of_any_length() {
-        let mut ctx = AesCtx::default();
-        assert_eq!(AES_Setkey(&mut ctx, &key(24)), Ok(()));
-        let data: Vec<u8> = (0..16 * 7).map(|i| (i * 5 + 1) as u8).collect();
+        let ctx = AesCtx::new(&key(24)).expect("AES key size");
+        let data: Vec<[u8; 16]> = (0..7u8)
+            .map(|b| core::array::from_fn(|i| ((usize::from(b) * 16 + i) * 5 + 1) as u8))
+            .collect();
 
         // One block at a time is the reference.
-        let mut single = std::vec![0u8; data.len()];
-        for (s, d) in data.chunks(16).zip(single.chunks_mut(16)) {
-            let mut b = [0u8; 16];
-            b.copy_from_slice(s);
-            let mut o = [0u8; 16];
-            AES_Encrypt(&ctx, &b, &mut o);
-            d.copy_from_slice(&o);
-        }
+        let single: Vec<[u8; 16]> = data.iter().map(|b| ctx.encrypt(b)).collect();
         for n in 1..=7 {
-            let mut out = std::vec![0u8; 16 * n];
-            AES_Encrypt_ECB(&ctx, &data[..16 * n], &mut out, n);
-            assert_eq!(out, &single[..16 * n], "{n} blocks");
-            let mut back = std::vec![0u8; 16 * n];
-            AES_Decrypt_ECB(&ctx, &out, &mut back, n);
-            assert_eq!(back, &data[..16 * n], "{n} blocks back");
+            let mut out = data[..n].to_vec();
+            ctx.encrypt_ecb(&mut out);
+            assert_eq!(out, &single[..n], "{n} blocks");
+            ctx.decrypt_ecb(&mut out);
+            assert_eq!(out, &data[..n], "{n} blocks back");
         }
         // Zero blocks is nothing.
-        AES_Encrypt_ECB(&ctx, &[], &mut [], 0);
+        ctx.encrypt_ecb(&mut []);
     }
 
     #[test]
@@ -920,20 +917,18 @@ mod tests {
 
             let mut rek = [0u32; 60];
             let mut rdk = [0u32; 60];
-            assert_eq!(rijndaelKeySetupEnc(&mut rek, &k), Ok(r as usize));
-            assert_eq!(rijndaelKeySetupDec(&mut rdk, &k), Ok(r as usize));
-            let n = 4 * (r as usize + 1);
+            assert_eq!(rijndaelKeySetupEnc(&mut rek, &k), Ok(r));
+            assert_eq!(rijndaelKeySetupDec(&mut rdk, &k), Ok(r));
+            let n = 4 * (r + 1);
             assert_eq!(ek[..n], rek[..n], "encrypt schedule {len}");
             assert_eq!(dk[..n], rdk[..n], "decrypt schedule {len}");
 
             // And both ciphers agree on a block.
             let rctx = RijndaelCtx::new(&k).expect("AES key size");
-            let mut a = AesCtx::default();
-            assert_eq!(AES_Setkey(&mut a, &k), Ok(()));
+            let a = AesCtx::new(&k).expect("AES key size");
             let pt: [u8; 16] = hexn("00112233445566778899aabbccddeeff");
-            let mut x = [0u8; 16];
-            AES_Encrypt(&a, &pt, &mut x);
-            assert_eq!(x, rctx.encrypt(&pt));
+            assert_eq!(a.encrypt(&pt), rctx.encrypt(&pt));
+            assert_eq!(a.decrypt(&pt), rctx.decrypt(&pt));
         }
     }
 
@@ -944,8 +939,7 @@ mod tests {
             "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51
                   30c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710",
         );
-        let mut ctx = AesCtx::default();
-        assert_eq!(AES_Setkey(&mut ctx, &k), Ok(()));
+        let ctx = AesCtx::new(&k).expect("AES key size");
 
         // F.2.1 CBC-AES128.Encrypt
         let mut prev: [u8; 16] = hexn("000102030405060708090a0b0c0d0e0f");
@@ -955,7 +949,7 @@ mod tests {
             for i in 0..16 {
                 x[i] = blk[i] ^ prev[i];
             }
-            AES_Encrypt(&ctx, &x, &mut prev);
+            prev = ctx.encrypt(&x);
             cbc.extend_from_slice(&prev);
         }
         assert_eq!(
@@ -970,8 +964,7 @@ mod tests {
         let mut counter: [u8; 16] = hexn("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
         let mut ctr = Vec::new();
         for blk in pt.chunks(16) {
-            let mut ks = [0u8; 16];
-            AES_Encrypt(&ctx, &counter, &mut ks);
+            let ks = ctx.encrypt(&counter);
             ctr.extend(blk.iter().zip(ks).map(|(a, b)| a ^ b));
             for i in (0..16).rev() {
                 counter[i] = counter[i].wrapping_add(1);
@@ -987,6 +980,59 @@ mod tests {
              5ae4df3edbd5d35e5b4f09020db03eab1e031dda2fbe03d1792170a0f3009cee"
             )
         );
+    }
+
+    /// xorshift64: the property tests' generator.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    fn block(st: &mut u64) -> [u8; 16] {
+        let mut b = [0u8; 16];
+        b[..8].copy_from_slice(&next(st).to_le_bytes());
+        b[8..].copy_from_slice(&next(st).to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn agrees_with_the_table_driven_cipher_over_random_keys_and_blocks() {
+        // `rijndael.rs` is an independent implementation (tables, not circuits): the two must
+        // agree on every block, both ways, and ECB runs of random length must be the blocks one
+        // at a time.
+        let mut st = 0xfeed_face_cafe_beefu64;
+        for i in 0..300 {
+            let len = [16, 24, 32][i % 3];
+            let k: Vec<u8> = (0..len).map(|_| next(&mut st) as u8).collect();
+            let ctx = AesCtx::new(&k).expect("AES key size");
+            let rctx = RijndaelCtx::new(&k).expect("AES key size");
+            let n = (next(&mut st) % 6) as usize;
+            let data: Vec<[u8; 16]> = (0..n).map(|_| block(&mut st)).collect();
+            let mut ecb = data.clone();
+            ctx.encrypt_ecb(&mut ecb);
+            for (c, p) in ecb.iter().zip(&data) {
+                assert_eq!(*c, rctx.encrypt(p));
+                assert_eq!(ctx.decrypt(c), *p);
+            }
+            ctx.decrypt_ecb(&mut ecb);
+            assert_eq!(ecb, data);
+        }
+    }
+
+    #[test]
+    fn zeroize_clears_the_subkeys() {
+        // What `Drop` runs.
+        let mut ctx = AesCtx::new(&key(32)).expect("AES key size");
+        ctx.zeroize();
+        assert!(
+            ctx.sk
+                .iter()
+                .chain(ctx.sk_exp.iter().flatten())
+                .all(|w| *w == 0)
+        );
+        assert_eq!(ctx.num_rounds, 0);
     }
 }
 /* </TESTS> */

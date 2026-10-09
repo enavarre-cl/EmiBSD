@@ -526,7 +526,7 @@ pub fn swcr_authcompute(
     let axf = auth.sw_axf;
     let mut aalg = [0u8; AALG_MAX_RESULT_LEN];
 
-    let mut ctx: AuthCtx = **ictx;
+    let mut ctx: AuthCtx = (**ictx).clone();
 
     match buf {
         CryptoBuf::Mbuf(m) => {
@@ -556,7 +556,7 @@ pub fn swcr_authcompute(
             };
 
             (axf.Final)(&mut aalg, &mut ctx);
-            ctx = **octx;
+            ctx = (**octx).clone();
             (axf.Update)(&mut ctx, &aalg[..usize::from(axf.hashsize)])?;
             (axf.Final)(&mut aalg, &mut ctx);
         }
@@ -638,7 +638,7 @@ pub fn swcr_authenc(crp: &mut Cryptop<'_>, session: &mut SwcrList) -> Result<(),
                 let Some(ictx) = &auth.sw_ictx else {
                     return Err(Errno::EINVAL);
                 };
-                ctx = **ictx;
+                ctx = (**ictx).clone();
                 blksz = usize::from(auth.sw_axf.blocksize);
             }
             _ => return Err(Errno::EINVAL),
@@ -2098,7 +2098,7 @@ mod tests {
         let SwcrUn::Auth(a) = &list[0].SWCR_UN else {
             panic!("an authenticator")
         };
-        let ictx = a.sw_ictx.as_deref().copied();
+        let ictx = a.sw_ictx.as_deref().cloned();
         assert!(matches!(ictx, Some(AuthCtx::Sha1(_))));
         drop(list);
         // The driver's own free of a taken slot reports the empty session.
