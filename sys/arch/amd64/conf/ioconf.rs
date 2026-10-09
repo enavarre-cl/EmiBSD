@@ -52,6 +52,7 @@
 //! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?` (M16b),
 //! `pcn* at pci?`, `ne* at pci?`, `fxp* at pci?`, `inphy* at mii?`, `dc* at pci?`,
 //! `lxtphy* at mii?` and `dcphy* at mii?` (M16c),
+//! `eap* at pci?`, `audio* at eap?` and `midi* at eap?` (M16d),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -68,7 +69,7 @@
 //! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
 //! device at `mii?` (the other PHY drivers), every
 //! other
-//! `audio*` (at `eap?`, `envy?`, ...), `pci*` at
+//! `audio*` (at `envy?`, ...), every other `midi*` (at `umidi?`, `envy?`, `mpu?`), `pci*` at
 //! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*`, `cdce*`, `uftdi*` and `ugen*`, every device
 //! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*` but the one at `ukbd?`, every
 //! `wsmouse*` but the ones at `ums?` and `uwacom?`, every `ucom*` but the one at `uftdi?`;
@@ -111,6 +112,7 @@ use crate::dev::ipmi::{IPMI_CA, IPMI_CD};
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
 use crate::dev::isa::vga_isa::VGA_ISA_CA;
+use crate::dev::midi::{MIDI_CA, MIDI_CD};
 use crate::dev::mii::dcphy::{DCPHY_CA, DCPHY_CD};
 use crate::dev::mii::inphy::{INPHY_CA, INPHY_CD};
 use crate::dev::mii::lxtphy::{LXTPHY_CA, LXTPHY_CD};
@@ -120,6 +122,7 @@ use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
 use crate::dev::pci::ahci_pci::AHCI_PCI_CA;
 use crate::dev::pci::auich::{AUICH_CA, AUICH_CD};
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
+use crate::dev::pci::eap::{EAP_CA, EAP_CD};
 use crate::dev::pci::ehci_pci::EHCI_PCI_CA;
 use crate::dev::pci::ichiic::{ICHIIC_CA, ICHIIC_CD};
 use crate::dev::pci::if_dc_pci::DC_PCI_CA;
@@ -263,10 +266,14 @@ const LOC_UHIDBUS_UNK: &[i64] = &[-1];
 /// `pv[]` for children of `auich*` (`cfdata[18]`).
 const PV_AUICH: &[i16] = &[18];
 
-/// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[20]`) and
-/// `uaudio*` (`cfdata[69]`): `config(8)` merges `audio* at azalia?` and `audio* at
-/// uaudio?` into one entry.
-const PV_AZALIA: &[i16] = &[20, 69];
+/// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[20]`),
+/// `uaudio*` (`cfdata[69]`) and `eap*` (`cfdata[84]`): `config(8)` merges `audio* at
+/// azalia?`, `audio* at uaudio?` and `audio* at eap?` into one entry.
+const PV_AZALIA: &[i16] = &[20, 69, 84];
+
+/// `pv[]` for children of `eap*` (`cfdata[84]`) through the `midibus` attribute: `midi*
+/// at eap?` (M16d).
+const PV_EAP: &[i16] = &[84];
 
 /// `pv[]` for children of `bios0` (`cfdata[30]`).
 const PV_BIOS: &[i16] = &[30];
@@ -364,11 +371,11 @@ const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 84 entries, 85 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 86 entries, 87 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    85
+    87
 } else {
-    84
+    86
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -587,7 +594,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 21: audio* at azalia?, audio* at uaudio?
+    // 21: audio* at azalia?, audio* at uaudio?, audio* at eap?
     Cfdata::new(
         &AUDIO_CA,
         &AUDIO_CD,
@@ -1314,7 +1321,21 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_MII,
         0,
     ),
-    // 84: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 84: eap* at pci? (M16d)
+    Cfdata::new(
+        &EAP_CA,
+        &EAP_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 85: midi* at eap? (M16d)
+    Cfdata::new(&MIDI_CA, &MIDI_CD, 0, FSTATE_STAR, &[], 0, PV_EAP, 0, 0),
+    // 86: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

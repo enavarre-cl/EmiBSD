@@ -39,6 +39,8 @@ pub mod ahci_pci;
 pub mod auich;
 pub mod azalia;
 pub mod azalia_codec;
+pub mod eap;
+pub mod eapreg;
 pub mod ehci_pci;
 pub mod gcu_reg;
 pub mod gcu_var;

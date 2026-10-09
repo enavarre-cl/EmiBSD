@@ -67,7 +67,7 @@
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
 //!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c`, `if_re_pci.c`,
-//!   `if_vmx.c`, `if_dc_pci.c`, `vga_pci.c`, `ppb.c`, `ehci_pci.c` and arm64's `acpipci.c`). The whole header, and `pcidevs_data.h` for
+//!   `if_vmx.c`, `if_dc_pci.c`, `vga_pci.c`, `ppb.c`, `ehci_pci.c`, `eap.c` and arm64's `acpipci.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -1951,6 +1951,21 @@ pub const PCI_PRODUCT_LINKSYS_PCM200: u32 = 0xab09;
 pub const PCI_VENDOR_HAWKING: u32 = 0x17b3;
 /// `PCI_PRODUCT_HAWKING_PN672TX`: PN672TX.
 pub const PCI_PRODUCT_HAWKING_PN672TX: u32 = 0xab08;
+
+// eap(4) (M16d): eap.c's eap_devices[].
+
+/// `PCI_VENDOR_CREATIVELABS`: Creative Labs.
+pub const PCI_VENDOR_CREATIVELABS: u32 = 0x1102;
+/// `PCI_PRODUCT_CREATIVELABS_EV1938`: Ectiva 1938.
+pub const PCI_PRODUCT_CREATIVELABS_EV1938: u32 = 0x8938;
+/// `PCI_VENDOR_ENSONIQ`: Ensoniq.
+pub const PCI_VENDOR_ENSONIQ: u32 = 0x1274;
+/// `PCI_PRODUCT_ENSONIQ_AUDIOPCI97`: AudioPCI97.
+pub const PCI_PRODUCT_ENSONIQ_AUDIOPCI97: u32 = 0x1371;
+/// `PCI_PRODUCT_ENSONIQ_AUDIOPCI`: AudioPCI.
+pub const PCI_PRODUCT_ENSONIQ_AUDIOPCI: u32 = 0x5000;
+/// `PCI_PRODUCT_ENSONIQ_CT5880`: CT5880.
+pub const PCI_PRODUCT_ENSONIQ_CT5880: u32 = 0x5880;
 /* </CODE> */
 
 /* <TESTS> */
@@ -3856,6 +3871,32 @@ mod tests {
             ("PCI_PRODUCT_LINKSYS_PCM200", PCI_PRODUCT_LINKSYS_PCM200),
             ("PCI_VENDOR_HAWKING", PCI_VENDOR_HAWKING),
             ("PCI_PRODUCT_HAWKING_PN672TX", PCI_PRODUCT_HAWKING_PN672TX),
+        ] {
+            assert_eq!(
+                crate::reftest::int(&defs, name),
+                Some(i64::from(value)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn eap_ids_match_the_generated_header() {
+        let defs = crate::reftest::defines("sys/dev/pci/pcidevs.h");
+        for (name, value) in [
+            ("PCI_VENDOR_CREATIVELABS", PCI_VENDOR_CREATIVELABS),
+            (
+                "PCI_PRODUCT_CREATIVELABS_EV1938",
+                PCI_PRODUCT_CREATIVELABS_EV1938,
+            ),
+            ("PCI_VENDOR_ENSONIQ", PCI_VENDOR_ENSONIQ),
+            (
+                "PCI_PRODUCT_ENSONIQ_AUDIOPCI97",
+                PCI_PRODUCT_ENSONIQ_AUDIOPCI97,
+            ),
+            ("PCI_PRODUCT_ENSONIQ_AUDIOPCI", PCI_PRODUCT_ENSONIQ_AUDIOPCI),
+            ("PCI_PRODUCT_ENSONIQ_CT5880", PCI_PRODUCT_ENSONIQ_CT5880),
         ] {
             assert_eq!(
                 crate::reftest::int(&defs, name),

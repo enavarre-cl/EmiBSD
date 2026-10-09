@@ -83,6 +83,7 @@ use crate::dev::diskmap::{diskmapclose, diskmapioctl, diskmapopen, diskmapread, 
 use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
 use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
+use crate::dev::midi::{NMIDI, midiclose, midiioctl, midikqfilter, midiopen, midiread, midiwrite};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
 use crate::dev::usb::ucom::{
     NUCOM, ucomclose, ucomioctl, ucomopen, ucomread, ucomstop, ucomtty, ucomwrite,
@@ -130,8 +131,8 @@ use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
     cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_gpio_init, cdev_ipmi_init,
-    cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init,
-    cdev_tty_init, cdev_usb_init, cdev_usbdev_init, cdev_wsdisplay_init,
+    cdev_midi_init, cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init, cdev_ptc_init,
+    cdev_ptm_init, cdev_tty_init, cdev_usb_init, cdev_usbdev_init, cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
@@ -320,7 +321,16 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 49: Bt848 video capture device (bktr: not ported)
     cnotdef(), // 50: Kernel symbols device (ksyms: not ported)
     cnotdef(), // 51: Kernel statistics (kstat: not ported)
-    cnotdef(), // 52: MIDI I/O (midi: not ported)
+    // 52: MIDI I/O
+    Cell::new(cdev_midi_init(
+        NMIDI,
+        midiopen,
+        midiclose,
+        midiread,
+        midiwrite,
+        midiioctl,
+        midikqfilter,
+    )),
     cnotdef(), // 53 was: sequencer I/O
     cnotdef(), // 54 was: RAIDframe disk driver
     cnotdef(), // 55:
