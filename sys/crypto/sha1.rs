@@ -41,16 +41,28 @@
 //! `HMAC-SHA1-96` and of `hmac.c`.
 //!
 //! Upstream: sys/crypto/sha1.h @ 3ce1f3f79392, sys/crypto/sha1.c @ 3ce1f3f79392
+//! LZ: sys/crypto/sha1.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module; `SHA1_CTX` is [`Sha1Ctx`].
-//! - `SHA1Update` takes a slice. The C's `len << 3` is 32-bit arithmetic (`unsigned int`) and
-//!   wraps for a message of 512 MiB or more before it is added to the 64-bit count; here the
-//!   shift is done in 64 bits.
+//! - The C's `len << 3` is 32-bit arithmetic (`unsigned int`) and wraps for a message of
+//!   512 MiB or more before it is added to the 64-bit count; here the shift is done in 64
+//!   bits.
 //! - `SHA1Transform` expands the message schedule into an 80-word array and runs the rounds
 //!   in a loop; the C expands in place in a 16-word window with the rounds unrolled by macro
 //!   (`SHA1HANDSOFF` is always on: the block is copied). Both compute FIPS 180-4's function.
-//! - `SHA1Final` wipes the context by assignment (`crate::crypto::wipe`).
+//!
+//! ## Redesign
+//! - The context and its three functions are a type with methods (`docs/IDIOMS.md`, "a hash
+//!   context"): `SHA1Init` is [`Sha1Ctx::new`], `SHA1Update` is [`Sha1Ctx::update`] over a
+//!   slice, and `SHA1Final(digest, ctx)` is [`Sha1Ctx::finalize`], which returns the digest
+//!   and wipes the context in place (and the length block, as the C wipes `finalcount`).
+//! - The fields are private. `update` walks whole blocks with `as_chunks` instead of index
+//!   arithmetic over `i` and `j`; `finalize` appends the padding with one `update` of the
+//!   needed zeros instead of one byte at a time, which feeds the same bytes.
+//! - `SHA1Transform` takes the state words and one block, not the context, and keeps its name.
+
+use libkern::explicit_bzero;
 
 use super::wipe;
 
@@ -59,15 +71,18 @@ pub const SHA1_BLOCK_LENGTH: usize = 64;
 /// `SHA1_DIGEST_LENGTH`.
 pub const SHA1_DIGEST_LENGTH: usize = 20;
 
-/// `SHA1_CTX`: a hash in progress.
+/// `SHA1_CTX`: a hash in progress, from [`Sha1Ctx::new`] to [`Sha1Ctx::finalize`].
+///
+/// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
+/// hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sha1Ctx {
     /// `state`: the five chaining words.
-    pub state: [u32; 5],
+    state: [u32; 5],
     /// `count`: the message length so far, in bits.
-    pub count: u64,
+    count: u64,
     /// `buffer`: the partial block.
-    pub buffer: [u8; SHA1_BLOCK_LENGTH],
+    buffer: [u8; SHA1_BLOCK_LENGTH],
 }
 
 impl Default for Sha1Ctx {
@@ -80,13 +95,71 @@ impl Default for Sha1Ctx {
     }
 }
 
+impl Sha1Ctx {
+    /// `SHA1Init`: initialize new context.
+    pub fn new() -> Self {
+        Self {
+            // SHA1 initialization constants
+            state: [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0],
+            count: 0,
+            buffer: [0; SHA1_BLOCK_LENGTH],
+        }
+    }
+
+    /// The bytes waiting in `buffer`: the message length mod 64. The value is below 64, so
+    /// the conversion to `usize` is exact.
+    fn buffered(&self) -> usize {
+        ((self.count >> 3) % SHA1_BLOCK_LENGTH as u64) as usize
+    }
+
+    /// `SHA1Update`: run your data through this.
+    pub fn update(&mut self, data: &[u8]) {
+        let mut data = data;
+        let mut j = self.buffered();
+
+        self.count = self.count.wrapping_add((data.len() as u64) << 3);
+        if j + data.len() >= SHA1_BLOCK_LENGTH {
+            let (head, rest) = data.split_at(SHA1_BLOCK_LENGTH - j);
+            self.buffer[j..].copy_from_slice(head);
+            SHA1Transform(&mut self.state, &self.buffer);
+            let (blocks, tail) = rest.as_chunks::<SHA1_BLOCK_LENGTH>();
+            for block in blocks {
+                SHA1Transform(&mut self.state, block);
+            }
+            data = tail;
+            j = 0;
+        }
+        self.buffer[j..j + data.len()].copy_from_slice(data);
+    }
+
+    /// `SHA1Final`: add padding and return the message digest; the context is wiped.
+    pub fn finalize(&mut self) -> [u8; SHA1_DIGEST_LENGTH] {
+        // Endian independent
+        let mut finalcount = self.count.to_be_bytes();
+
+        // A 1 bit, then zeros up to 56 mod 64 (the C feeds the zeros one at a time).
+        self.update(b"\x80");
+        let zeros = (SHA1_BLOCK_LENGTH + 56 - self.buffered()) % SHA1_BLOCK_LENGTH;
+        self.update(&[0u8; SHA1_BLOCK_LENGTH][..zeros]);
+        self.update(&finalcount); // Should cause a SHA1Transform()
+
+        let mut digest = [0u8; SHA1_DIGEST_LENGTH];
+        for (out, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
+            *out = word.to_be_bytes();
+        }
+        explicit_bzero(&mut finalcount);
+        wipe(self);
+        digest
+    }
+}
+
 /// `SHA1Transform`: hash a single 512-bit block. This is the core of the algorithm.
 #[allow(non_snake_case)] // the C name
 pub fn SHA1Transform(state: &mut [u32; 5], buffer: &[u8; SHA1_BLOCK_LENGTH]) {
     let mut w = [0u32; 80];
 
-    for (i, word) in buffer.as_chunks::<4>().0.iter().enumerate() {
-        w[i] = u32::from_be_bytes(*word);
+    for (wi, word) in w.iter_mut().zip(buffer.as_chunks::<4>().0) {
+        *wi = u32::from_be_bytes(*word);
     }
     for i in 16..80 {
         w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
@@ -117,66 +190,9 @@ pub fn SHA1Transform(state: &mut [u32; 5], buffer: &[u8; SHA1_BLOCK_LENGTH]) {
     }
 
     // Add the working vars back into context.state[]
-    state[0] = state[0].wrapping_add(a);
-    state[1] = state[1].wrapping_add(b);
-    state[2] = state[2].wrapping_add(c);
-    state[3] = state[3].wrapping_add(d);
-    state[4] = state[4].wrapping_add(e);
-}
-
-/// `SHA1Init`: initialize new context.
-#[allow(non_snake_case)] // the C name
-pub fn SHA1Init(context: &mut Sha1Ctx) {
-    // SHA1 initialization constants
-    context.count = 0;
-    context.state[0] = 0x67452301;
-    context.state[1] = 0xEFCDAB89;
-    context.state[2] = 0x98BADCFE;
-    context.state[3] = 0x10325476;
-    context.state[4] = 0xC3D2E1F0;
-}
-
-/// `SHA1Update`: run your data through this.
-#[allow(non_snake_case)] // the C name
-pub fn SHA1Update(context: &mut Sha1Ctx, data: &[u8]) {
-    let len = data.len();
-    let mut j = ((context.count >> 3) & 63) as usize;
-    let mut i;
-
-    context.count = context.count.wrapping_add((len as u64) << 3);
-    if (j + len) > 63 {
-        i = 64 - j;
-        context.buffer[j..].copy_from_slice(&data[..i]);
-        SHA1Transform(&mut context.state, &context.buffer);
-        while i + 63 < len {
-            let mut block = [0u8; SHA1_BLOCK_LENGTH];
-            block.copy_from_slice(&data[i..i + 64]);
-            SHA1Transform(&mut context.state, &block);
-            i += 64;
-        }
-        j = 0;
-    } else {
-        i = 0;
+    for (s, v) in state.iter_mut().zip([a, b, c, d, e]) {
+        *s = s.wrapping_add(v);
     }
-    context.buffer[j..j + len - i].copy_from_slice(&data[i..]);
-}
-
-/// `SHA1Final`: add padding and return the message digest.
-#[allow(non_snake_case)] // the C name
-pub fn SHA1Final(digest: &mut [u8; SHA1_DIGEST_LENGTH], context: &mut Sha1Ctx) {
-    // Endian independent
-    let finalcount = context.count.to_be_bytes();
-
-    SHA1Update(context, b"\x80");
-    while (context.count & 504) != 448 {
-        SHA1Update(context, b"\0");
-    }
-    SHA1Update(context, &finalcount); // Should cause a SHA1Transform()
-
-    for (i, d) in digest.iter_mut().enumerate() {
-        *d = (context.state[i >> 2] >> ((3 - (i & 3)) * 8)) as u8;
-    }
-    wipe(context);
 }
 /* </CODE> */
 
@@ -184,21 +200,19 @@ pub fn SHA1Final(digest: &mut [u8; SHA1_DIGEST_LENGTH], context: &mut Sha1Ctx) {
 #[cfg(test)]
 mod tests {
     // Known-answer tests for SHA-1: the FIPS 180-4 examples ("abc", the 448-bit message, one
-    // million "a"), and digests around the block boundaries computed with Python's `hashlib`.
+    // million "a"), and digests around the block boundaries computed with Python's `hashlib`;
+    // a property test that any split of a random message gives the one-shot digest.
 
     use super::*;
-    use crate::crypto::testutil::hex;
+    use crate::crypto::testutil::{XorShift, hex};
 
     extern crate std;
     use std::vec::Vec;
 
     fn digest(data: &[u8]) -> [u8; SHA1_DIGEST_LENGTH] {
-        let mut ctx = Sha1Ctx::default();
-        let mut out = [0u8; SHA1_DIGEST_LENGTH];
-        SHA1Init(&mut ctx);
-        SHA1Update(&mut ctx, data);
-        SHA1Final(&mut out, &mut ctx);
-        out
+        let mut ctx = Sha1Ctx::new();
+        ctx.update(data);
+        ctx.finalize()
     }
 
     #[test]
@@ -219,14 +233,12 @@ mod tests {
 
     #[test]
     fn one_million_a() {
-        let mut ctx = Sha1Ctx::default();
-        let mut out = [0u8; SHA1_DIGEST_LENGTH];
-        SHA1Init(&mut ctx);
+        let mut ctx = Sha1Ctx::new();
         let chunk = [b'a'; 1000];
         for _ in 0..1000 {
-            SHA1Update(&mut ctx, &chunk);
+            ctx.update(&chunk);
         }
-        SHA1Final(&mut out, &mut ctx);
+        let out = ctx.finalize();
         assert_eq!(
             out.to_vec(),
             hex("34aa973cd4c4daa4f61eeb2bdbad27316534016f")
@@ -279,16 +291,29 @@ mod tests {
         let msg: Vec<u8> = (0..300).map(|i| (i * 13 % 256) as u8).collect();
         let whole = digest(&msg);
         for chunk in [1usize, 3, 7, 55, 56, 63, 64, 65, 128, 299] {
-            let mut ctx = Sha1Ctx::default();
-            let mut out = [0u8; SHA1_DIGEST_LENGTH];
-            SHA1Init(&mut ctx);
+            let mut ctx = Sha1Ctx::new();
             for piece in msg.chunks(chunk) {
-                SHA1Update(&mut ctx, piece);
+                ctx.update(piece);
             }
-            SHA1Final(&mut out, &mut ctx);
+            let out = ctx.finalize();
             assert_eq!(out, whole, "chunks of {chunk}");
             // Final wipes the context.
             assert_eq!(ctx, Sha1Ctx::default());
+        }
+    }
+
+    #[test]
+    fn random_splits_give_the_one_shot_digest() {
+        let mut rng = XorShift::new(0x7368_6131_7370_6c74);
+        for _ in 0..200 {
+            let len = rng.below(600);
+            let msg = rng.bytes(len);
+            let whole = digest(&msg);
+            let mut ctx = Sha1Ctx::new();
+            for piece in rng.split(&msg) {
+                ctx.update(piece);
+            }
+            assert_eq!(ctx.finalize(), whole, "{len} bytes");
         }
     }
 }

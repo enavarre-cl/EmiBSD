@@ -1106,7 +1106,7 @@ status = "inherited"
 rust = "sys/crypto/hmac.rs"
 lz = ["sys/crypto/hmac.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs"]
 
 [[module]]
 rust = "sys/crypto/idgen.rs"
@@ -1161,7 +1161,22 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/sha1.rs"
 lz = ["sys/crypto/sha1.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/sha1.rs::SHA1Init"
+native = ["Sha1Ctx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/sha1.rs::SHA1Update"
+native = ["Sha1Ctx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/sha1.rs::SHA1Final"
+native = ["Sha1Ctx::finalize"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/sha2.rs"
@@ -1187,7 +1202,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
@@ -2100,7 +2115,8 @@ status = "inherited"
 [[module]]
 rust = "sys/dev/softraid_crypto.rs"
 lz = ["sys/dev/softraid_crypto.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/sha1.rs"]
 
 [[module]]
 rust = "sys/dev/softraid_raid0.rs"

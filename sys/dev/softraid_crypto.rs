@@ -120,7 +120,7 @@ use crate::crypto::rijndael::{
     AES_MAXKEYBYTES, RijndaelCtx, rijndael_decrypt, rijndael_encrypt, rijndael_set_key,
     rijndael_set_key_enc_only,
 };
-use crate::crypto::sha1::{SHA1_DIGEST_LENGTH, SHA1Final, SHA1Init, SHA1Update, Sha1Ctx};
+use crate::crypto::sha1::{SHA1_DIGEST_LENGTH, Sha1Ctx};
 use crate::dev::biovar::{
     BIOC_SCNOAUTOASSEMBLE, BIOC_SDINVALID, BIOC_SDOFFLINE, BIOC_SDONLINE, BIOC_SOIN,
     BIOC_SOINOUT_FAILED, BIOC_SOINOUT_OK, BIOC_SOOUT, BIOC_SVONLINE, BiocCreateraid,
@@ -683,15 +683,13 @@ pub fn sr_crypto_calculate_check_hmac_sha1(
     key: &[Cell<u8>],
     check_digest: &mut [u8; SHA1_DIGEST_LENGTH],
 ) {
-    let mut check_key = [0u8; SHA1_DIGEST_LENGTH];
     let mut hmacctx = HmacSha1Ctx::default();
-    let mut shactx = Sha1Ctx::default();
+    let mut shactx = Sha1Ctx::new();
     let mut chunk = [0u8; 64];
 
     // k = SHA1(mask_key)
-    SHA1Init(&mut shactx);
-    SHA1Update(&mut shactx, maskkey);
-    SHA1Final(&mut check_key, &mut shactx);
+    shactx.update(maskkey);
+    let mut check_key = shactx.finalize();
 
     // mac = HMAC_SHA1_k(unencrypted key)
     HMAC_SHA1_Init(&mut hmacctx, &check_key);
@@ -1794,12 +1792,9 @@ mod tests {
     }
 
     fn sha1(b: &[u8]) -> [u8; SHA1_DIGEST_LENGTH] {
-        let mut ctx = Sha1Ctx::default();
-        let mut d = [0u8; SHA1_DIGEST_LENGTH];
-        SHA1Init(&mut ctx);
-        SHA1Update(&mut ctx, b);
-        SHA1Final(&mut d, &mut ctx);
-        d
+        let mut ctx = Sha1Ctx::new();
+        ctx.update(b);
+        ctx.finalize()
     }
 
     /// A zeroed discipline of a zeroed softc, with in-memory metadata (leaked).

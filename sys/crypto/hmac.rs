@@ -51,9 +51,7 @@
 use libkern::explicit_bzero;
 
 use super::md5::{MD5_BLOCK_LENGTH, MD5_DIGEST_LENGTH, Md5Ctx};
-use super::sha1::{
-    SHA1_BLOCK_LENGTH, SHA1_DIGEST_LENGTH, SHA1Final, SHA1Init, SHA1Update, Sha1Ctx,
-};
+use super::sha1::{SHA1_BLOCK_LENGTH, SHA1_DIGEST_LENGTH, Sha1Ctx};
 use super::sha2::{
     SHA256_BLOCK_LENGTH, SHA256_DIGEST_LENGTH, SHA256Final, SHA256Init, SHA256Update, Sha2Ctx,
 };
@@ -163,9 +161,9 @@ hmac_family!(
     Sha1Ctx,
     SHA1_BLOCK_LENGTH,
     SHA1_DIGEST_LENGTH,
-    SHA1Init,
-    SHA1Update,
-    SHA1Final,
+    |c: &mut Sha1Ctx| *c = Sha1Ctx::new(),
+    Sha1Ctx::update,
+    |d: &mut [u8; SHA1_DIGEST_LENGTH], c: &mut Sha1Ctx| *d = c.finalize(),
     HMAC_SHA1_Init,
     HMAC_SHA1_Update,
     HMAC_SHA1_Final,
@@ -333,11 +331,9 @@ mod tests {
     fn a_key_longer_than_the_block_is_hashed_first() {
         // The two are the same key to HMAC (RFC 2104): a long key is replaced by its digest.
         let long = [0x55u8; 100];
-        let mut digest = [0u8; SHA1_DIGEST_LENGTH];
-        let mut ctx = Sha1Ctx::default();
-        SHA1Init(&mut ctx);
-        SHA1Update(&mut ctx, &long);
-        SHA1Final(&mut digest, &mut ctx);
+        let mut ctx = Sha1Ctx::new();
+        ctx.update(&long);
+        let digest = ctx.finalize();
         assert_eq!(hmac_sha1(&long, b"data"), hmac_sha1(&digest, b"data"));
         let mut ctx = HmacSha1Ctx::default();
         HMAC_SHA1_Init(&mut ctx, &long);

@@ -146,7 +146,7 @@ use super::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
 use super::rijndael::{RijndaelCtx, rijndael_decrypt, rijndael_encrypt, rijndael_set_key};
 use super::rmd160::{RMD160_DIGEST_LENGTH, RMD160Final, RMD160Init, RMD160Update, Rmd160Ctx};
 use super::set_key::des_set_key;
-use super::sha1::{SHA1_DIGEST_LENGTH, SHA1Final, SHA1Init, SHA1Update, Sha1Ctx};
+use super::sha1::{SHA1_DIGEST_LENGTH, Sha1Ctx};
 use super::sha2::{
     SHA256_DIGEST_LENGTH, SHA256Final, SHA256Init, SHA256Update, SHA384_DIGEST_LENGTH, SHA384Final,
     SHA384Init, SHA384Update, SHA512_DIGEST_LENGTH, SHA512Final, SHA512Init, SHA512Update, Sha2Ctx,
@@ -701,9 +701,9 @@ hash_wrappers!(
     Sha1,
     Sha1Ctx,
     SHA1_DIGEST_LENGTH,
-    SHA1Init,
-    SHA1Update,
-    SHA1Final,
+    |c: &mut Sha1Ctx| *c = Sha1Ctx::new(),
+    Sha1Ctx::update,
+    |d: &mut [u8; SHA1_DIGEST_LENGTH], c: &mut Sha1Ctx| *d = c.finalize(),
     sha1_init,
     SHA1Update_int,
     sha1_final,
