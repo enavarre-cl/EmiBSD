@@ -121,7 +121,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
-    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom"
+    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom smoke-eap"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2220,6 +2220,23 @@ smoke-audio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --expect 'auich0 at pci0 dev 4 function 0 vendor 0x8086 product 0x2415' \
         --expect 'ac97: codec id 0x83847600 (SigmaTel STAC9700)' \
         --expect 'audio0 at auich0' --expect 'name=auich0' --expect 'outputs.master=255,255'
+
+# M16d: eap(4) on QEMU's `ES1370` (`--audio es1370`, devices.rs), amd64 (the only GENERIC with
+# eap). As `smoke-audio`: audioctl(8) and mixerctl(8) show the device and the AK4531 mixer
+# eap_attach sets up (master at VOL_0DB, 200, as OpenBSD 8.0 shows on the same machine),
+# aucat(1) plays `/root/tone.wav` through /dev/audio0 (DAC2's DMA and block interrupts), and
+# `--expect-tone` finds the tone in QEMU's `wav` file. The chip's MIDI UART attaches as midi0
+# (midi(4)); QEMU's ES1370 has no device behind it, so nothing is played through it. Part of
+# `smoke`.
+smoke-eap: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-eap: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --audio es1370 --expect-tone {{audio_play}} \
+        --expect 'eap0 at pci0 dev 4 function 0 vendor 0x1274 product 0x5000 rev 0x00' \
+        --expect 'audio0 at eap0' --expect 'midi0 at eap0: <AudioPCI MIDI UART>' \
+        --expect 'name=eap0' --expect 'outputs.master=200,200' --expect 'inputs.mic.preamp=off' \
+        --expect 'record.source=mic' --expect 'inputs.source=mic,cd,line,fmsynth,aux,dac'
 
 # `smoke-audio`'s session: the parameters and the mixer, then the tone.
 audio_play := disk_login + " " + \
