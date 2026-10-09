@@ -53,11 +53,10 @@
 //! from the ISA side first would complicate or break their PCI attachment.
 //!
 //! ## Deviations
-//! - The bus's extents are always NULL (`sys/extent.h` and `subr_extent.c` are not ported,
-//!   see `pcivar.rs`): `pciattach` does not reserve its bus number, and
-//!   `pci_reserve_resources` sizes the BARs and the expansion ROM (which writes to the
-//!   device) but reserves nothing; the bridge-window half of it, which only reads the
-//!   window registers to reserve them, is reduced to that comment.
+//! - The bus's extents come from the host bridge (M16b: arm64's `pciecam` and `acpipci`);
+//!   amd64's are `None` until its `pci_init_extents` is ported, and there
+//!   `pci_reserve_resources` only sizes the BARs and the ROM, as the C with NULL extents.
+//!   `__sparc64__`'s exception for T5's 64-bit BARs is not compiled.
 //! - `USER_PCICONF` (in GENERIC): `pciopen`, `pciclose`, `pciioctl` and `pci_vga_proc`
 //!   need `sys/pciio.h` and the `cdevsw` and are not ported; `pci_disable_vga`,
 //!   `pci_enable_vga`, `pci_route_vga` and `pci_unroute_vga` are.
@@ -94,11 +93,16 @@ use crate::dev::pci::pcivar::{
     PCI_QUIRK_MULTIFUNCTION, PCI_UNK_DEV, PCI_UNK_FUNCTION, PCIBUS_UNK_BUS, PciAttachArgs,
     PciMatchid, PciSoftc, PcibusAttachArgs, Pcireg, pcibuscf_bus, pcicf_dev, pcicf_function,
 };
-use crate::dev::pci::ppbreg::{PPB_BC_VGA_ENABLE, PPB_REG_BRIDGECONTROL};
+use crate::dev::pci::ppbreg::{
+    PPB_BC_VGA_ENABLE, PPB_REG_BRIDGECONTROL, PPB_REG_BUSINFO, PPB_REG_IO_HI, PPB_REG_IOSTATUS,
+    PPB_REG_MEM, PPB_REG_PREFBASE_HI32, PPB_REG_PREFLIM_HI32, PPB_REG_PREFMEM,
+    ppb_businfo_secondary, ppb_businfo_subordinate,
+};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::subr_autoconf::{
     config_activate_children, config_detach_children, config_found_sm,
 };
+use crate::kern::subr_extent::extent_alloc_region;
 use crate::kern::subr_prf::{Str, panic, printf};
 use crate::machine::bus::{
     BUS_SPACE_BARRIER_WRITE, BusSpaceTag, bus_space_barrier, bus_space_read_4, bus_space_write_4,
@@ -116,11 +120,16 @@ use crate::sys::device::{
     Device, UNCONF,
 };
 use crate::sys::errno::Errno;
+use crate::sys::extent::{EX_NOWAIT, Extent};
 use crate::sys::malloc::{M_DEVBUF, M_WAITOK, M_ZERO};
 use crate::sys::queue::ListEntry;
 
 /// `NMAPREG`: the number of base address registers of a type 0 header.
 pub const NMAPREG: usize = (PCI_MAPREG_END - PCI_MAPREG_START) as usize / size_of::<Pcireg>();
+
+/// `BUS_SPACE_MAP_PREFETCHABLE`, as `pci_mapreg_info` reports it in its flags.
+const PREFETCHABLE: u32 =
+    <crate::machine::Machine as crate::machine::BusSpace>::BUS_SPACE_MAP_PREFETCHABLE;
 
 /// `struct msix_vector`: one MSI-X table entry, saved across suspend.
 #[derive(Clone, Copy, Debug, Default)]
@@ -253,7 +262,10 @@ pub fn pciattach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
     sc.sc_dmat.set(Some(pba.pba_dmat));
     sc.sc_pc.set(Some(pba.pba_pc));
     sc.sc_flags.set(pba.pba_flags);
-    // sc_ioex, sc_memex, sc_pmemex, sc_busex: NULL (sys/extent.h).
+    sc.sc_ioex.set(pba.pba_ioex);
+    sc.sc_memex.set(pba.pba_memex);
+    sc.sc_pmemex.set(pba.pba_pmemex);
+    sc.sc_busex.set(pba.pba_busex);
     sc.sc_domain.set(pba.pba_domain);
     sc.sc_bus.set(pba.pba_bus);
     sc.sc_bridgetag.set(pba.pba_bridgetag);
@@ -262,7 +274,10 @@ pub fn pciattach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
     sc.sc_intrswiz.set(pba.pba_intrswiz);
     sc.sc_intrtag.set(pba.pba_intrtag);
 
-    // Reserve our own bus number: if (sc->sc_busex) extent_alloc_region(...), NULL here.
+    // Reserve our own bus number.
+    if let Some(busex) = sc.sc_busex.get() {
+        let _ = extent_alloc_region(busex, sc.sc_bus.get() as u64, 1, EX_NOWAIT);
+    }
 
     pci_enumerate_bus(sc, Some(pci_reserve_resources), None);
 
@@ -520,7 +535,10 @@ pub fn pci_probe_device(
         // This is a simplification of the NetBSD code. We don't support turning off I/O or
         // memory on broken hardware. <csapuntz@stanford.edu>
         pa_flags: sc.sc_flags.get() | PCI_FLAGS_IO_ENABLED | PCI_FLAGS_MEM_ENABLED,
-        // pa_ioex, pa_memex, pa_pmemex, pa_busex: the bus's, NULL (sys/extent.h).
+        pa_ioex: sc.sc_ioex.get(),
+        pa_memex: sc.sc_memex.get(),
+        pa_pmemex: sc.sc_pmemex.get(),
+        pa_busex: sc.sc_busex.get(),
         pa_domain: sc.sc_domain.get() as u32,
         pa_bus: bus as u32,
         pa_device: device as u32,
@@ -883,13 +901,14 @@ pub fn pci_enumerate_bus(
 }
 
 /// `pci_reserve_resources`: claims in the bus's extents the address ranges the firmware
-/// assigned to a function's BARs, expansion ROM and (for a bridge) windows (see the
-/// module's deviations).
+/// assigned to a function's BARs, expansion ROM and (for a bridge) windows and bus range;
+/// a BAR, ROM or window that conflicts with an earlier claim is cleared. Without extents
+/// (amd64 for now) it only sizes the BARs and the ROM.
 pub fn pci_reserve_resources(pa: &PciAttachArgs) -> i32 {
     let pc = pa.pa_pc;
     let tag = pa.pa_tag;
 
-    let (_bus, _dev, _func) = pci_decompose_tag(pc, tag);
+    let (bus, dev, func) = pci_decompose_tag(pc, tag);
 
     let bhlc = pci_conf_read(pc, tag, PCI_BHLC_REG);
     let (reg_start, reg_end, reg_rom) = match pci_hdrtype_type(bhlc) {
@@ -901,7 +920,11 @@ pub fn pci_reserve_resources(pa: &PciAttachArgs) -> i32 {
         _ => return 0,
     };
 
-    let _csr = pci_conf_read(pc, tag, PCI_COMMAND_STATUS_REG);
+    // `extent_alloc_region(ex, base, size, EX_NOWAIT)` failed (nonzero in C).
+    let taken =
+        |ex: &Extent, base: u64, size: u64| extent_alloc_region(ex, base, size, EX_NOWAIT).is_err();
+
+    let csr = pci_conf_read(pc, tag, PCI_COMMAND_STATUS_REG);
     let mut reg = reg_start;
     while reg < reg_end {
         let Some(type_) = pci_mapreg_probe(pc, tag, reg) else {
@@ -909,18 +932,48 @@ pub fn pci_reserve_resources(pa: &PciAttachArgs) -> i32 {
             continue;
         };
 
-        let Ok((base, _size, _flags)) = pci_mapreg_info(pc, tag, reg, type_) else {
+        let Ok((base, size, flags)) = pci_mapreg_info(pc, tag, reg, type_) else {
             reg += 4;
             continue;
         };
 
-        if base != 0 {
-            // A memory BAR goes to pa_pmemex (prefetchable) or pa_memex, an I/O BAR to
-            // pa_ioex; on a conflict ("%d:%d:%d: mem address conflict") the BAR is zeroed.
-            // Every extent is NULL here, so the C reserves nothing and changes nothing.
+        if base == 0 {
+            reg += 4;
+            continue;
+        }
+        let (base, size) = (base as u64, size as u64);
+
+        match type_ {
+            t if t == PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_32BIT
+                || t == PCI_MAPREG_TYPE_MEM | PCI_MAPREG_MEM_TYPE_64BIT =>
+            {
+                let prefetchable = flags as u32 & PREFETCHABLE != 0;
+                let in_pmem = prefetchable && pa.pa_pmemex.is_some_and(|ex| !taken(ex, base, size));
+                // (__sparc64__'s T5 exception is not compiled.)
+                if !in_pmem && pa.pa_memex.is_some_and(|ex| taken(ex, base, size)) {
+                    if csr & PCI_COMMAND_MEM_ENABLE != 0 {
+                        printf(format_args!(
+                            "{bus}:{dev}:{func}: mem address conflict 0x{base:x}/0x{size:x}\n"
+                        ));
+                    }
+                    pci_conf_write(pc, tag, reg, 0);
+                    if type_ & PCI_MAPREG_MEM_TYPE_64BIT != 0 {
+                        pci_conf_write(pc, tag, reg + 4, 0);
+                    }
+                }
+            }
+            PCI_MAPREG_TYPE_IO if pa.pa_ioex.is_some_and(|ex| taken(ex, base, size)) => {
+                if csr & PCI_COMMAND_IO_ENABLE != 0 {
+                    printf(format_args!(
+                        "{bus}:{dev}:{func}: io address conflict 0x{base:x}/0x{size:x}\n"
+                    ));
+                }
+                pci_conf_write(pc, tag, reg, 0);
+            }
+            _ => {}
         }
 
-        if base != 0 && type_ & PCI_MAPREG_MEM_TYPE_64BIT != 0 {
+        if type_ & PCI_MAPREG_MEM_TYPE_64BIT != 0 {
             reg += 4;
         }
         reg += 4;
@@ -934,19 +987,103 @@ pub fn pci_reserve_resources(pa: &PciAttachArgs) -> i32 {
         pci_conf_write(pc, tag, PCI_ROM_REG, addr);
         splx(s);
 
-        let _base = pci_rom_addr(addr);
-        let _size = pci_rom_size(mask);
-        // if (base != 0 && size != 0): reserve in pa_pmemex, else pa_memex, clearing the
-        // ROM register on a conflict. NULL extents: nothing to do.
+        let base = u64::from(pci_rom_addr(addr));
+        let size = u64::from(pci_rom_size(mask));
+        if base != 0
+            && size != 0
+            && pa.pa_pmemex.is_some_and(|ex| taken(ex, base, size))
+            && pa.pa_memex.is_some_and(|ex| taken(ex, base, size))
+        {
+            if addr & PCI_ROM_ENABLE != 0 {
+                printf(format_args!(
+                    "{bus}:{dev}:{func}: rom address conflict 0x{base:x}/0x{size:x}\n"
+                ));
+            }
+            pci_conf_write(pc, tag, PCI_ROM_REG, 0);
+        }
     }
 
     if pci_hdrtype_type(bhlc) != 1 {
         return 0;
     }
 
-    // A bridge: its I/O, memory and prefetchable memory windows and its bus range would be
-    // reserved in pa_ioex, pa_memex, pa_pmemex and pa_busex, each only when the extent is
-    // not NULL. They all are here (sys/extent.h), so there is nothing to read or claim.
+    let window = |base: u64, limit: u64| if limit > base { limit - base + 1 } else { 0 };
+
+    // Figure out the I/O address range of the bridge.
+    let mut blr = pci_conf_read(pc, tag, PPB_REG_IOSTATUS);
+    let mut base = u64::from(blr & 0x000000f0) << 8;
+    let mut limit = u64::from(blr & 0x000f000) | 0x00000fff;
+    blr = pci_conf_read(pc, tag, PPB_REG_IO_HI);
+    base |= u64::from(blr & 0x0000ffff) << 16;
+    limit |= u64::from(blr & 0xffff0000);
+    let size = window(base, limit);
+    if let Some(ex) = pa.pa_ioex
+        && base > 0
+        && size > 0
+        && taken(ex, base, size)
+    {
+        printf(format_args!(
+            "{bus}:{dev}:{func}: bridge io address conflict 0x{base:x}/0x{size:x}\n"
+        ));
+        // The C rewrites PPB_REG_IOSTATUS from the PPB_REG_IO_HI value it last read.
+        blr &= 0xffff0000;
+        blr |= 0x000000f0;
+        pci_conf_write(pc, tag, PPB_REG_IOSTATUS, blr);
+    }
+
+    // Figure out the memory mapped I/O address range of the bridge.
+    let blr = pci_conf_read(pc, tag, PPB_REG_MEM);
+    let base = u64::from(blr & 0x0000fff0) << 16;
+    let limit = u64::from(blr & 0xfff00000) | 0x000fffff;
+    let size = window(base, limit);
+    if let Some(ex) = pa.pa_memex
+        && base > 0
+        && size > 0
+        && taken(ex, base, size)
+    {
+        printf(format_args!(
+            "{bus}:{dev}:{func}: bridge mem address conflict 0x{base:x}/0x{size:x}\n"
+        ));
+        pci_conf_write(pc, tag, PPB_REG_MEM, 0x0000fff0);
+    }
+
+    // Figure out the prefetchable memory address range of the bridge.
+    let blr = pci_conf_read(pc, tag, PPB_REG_PREFMEM);
+    let mut base = u64::from(blr & 0x0000fff0) << 16;
+    let mut limit = u64::from(blr & 0xfff00000) | 0x000fffff;
+    // __LP64__
+    base |= u64::from(pci_conf_read(pc, pa.pa_tag, PPB_REG_PREFBASE_HI32)) << 32;
+    limit |= u64::from(pci_conf_read(pc, pa.pa_tag, PPB_REG_PREFLIM_HI32)) << 32;
+    let size = window(base, limit);
+    let ex = if pa.pa_pmemex.is_some() && base > 0 && size > 0 {
+        pa.pa_pmemex
+    } else if pa.pa_memex.is_some() && base > 0 && size > 0 {
+        pa.pa_memex
+    } else {
+        None
+    };
+    if let Some(ex) = ex
+        && taken(ex, base, size)
+    {
+        printf(format_args!(
+            "{bus}:{dev}:{func}: bridge mem address conflict 0x{base:x}/0x{size:x}\n"
+        ));
+        pci_conf_write(pc, tag, PPB_REG_PREFMEM, 0x0000fff0);
+    }
+
+    // Figure out the bus range handled by the bridge.
+    let bir = pci_conf_read(pc, tag, PPB_REG_BUSINFO);
+    let sec = ppb_businfo_secondary(bir);
+    let sub = ppb_businfo_subordinate(bir);
+    if let Some(ex) = pa.pa_busex
+        && sub >= sec
+        && sub > 0
+        && taken(ex, u64::from(sec), u64::from(sub - sec + 1))
+    {
+        printf(format_args!(
+            "{bus}:{dev}:{func}: bridge bus conflict {sec}-{sub}\n"
+        ));
+    }
 
     0
 }

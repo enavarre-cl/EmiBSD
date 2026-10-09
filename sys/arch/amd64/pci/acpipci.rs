@@ -32,7 +32,7 @@
 //! ## Deviations
 //! - The bus, I/O and memory extents (`sys/extent.h`, `subr_extent.c`) are not ported:
 //!   `extent_create`, `extent_free` and `extent_destroy` are reported once, the softc keeps
-//!   no extents and `pba_busex`/`pba_ioex`/`pba_memex`/`pba_pmemex` do not exist
+//!   no extents and `pba_busex`/`pba_ioex`/`pba_memex`/`pba_pmemex` are `None`
 //!   (`pcivar.rs`). `acpipci_parse_resources` still lets the `_CRS` bus range override
 //!   `_BBN`, as the C does.
 //! - `_OSC`'s UUID and capabilities buffers are built as byte buffers (`AmlValue::buffer`).
@@ -282,6 +282,10 @@ pub fn acpipci_attach_bus(parent: &Device, sc: &AcpipciSoftc) {
         pba_pc: None,
         pba_flags: flags,
         // pba_busex, pba_ioex, pba_memex, pba_pmemex: no extents (see the deviations).
+        pba_ioex: None,
+        pba_memex: None,
+        pba_pmemex: None,
+        pba_busex: None,
         pba_domain: domain,
         pba_bus: sc.sc_bus.get(),
         pba_bridgetag: None,

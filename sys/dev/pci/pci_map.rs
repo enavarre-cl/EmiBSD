@@ -49,21 +49,32 @@
 //!   `(tag, handle, base, size)`, and `pci_mapreg_probe` the type bits (`None` for an
 //!   unimplemented register).
 //! - `pci_mapreg_map` returns `bus_space_map`'s error where the C returns 1.
-//! - `pci_mapreg_assign` cannot place a BAR the firmware left at 0: that needs the bus's
-//!   extent (`sys/extent.h`, not ported, so `pa_ioex`/`pa_memex` are always NULL) and fails
-//!   with `EINVAL`, the C's answer when there is no extent. `PCI_IO_START`, `PCI_IO_END`,
-//!   `PCI_MEM_START` and `PCI_MEM_END` only bound that search and are not needed.
+//! - `pci_mapreg_assign` places a BAR the firmware left at 0 in the bus's extent (M16b),
+//!   bounded by `PCI_IO_START`..`PCI_MEM_END`; these are the file's own defaults (the C's
+//!   `#ifndef` values), which are arm64's. amd64's `<machine/pci_machdep.h>` narrows them,
+//!   but its buses have no extents yet, so it never gets here (`EINVAL`, as the C without an
+//!   extent).
 //! - The "bad request" panics happen with or without `DIAGNOSTIC`, as in C; the `DEBUG`
 //!   printfs are compiled under feature `debug`.
 
 use crate::dev::pci::pcireg::*;
 use crate::dev::pci::pcivar::{PCI_FLAGS_IO_ENABLED, PCI_FLAGS_MEM_ENABLED, PciAttachArgs, Pcireg};
+use crate::kern::subr_extent::extent_alloc_subregion;
 use crate::kern::subr_prf::panic;
 use crate::machine::bus::{BusAddr, BusSize, BusSpaceHandle, BusSpaceTag, bus_space_map};
 use crate::machine::intr::{splhigh, splx};
 use crate::machine::pci_machdep::{PciChipsetTag, Pcitag, pci_conf_read, pci_conf_write};
 use crate::machine::{BusSpace, Machine};
 use crate::sys::errno::Errno;
+
+/// `PCI_IO_START`: the lowest I/O address a BAR is placed at (see the deviations).
+const PCI_IO_START: u64 = 0;
+/// `PCI_IO_END`.
+const PCI_IO_END: u64 = 0xffffffff;
+/// `PCI_MEM_START`.
+const PCI_MEM_START: u64 = 0;
+/// `PCI_MEM_END`.
+const PCI_MEM_END: u64 = 0xffffffff;
 
 /// `printf` under `DEBUG`.
 macro_rules! debug_printf {
@@ -270,13 +281,35 @@ pub fn pci_mapreg_assign(
     reg: i32,
     type_: Pcireg,
 ) -> Result<(BusAddr, BusSize), Errno> {
-    let (base, size, _) = pci_mapreg_info(pa.pa_pc, pa.pa_tag, reg, type_)?;
+    let (mut base, size, _) = pci_mapreg_info(pa.pa_pc, pa.pa_tag, reg, type_)?;
     // !__sparc64__
     if base == 0 {
-        // ex = pa->pa_ioex or pa->pa_memex, then extent_alloc_subregion(ex, start, end,
-        // size, size, ...): the extents are always NULL here (see the deviations), and
-        // without one the BAR is disabled because it is invalid.
-        return Err(Errno::EINVAL);
+        let (ex, start, end) = if PCI_MAPREG_TYPE(type_) == PCI_MAPREG_TYPE_IO {
+            (pa.pa_ioex, PCI_IO_START, PCI_IO_END)
+        } else {
+            (pa.pa_memex, PCI_MEM_START, PCI_MEM_END)
+        };
+        // disabled because of invalid BAR
+        let Some(ex) = ex else {
+            return Err(Errno::EINVAL);
+        };
+        let start = start.max(ex.ex_start);
+        let end = end.min(ex.ex_end);
+        let Ok(b) = extent_alloc_subregion(ex, start, end, size as u64, size as u64, 0, 0, 0)
+        else {
+            return Err(Errno::EINVAL);
+        };
+        base = b as BusAddr;
+
+        pci_conf_write(pa.pa_pc, pa.pa_tag, reg, base as Pcireg);
+        if pci_mapreg_mem_type(type_) == PCI_MAPREG_MEM_TYPE_64BIT {
+            pci_conf_write(
+                pa.pa_pc,
+                pa.pa_tag,
+                reg + 4,
+                ((base as u64) >> 32) as Pcireg,
+            );
+        }
     }
 
     let mut csr = pci_conf_read(pa.pa_pc, pa.pa_tag, PCI_COMMAND_STATUS_REG);
@@ -482,6 +515,10 @@ pub(crate) mod tests {
             pa_dmat: Default::default(),
             pa_pc: pc(),
             pa_flags: PCI_FLAGS_IO_ENABLED | PCI_FLAGS_MEM_ENABLED,
+            pa_ioex: None,
+            pa_memex: None,
+            pa_pmemex: None,
+            pa_busex: None,
             pa_domain: 0,
             pa_bus: bus as u32,
             pa_device: dev as u32,
@@ -604,11 +641,39 @@ pub(crate) mod tests {
             assert_eq!(csr, PCI_COMMAND_MEM_ENABLE | PCI_COMMAND_MASTER_ENABLE);
 
             // A BAR the firmware left at 0 needs an extent to be placed; there is none.
-            let pa = attach_args(0, 4, 0);
+            let mut pa = attach_args(0, 4, 0);
             assert_eq!(
                 pci_mapreg_assign(&pa, 0x10, PCI_MAPREG_TYPE_MEM),
                 Err(Errno::EINVAL)
             );
+
+            // With the bus's memory extent (its window free, the rest taken), the BAR is
+            // placed at the window's first aligned address and written back.
+            let storage = std::boxed::Box::leak(std::vec![0u8; 4096].into_boxed_slice());
+            let ex = crate::kern::subr_extent::extent_create(
+                b"test pcimem",
+                0,
+                u64::MAX,
+                crate::sys::malloc::M_DEVBUF,
+                Some(storage),
+                crate::sys::extent::EX_NOWAIT | crate::sys::extent::EX_FILLED,
+            )
+            .unwrap();
+            crate::kern::subr_extent::extent_free(
+                ex,
+                0x1000_0800,
+                0x10_0000,
+                crate::sys::extent::EX_NOWAIT,
+            )
+            .unwrap();
+            pa.pa_memex = Some(ex);
+            assert_eq!(
+                pci_mapreg_assign(&pa, 0x10, PCI_MAPREG_TYPE_MEM),
+                Ok((0x1000_1000, 0x1000))
+            );
+            assert_eq!(pci_conf_read(pa.pa_pc, pa.pa_tag, 0x10), 0x1000_1000);
+            // The I/O extent is still missing.
+            assert!(pci_mapreg_assign(&pa, 0x10, PCI_MAPREG_TYPE_IO).is_err());
 
             // pci_mapreg_map limits the size and maps through bus_space.
             let pa = attach_args(0, 3, 0);

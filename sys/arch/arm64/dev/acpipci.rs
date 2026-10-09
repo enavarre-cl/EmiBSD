@@ -35,10 +35,6 @@
 //!   `am_sc` cell, which `acpipci_attach` sets (the C writes `pc_intr_v` and the members
 //!   into the chipset at attach time). Before that, and on `acpipci_dummy_chipset` (whose
 //!   interrupt members the C leaves NULL), they find no bridge: no mapping, no handle.
-//! - The extents are created and filled from `_CRS` as in C, but `pcibus_attach_args` has no
-//!   extent members yet (`pcivar.rs`), so `pba_busex`, `pba_ioex`, `pba_memex` and
-//!   `pba_pmemex` are not handed to the bus: a BAR the firmware left unassigned cannot be
-//!   placed (UEFI assigns them all on QEMU `virt`).
 //! - The softc's bus spaces are `MaybeUninit` behind an `UnsafeCell` (the softc is zeroed
 //!   memory, which is no valid table of functions), written once by the attach before the
 //!   bus attaches, as `pciecam.rs` does.
@@ -430,8 +426,10 @@ pub fn acpipci_attach(parent: Option<&Device>, self_: &Device, aux: *mut c_void)
         }),
         pba_pc: pc,
         pba_flags: 0,
-        // pba_busex = sc_busex, pba_ioex = sc_ioex, pba_memex = pba_pmemex = sc_memex:
-        // see the deviations.
+        pba_ioex: sc.sc_ioex.get(),
+        pba_memex: sc.sc_memex.get(),
+        pba_pmemex: sc.sc_memex.get(),
+        pba_busex: sc.sc_busex.get(),
         pba_domain: PCI_NDOMAINS.fetch_add(1, Ordering::Relaxed),
         pba_bus: sc.sc_bus.get(),
         pba_bridgetag: None,
