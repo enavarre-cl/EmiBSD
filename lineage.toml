@@ -1949,7 +1949,7 @@ status = "inherited"
 rust = "sys/dev/firmload.rs"
 lz = ["sys/dev/firmload.rs"]
 status = "inherited"
-notes = "M16c: the whole file but RAMDISK_HOOKS (not configured, so no retry under /mnt/etc/firmware): loadfirmware(9) returning Result<(NonNull<u8>, usize), Errno> instead of the two out-parameters; EIO without a current process or a root vnode in use; ENAMETOOLONG, ENOENT, EINVAL (not a regular file or empty), E2BIG (over FIRMWARE_MAX), ENOMEM; the caller frees the M_DEVBUF buffer; host tests (no root, name too long)"
+notes = "M16c: the whole file but RAMDISK_HOOKS (not configured, so no retry under /mnt/etc/firmware): loadfirmware(9) returning Result<(NonNull<u8>, usize), Errno> instead of the two out-parameters; EIO without a root vnode in use, and (deviation) EIO without a current process, where the C takes curproc unchecked; ENAMETOOLONG, ENOENT, EINVAL (not a regular file or empty), E2BIG (over FIRMWARE_MAX), ENOMEM; the caller frees the M_DEVBUF buffer; host tests (no root, name too long)"
 
 [[module]]
 rust = "sys/dev/gpio/gpio.rs"

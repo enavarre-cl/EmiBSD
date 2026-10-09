@@ -53,6 +53,10 @@
 //!   everywhere else (`vga_pci`): the `#ifdef RAMDISK_HOOKS` block is not compiled.
 //! - The path is built in the `M_TEMP` buffer the C allocates, NUL-terminated, and handed to
 //!   `namei` as a slice that ends at its first NUL.
+//! - With no current process (`curproc()` is `None`, as in the host tests) the call fails
+//!   with `EIO`; the C takes `curproc` unchecked and hands it to `NDINIT` and `VOP_GETATTR`,
+//!   which would dereference a null pointer there. On a running kernel a process is always
+//!   current, so no driver sees the difference.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
