@@ -700,7 +700,7 @@ its `/etc/rc` run: the programs `userland` does not build (`sort`, `head`, `cut`
 `find`, `install`, `printf`, `swapctl`, `ttyflags`, `kvm_mkdb`, `dev_mkdb`, `savecore`,
 `ssh-keygen`, `openssl`, `mail`, ...), so the rc.d daemons (`syslogd`, `pflogd`, `ntpd`,
 `smtpd`, `sndiod`, `cron`) say `(failed)`: rc.subr accepts base's `/bin/ksh`, the full build
-(`install-boot` fails on `wrong shell`); `/dev/random` (`random` is not a driver yet);
+(`install-boot` fails on `wrong shell`); `/dev/random` (`random` was not a driver yet; rnd(4) and `/dev/random` came with M16d);
 `/dev/ttyC*` (wscons is not ported); installboot cannot add its UEFI boot entry (`/dev/efi`,
 efi(4), is not ported), so the firmware boots the ESP's fallback `\EFI\BOOT\BOOTX64.EFI`
 (`BOOTAA64.EFI`). On arm64 the installed kernel has `rd0` with no image; it once took the

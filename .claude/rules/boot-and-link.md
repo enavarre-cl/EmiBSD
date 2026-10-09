@@ -31,7 +31,9 @@ paths:
   boot(8)'s entry (`sys/stand/bootarg.rs`, called by both archs' `locore0.S`) takes its
   `BootInfo` from `machine::Cpu::getbootinfo` and shares the tail (`stand::start_kernel`).
   Limine's `_start` is not `#[no_mangle]`: the symbol `_start` is arm64's `locore0.S` entry.
-- `sys/arch/{amd64,arm64}/conf/kernel.ld`: `PHDRS` text/rodata/data, `.requests*` kept,
+- `sys/arch/{amd64,arm64}/conf/kernel.ld`: `PHDRS` text/rodata/data (M16d: and the C's
+  `openbsd_randomize` `PT_OPENBSD_RANDOMIZE` header over `.openbsd.randomdata` inside rodata,
+  which boot(8) fills with the seed; `etext` on both archs), `.requests*` kept,
   `.eh_frame*`/`.note*` discarded. arm64 (M14, so efiboot can load it): base
   `0xffffffff80000000`, physical addresses from 0 by `AT()` (efiboot's `LOADADDR` keeps 39
   bits and adds its 64 MB block), `.text.locore0` first, `__bss_start`/`_end`/`end` for
