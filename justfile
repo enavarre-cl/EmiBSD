@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-fxp smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
@@ -1596,6 +1596,30 @@ smoke-re: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --nic rtl8139 {{re_session}} {{em_ping}} \
         --expect "vendor 0x10ec product 0x8139 rev 0x20: RTL8139C+ (0x7480), irq, address 52:54:00:12:34:56"
+
+# M16c: fxp(4) on QEMU's Intel 82559ER (`--nic i82559er`, PCI 8086:1209 revision 0x09, the
+# i82559S of if_fxp_pci.c), in vio0's place on the user network, amd64 only (fxp is in amd64's
+# GENERIC alone). fxp0 attaches with the i82555 PHY mii(4) finds at address 1 (inphy(4)); the
+# kernel's self-test gives it 10.0.2.15/24; logged in, ifconfig(8) shows the 10baseT half-duplex
+# media QEMU's model reports and an active link, and ping(8) gets the gateway's reply: the
+# lines of OpenBSD 8.0 on the same QEMU (`diff-openbsd probe --nic i82559er`). The ramdisk
+# has no /etc/firmware (distrib/amd64/ramdisk_cd/list names none, as bsd.rd), so
+# fxp_load_ucode prints `fxp0: error 2, could not read firmware fxp-d101s` and the chip runs
+# without the receive bundling microcode, as on bsd.rd. Part of `smoke`.
+smoke-fxp: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-fxp: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic i82559er {{fxp_session}} {{em_ping}} \
+        --expect 'fxp0 at pci0 dev 2 function 0 vendor 0x8086 product 0x1209 rev 0x09, i82559S: apic 0 int 22, address 52:54:00:12:34:56'
+
+# `smoke-fxp`'s login and commands and the lines every fxp(4) boot shares.
+fxp_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' --send 'emibsd\\n' " + \
+    "--send-after '# ' --send 'ifconfig fxp0\\n' --send-after '# ' --send 'ping -c 1 10.0.2.2\\n' " + \
+    "--expect 'address 52:54:00:12:34:56' " + \
+    "--expect 'inphy0 at fxp0 phy 1: i82555, rev. 4' --expect 'rc: multi-user' " + \
+    "--expect 'fxp0: flags=' --expect 'media: Ethernet autoselect (10baseT half-duplex)' " + \
+    "--expect 'status: active' --expect 'inet 10.0.2.15 netmask 0xffffff00'"
 
 # M13: vmx(4) on QEMU's VMware VMXNET3 (`--nic vmxnet3`, PCI 15ad:07b0, revision 1), in vio0's
 # place on the user network. QEMU reports the interrupt type AUTO and offers 25 MSI-X vectors, so
