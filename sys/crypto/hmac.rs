@@ -52,9 +52,7 @@ use libkern::explicit_bzero;
 
 use super::md5::{MD5_BLOCK_LENGTH, MD5_DIGEST_LENGTH, Md5Ctx};
 use super::sha1::{SHA1_BLOCK_LENGTH, SHA1_DIGEST_LENGTH, Sha1Ctx};
-use super::sha2::{
-    SHA256_BLOCK_LENGTH, SHA256_DIGEST_LENGTH, SHA256Final, SHA256Init, SHA256Update, Sha2Ctx,
-};
+use super::sha2::{SHA256_BLOCK_LENGTH, SHA256_DIGEST_LENGTH, Sha256Ctx};
 
 /// Defines one HMAC family: the context type and the `Init`, `Update` and `Final` functions
 /// over a hash given by its context type, block and digest lengths and its three functions.
@@ -172,12 +170,12 @@ hmac_family!(
 
 hmac_family!(
     HmacSha256Ctx,
-    Sha2Ctx,
+    Sha256Ctx,
     SHA256_BLOCK_LENGTH,
     SHA256_DIGEST_LENGTH,
-    SHA256Init,
-    SHA256Update,
-    SHA256Final,
+    |c: &mut Sha256Ctx| *c = Sha256Ctx::new(),
+    Sha256Ctx::update,
+    |d: &mut [u8; SHA256_DIGEST_LENGTH], c: &mut Sha256Ctx| *d = c.finalize(),
     HMAC_SHA256_Init,
     HMAC_SHA256_Update,
     HMAC_SHA256_Final,

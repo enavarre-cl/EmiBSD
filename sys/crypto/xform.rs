@@ -148,8 +148,8 @@ use super::rmd160::{RMD160_DIGEST_LENGTH, RMD160Final, RMD160Init, RMD160Update,
 use super::set_key::des_set_key;
 use super::sha1::{SHA1_DIGEST_LENGTH, Sha1Ctx};
 use super::sha2::{
-    SHA256_DIGEST_LENGTH, SHA256Final, SHA256Init, SHA256Update, SHA384_DIGEST_LENGTH, SHA384Final,
-    SHA384Init, SHA384Update, SHA512_DIGEST_LENGTH, SHA512Final, SHA512Init, SHA512Update, Sha2Ctx,
+    SHA256_DIGEST_LENGTH, SHA384_DIGEST_LENGTH, SHA512_DIGEST_LENGTH, Sha256Ctx, Sha384Ctx,
+    Sha512Ctx,
 };
 use super::xform_ipcomp::deflate_global;
 use crate::kern::subr_prf::panic;
@@ -183,8 +183,12 @@ pub enum AuthCtx {
     Sha1(Sha1Ctx),
     /// `rmd160ctx`.
     Rmd160(Rmd160Ctx),
-    /// `sha2_ctx`.
-    Sha2(Sha2Ctx),
+    /// `sha2_ctx` of SHA-256.
+    Sha256(Sha256Ctx),
+    /// `sha2_ctx` of SHA-384.
+    Sha384(Sha384Ctx),
+    /// `sha2_ctx` of SHA-512.
+    Sha512(Sha512Ctx),
     /// `aes_gmac_ctx`.
     AesGmac(AesGmacCtx),
     /// `CHACHA20_POLY1305_CTX`.
@@ -737,12 +741,12 @@ fn rmd160_final(digest: &mut [u8], c: &mut AuthCtx) {
 }
 
 hash_wrappers!(
-    Sha2,
-    Sha2Ctx,
+    Sha256,
+    Sha256Ctx,
     SHA256_DIGEST_LENGTH,
-    SHA256Init,
-    SHA256Update,
-    SHA256Final,
+    |c: &mut Sha256Ctx| *c = Sha256Ctx::new(),
+    Sha256Ctx::update,
+    |d: &mut [u8; SHA256_DIGEST_LENGTH], c: &mut Sha256Ctx| *d = c.finalize(),
     sha256_init,
     SHA256Update_int,
     sha256_final,
@@ -750,12 +754,12 @@ hash_wrappers!(
 );
 
 hash_wrappers!(
-    Sha2,
-    Sha2Ctx,
+    Sha384,
+    Sha384Ctx,
     SHA384_DIGEST_LENGTH,
-    SHA384Init,
-    SHA384Update,
-    SHA384Final,
+    |c: &mut Sha384Ctx| *c = Sha384Ctx::new(),
+    Sha384Ctx::update,
+    |d: &mut [u8; SHA384_DIGEST_LENGTH], c: &mut Sha384Ctx| *d = c.finalize(),
     sha384_init,
     SHA384Update_int,
     sha384_final,
@@ -763,12 +767,12 @@ hash_wrappers!(
 );
 
 hash_wrappers!(
-    Sha2,
-    Sha2Ctx,
+    Sha512,
+    Sha512Ctx,
     SHA512_DIGEST_LENGTH,
-    SHA512Init,
-    SHA512Update,
-    SHA512Final,
+    |c: &mut Sha512Ctx| *c = Sha512Ctx::new(),
+    Sha512Ctx::update,
+    |d: &mut [u8; SHA512_DIGEST_LENGTH], c: &mut Sha512Ctx| *d = c.finalize(),
     sha512_init,
     SHA512Update_int,
     sha512_final,
@@ -1094,7 +1098,7 @@ pub static auth_hash_hmac_sha2_256_128: AuthHash = AuthHash {
     keysize: 32,
     hashsize: 32,
     authsize: 16,
-    ctxsize: size_of::<Sha2Ctx>() as u16,
+    ctxsize: size_of::<Sha256Ctx>() as u16,
     blocksize: HMAC_SHA2_256_BLOCK_LEN as u16,
     Init: sha256_init,
     Setkey: None,
@@ -1111,7 +1115,7 @@ pub static auth_hash_hmac_sha2_384_192: AuthHash = AuthHash {
     keysize: 48,
     hashsize: 48,
     authsize: 24,
-    ctxsize: size_of::<Sha2Ctx>() as u16,
+    ctxsize: size_of::<Sha384Ctx>() as u16,
     blocksize: HMAC_SHA2_384_BLOCK_LEN as u16,
     Init: sha384_init,
     Setkey: None,
@@ -1128,7 +1132,7 @@ pub static auth_hash_hmac_sha2_512_256: AuthHash = AuthHash {
     keysize: 64,
     hashsize: 64,
     authsize: 32,
-    ctxsize: size_of::<Sha2Ctx>() as u16,
+    ctxsize: size_of::<Sha512Ctx>() as u16,
     blocksize: HMAC_SHA2_512_BLOCK_LEN as u16,
     Init: sha512_init,
     Setkey: None,

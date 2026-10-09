@@ -1106,7 +1106,7 @@ status = "inherited"
 rust = "sys/crypto/hmac.rs"
 lz = ["sys/crypto/hmac.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs"]
 
 [[module]]
 rust = "sys/crypto/idgen.rs"
@@ -1181,7 +1181,73 @@ kind = "renamed"
 [[module]]
 rust = "sys/crypto/sha2.rs"
 lz = ["sys/crypto/sha2.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::Sha2State"
+native = []
+kind = "dropped"
+reason = "the C union of the 32-bit and 64-bit chaining words exists so that one SHA2_CTX serves three hashes; each context type now holds its own state words (Sha256Ctx, Sha512Core)"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::Sha2Ctx"
+native = ["Sha256Ctx", "Sha384Ctx", "Sha512Ctx", "Sha512Core"]
+kind = "split"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::Sha2Ctx::default"
+native = ["Sha256Ctx::default", "Sha512Core::default"]
+kind = "split"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA256Init"
+native = ["Sha256Ctx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA256Update"
+native = ["Sha256Ctx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA256Final"
+native = ["Sha256Ctx::finalize"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA512Init"
+native = ["Sha512Ctx::new", "Sha512Core::new"]
+kind = "split"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA512Update"
+native = ["Sha512Core::update", "Sha512Ctx::update"]
+kind = "split"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA512Last"
+native = ["Sha512Core::last"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA512Final"
+native = ["Sha512Ctx::finalize", "Sha512Core::digest"]
+kind = "split"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA384Init"
+native = ["Sha384Ctx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA384Update"
+native = ["Sha384Ctx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/sha2.rs::SHA384Final"
+native = ["Sha384Ctx::finalize", "Sha512Core::digest"]
+kind = "split"
 
 [[module]]
 rust = "sys/crypto/siphash.rs"
@@ -1202,7 +1268,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
@@ -3738,7 +3804,8 @@ status = "inherited"
 [[module]]
 rust = "sys/net/pf.rs"
 lz = ["sys/net/pf.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/sha2.rs"]
 
 [[module]]
 rust = "sys/net/pf_if.rs"
@@ -4032,7 +4099,7 @@ status = "inherited"
 rust = "sys/netinet/tcp_subr.rs"
 lz = ["sys/netinet/tcp_subr.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha2.rs"]
 
 [[module]]
 rust = "sys/netinet/tcp_timer.rs"

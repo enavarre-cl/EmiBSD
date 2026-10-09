@@ -141,7 +141,7 @@ use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use libkern::StaticCell;
 
 use crate::crypto::md5::{MD5_DIGEST_LENGTH, Md5Ctx};
-use crate::crypto::sha2::{SHA512_DIGEST_LENGTH, SHA512Final, SHA512Init, SHA512Update, Sha2Ctx};
+use crate::crypto::sha2::{SHA512_DIGEST_LENGTH, Sha512Ctx};
 use crate::dev::rnd::arc4random_buf;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::malloc;
@@ -279,7 +279,7 @@ pub static TCPCOUNTERS: [AtomicU64; TCPS_NCOUNTERS] = [const { AtomicU64::new(0)
 /// \[I\] `tcp_secret`.
 static TCP_SECRET: StaticCell<[u8; 16]> = StaticCell::new([0; 16]);
 /// \[I\] `tcp_secret_ctx`.
-static TCP_SECRET_CTX: StaticCell<Option<Sha2Ctx>> = StaticCell::new(None);
+static TCP_SECRET_CTX: StaticCell<Option<Sha512Ctx>> = StaticCell::new(None);
 /// \[T\] `tcp_iss`: updated by timer and connection.
 pub static TCP_ISS: AtomicU32 = AtomicU32::new(0);
 /// \[I\] `tcp_starttime`: random offset for `tcp_now()`.
@@ -335,9 +335,8 @@ pub fn tcp_init() {
     unsafe {
         let secret = TCP_SECRET.get_mut();
         arc4random_buf(secret);
-        let mut ctx = Sha2Ctx::default();
-        SHA512Init(&mut ctx);
-        SHA512Update(&mut ctx, secret);
+        let mut ctx = Sha512Ctx::new();
+        ctx.update(secret);
         *TCP_SECRET_CTX.get_mut() = Some(ctx);
     }
 
@@ -1229,18 +1228,17 @@ pub fn tcp_set_iss_tsm(tp: &Tcpcb) {
 
     // SAFETY: written once by `tcp_init` before any connection exists, then only read.
     let mut ctx = unsafe { TCP_SECRET_CTX.read() }.unwrap_or_default();
-    SHA512Update(&mut ctx, &rdomain.to_ne_bytes());
-    SHA512Update(&mut ctx, &inp.inp_lport.get().to_ne_bytes());
-    SHA512Update(&mut ctx, &inp.inp_fport.get().to_ne_bytes());
+    ctx.update(&rdomain.to_ne_bytes());
+    ctx.update(&inp.inp_lport.get().to_ne_bytes());
+    ctx.update(&inp.inp_fport.get().to_ne_bytes());
     if tp.pf.get() == i32::from(AF_INET6) {
-        SHA512Update(&mut ctx, &inp.inp_laddr6.get().s6_addr);
-        SHA512Update(&mut ctx, &inp.inp_faddr6.get().s6_addr);
+        ctx.update(&inp.inp_laddr6.get().s6_addr);
+        ctx.update(&inp.inp_faddr6.get().s6_addr);
     } else {
-        SHA512Update(&mut ctx, &inp.inp_laddr.get().s_addr.to_ne_bytes());
-        SHA512Update(&mut ctx, &inp.inp_faddr.get().s_addr.to_ne_bytes());
+        ctx.update(&inp.inp_laddr.get().s_addr.to_ne_bytes());
+        ctx.update(&inp.inp_faddr.get().s_addr.to_ne_bytes());
     }
-    let mut digest = [0u8; SHA512_DIGEST_LENGTH];
-    SHA512Final(&mut digest, &mut ctx);
+    let digest: [u8; SHA512_DIGEST_LENGTH] = ctx.finalize();
     let word =
         |i: usize| u32::from_ne_bytes([digest[i], digest[i + 1], digest[i + 2], digest[i + 3]]);
     tp.iss.set(word(0).wrapping_add(iss));

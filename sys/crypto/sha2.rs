@@ -89,11 +89,10 @@
 //! IPsec's `HMAC-SHA2-*` and of `hmac.c`.
 //!
 //! Upstream: sys/crypto/sha2.h @ 3ce1f3f79392, sys/crypto/sha2.c @ 3ce1f3f79392
+//! LZ: sys/crypto/sha2.rs@f5985f1d055a
 //!
 //! ## Deviations
-//! - The header and the file share this module; `SHA2_CTX` is [`Sha2Ctx`], whose `state` is a
-//!   struct holding both views (`st32`, `st64`) where the C has a union; SHA-256 uses
-//!   `st32`, SHA-384 and SHA-512 `st64`.
+//! - The header and the file share this module.
 //! - The round constants and initial hash values are FIPS 180-4's (the fractional parts of
 //!   the cube and square roots of the first primes), written as `const`s; they were
 //!   regenerated from that definition with exact integer arithmetic and compared with the C
@@ -101,11 +100,26 @@
 //! - Only the compact transform loop is ported. The C selects an unrolled, macro-generated
 //!   transform (`SHA2_UNROLL_TRANSFORM`) on amd64 and i386 unless `SMALL_KERNEL`; both compute
 //!   the same function.
-//! - `SHA256Init` clears `bitcount[1]` too (the C clears `bitcount[0]` twice; SHA-256 only
-//!   counts in `bitcount[0]`). The `Update` functions take slices; the `Final` functions
-//!   write big-endian digests directly instead of swapping the state in place first, and wipe
-//!   the context by assignment (`crate::crypto::wipe`).
-//! - `SHA512Last` is public as in the C (SHA-384 shares it).
+//! - The `Final` functions write big-endian digests directly instead of swapping the state in
+//!   place first.
+//!
+//! ## Redesign
+//! - `SHA2_CTX` is one struct for three hashes, its state a union of eight 32-bit words
+//!   (SHA-256) and eight 64-bit words (SHA-384, SHA-512), its `bitcount` two words of which
+//!   SHA-256 uses one. Here each hash has its own context type: [`Sha256Ctx`] (32-bit state,
+//!   one count word, a 64-byte buffer), and [`Sha384Ctx`] and [`Sha512Ctx`] over the private
+//!   `Sha512Core` they share (64-bit state, the 128-bit count, a 128-byte buffer). Updating a
+//!   SHA-256 context with SHA-512's function, or finishing it with SHA-384's, is a type error
+//!   instead of a silent wrong digest; the union (`Sha2State`) is gone.
+//! - The contexts and their functions are types with methods (`docs/IDIOMS.md`, "a hash
+//!   context"): `SHA256Init`/`SHA384Init`/`SHA512Init` are `new`, the `Update` functions
+//!   `update` over a slice, and the `Final` functions `finalize`, which returns the digest and
+//!   wipes the context in place (the C's `explicit_bzero(context, ..)`). `SHA512Last`, shared
+//!   by SHA-384 and SHA-512, is `Sha512Core::last`, private.
+//! - The fields are private. The whole-block loops walk `as_chunks` and transform the buffer
+//!   in place instead of copying each block into a stack array first.
+//! - `SHA256Transform` and `SHA512Transform` take the state words and one block, not the
+//!   context, and keep their names.
 
 use super::wipe;
 
@@ -258,34 +272,322 @@ const SHA512_INITIAL_HASH_VALUE: [u64; 8] = [
     0x5be0cd19137e2179,
 ];
 
-/// `SHA2_CTX.state`: the union of the 32-bit and the 64-bit chaining values.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Sha2State {
-    /// `st32`: SHA-256.
-    pub st32: [u32; 8],
-    /// `st64`: SHA-384 and SHA-512.
-    pub st64: [u64; 8],
-}
-
-/// `SHA2_CTX`: a SHA-256, SHA-384 or SHA-512 hash in progress.
+/// `SHA2_CTX` as SHA-256 uses it: a SHA-256 hash in progress, from [`Sha256Ctx::new`] to
+/// [`Sha256Ctx::finalize`].
+///
+/// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
+/// hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Sha2Ctx {
-    /// `state`.
-    pub state: Sha2State,
-    /// `bitcount`: the message length so far, in bits: one word for SHA-256, a 128-bit value
-    /// (low word first) for SHA-384 and SHA-512.
-    pub bitcount: [u64; 2],
+pub struct Sha256Ctx {
+    /// `state.st32`: the eight chaining words.
+    state: [u32; 8],
+    /// `bitcount[0]`: the message length so far, in bits.
+    bitcount: u64,
     /// `buffer`: the partial block.
-    pub buffer: [u8; SHA512_BLOCK_LENGTH],
+    buffer: [u8; SHA256_BLOCK_LENGTH],
 }
 
-impl Default for Sha2Ctx {
+impl Default for Sha256Ctx {
     fn default() -> Self {
         Self {
-            state: Sha2State::default(),
+            state: [0; 8],
+            bitcount: 0,
+            buffer: [0; SHA256_BLOCK_LENGTH],
+        }
+    }
+}
+
+impl Sha256Ctx {
+    /// `SHA256Init`.
+    pub fn new() -> Self {
+        Self {
+            state: SHA256_INITIAL_HASH_VALUE,
+            bitcount: 0,
+            buffer: [0; SHA256_BLOCK_LENGTH],
+        }
+    }
+
+    /// The bytes waiting in `buffer`: the message length mod 64. The value is below 64, so
+    /// the conversion to `usize` is exact.
+    fn buffered(&self) -> usize {
+        ((self.bitcount >> 3) % SHA256_BLOCK_LENGTH as u64) as usize
+    }
+
+    /// `SHA256Update`.
+    pub fn update(&mut self, data: &[u8]) {
+        let mut data = data;
+
+        // Calling with no data is valid (we do nothing)
+        if data.is_empty() {
+            return;
+        }
+
+        let usedspace = self.buffered();
+        if usedspace > 0 {
+            // Calculate how much free space is available in the buffer
+            let freespace = SHA256_BLOCK_LENGTH - usedspace;
+
+            if data.len() >= freespace {
+                // Fill the buffer completely and process it
+                let (head, rest) = data.split_at(freespace);
+                self.buffer[usedspace..].copy_from_slice(head);
+                self.bitcount = self.bitcount.wrapping_add((freespace as u64) << 3);
+                data = rest;
+                SHA256Transform(&mut self.state, &self.buffer);
+            } else {
+                // The buffer is not yet full
+                self.buffer[usedspace..usedspace + data.len()].copy_from_slice(data);
+                self.bitcount = self.bitcount.wrapping_add((data.len() as u64) << 3);
+                return;
+            }
+        }
+        // Process as many complete blocks as we can
+        let (blocks, rest) = data.as_chunks::<SHA256_BLOCK_LENGTH>();
+        for block in blocks {
+            SHA256Transform(&mut self.state, block);
+            self.bitcount = self
+                .bitcount
+                .wrapping_add((SHA256_BLOCK_LENGTH as u64) << 3);
+        }
+        if !rest.is_empty() {
+            // There's left-overs, so save 'em
+            self.buffer[..rest.len()].copy_from_slice(rest);
+            self.bitcount = self.bitcount.wrapping_add((rest.len() as u64) << 3);
+        }
+    }
+
+    /// `SHA256Final`: pads, returns the digest (big-endian) and wipes the context.
+    pub fn finalize(&mut self) -> [u8; SHA256_DIGEST_LENGTH] {
+        let mut usedspace = self.buffered();
+        let bitcount = self.bitcount.to_be_bytes();
+
+        if usedspace > 0 {
+            // Begin padding with a 1 bit:
+            self.buffer[usedspace] = 0x80;
+            usedspace += 1;
+
+            if usedspace <= SHA256_SHORT_BLOCK_LENGTH {
+                // Set-up for the last transform:
+                self.buffer[usedspace..SHA256_SHORT_BLOCK_LENGTH].fill(0);
+            } else {
+                self.buffer[usedspace..].fill(0);
+                // Do second-to-last transform:
+                SHA256Transform(&mut self.state, &self.buffer);
+
+                // And set-up for the last transform:
+                self.buffer[..SHA256_SHORT_BLOCK_LENGTH].fill(0);
+            }
+        } else {
+            // Set-up for the last transform:
+            self.buffer[..SHA256_SHORT_BLOCK_LENGTH].fill(0);
+
+            // Begin padding with a 1 bit:
+            self.buffer[0] = 0x80;
+        }
+        // Set the bit count:
+        self.buffer[SHA256_SHORT_BLOCK_LENGTH..].copy_from_slice(&bitcount);
+
+        // Final transform:
+        SHA256Transform(&mut self.state, &self.buffer);
+
+        let mut digest = [0u8; SHA256_DIGEST_LENGTH];
+        for (out, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
+            *out = word.to_be_bytes();
+        }
+        // Clean up state data:
+        wipe(self);
+        digest
+    }
+}
+
+/// `SHA2_CTX` as SHA-384 and SHA-512 use it: the 64-bit state, the 128-bit bit count and the
+/// 128-byte buffer, with the update and padding the two hashes share.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Sha512Core {
+    /// `state.st64`: the eight chaining words.
+    state: [u64; 8],
+    /// `bitcount`: the message length so far, in bits, a 128-bit value (low word first).
+    bitcount: [u64; 2],
+    /// `buffer`: the partial block.
+    buffer: [u8; SHA512_BLOCK_LENGTH],
+}
+
+impl Default for Sha512Core {
+    fn default() -> Self {
+        Self {
+            state: [0; 8],
             bitcount: [0; 2],
             buffer: [0; SHA512_BLOCK_LENGTH],
         }
+    }
+}
+
+impl Sha512Core {
+    /// `SHA384Init`/`SHA512Init`: the initial hash value `iv`, nothing hashed yet.
+    fn new(iv: [u64; 8]) -> Self {
+        Self {
+            state: iv,
+            bitcount: [0; 2],
+            buffer: [0; SHA512_BLOCK_LENGTH],
+        }
+    }
+
+    /// The bytes waiting in `buffer`: the message length mod 128. The value is below 128, so
+    /// the conversion to `usize` is exact.
+    fn buffered(&self) -> usize {
+        ((self.bitcount[0] >> 3) % SHA512_BLOCK_LENGTH as u64) as usize
+    }
+
+    /// `SHA512Update` (and `SHA384Update`).
+    fn update(&mut self, data: &[u8]) {
+        let mut data = data;
+
+        // Calling with no data is valid (we do nothing)
+        if data.is_empty() {
+            return;
+        }
+
+        let usedspace = self.buffered();
+        if usedspace > 0 {
+            // Calculate how much free space is available in the buffer
+            let freespace = SHA512_BLOCK_LENGTH - usedspace;
+
+            if data.len() >= freespace {
+                // Fill the buffer completely and process it
+                let (head, rest) = data.split_at(freespace);
+                self.buffer[usedspace..].copy_from_slice(head);
+                addinc128(&mut self.bitcount, (freespace as u64) << 3);
+                data = rest;
+                SHA512Transform(&mut self.state, &self.buffer);
+            } else {
+                // The buffer is not yet full
+                self.buffer[usedspace..usedspace + data.len()].copy_from_slice(data);
+                addinc128(&mut self.bitcount, (data.len() as u64) << 3);
+                return;
+            }
+        }
+        // Process as many complete blocks as we can
+        let (blocks, rest) = data.as_chunks::<SHA512_BLOCK_LENGTH>();
+        for block in blocks {
+            SHA512Transform(&mut self.state, block);
+            addinc128(&mut self.bitcount, (SHA512_BLOCK_LENGTH as u64) << 3);
+        }
+        if !rest.is_empty() {
+            // There's left-overs, so save 'em
+            self.buffer[..rest.len()].copy_from_slice(rest);
+            addinc128(&mut self.bitcount, (rest.len() as u64) << 3);
+        }
+    }
+
+    /// `SHA512Last`: pads the last block with the 128-bit length and runs the final transform.
+    fn last(&mut self) {
+        let mut usedspace = self.buffered();
+        let bitcount = self.bitcount;
+
+        if usedspace > 0 {
+            // Begin padding with a 1 bit:
+            self.buffer[usedspace] = 0x80;
+            usedspace += 1;
+
+            if usedspace <= SHA512_SHORT_BLOCK_LENGTH {
+                // Set-up for the last transform:
+                self.buffer[usedspace..SHA512_SHORT_BLOCK_LENGTH].fill(0);
+            } else {
+                self.buffer[usedspace..].fill(0);
+                // Do second-to-last transform:
+                SHA512Transform(&mut self.state, &self.buffer);
+
+                // And set-up for the last transform:
+                self.buffer[..SHA512_BLOCK_LENGTH - 2].fill(0);
+            }
+        } else {
+            // Prepare for final transform:
+            self.buffer[..SHA512_SHORT_BLOCK_LENGTH].fill(0);
+
+            // Begin padding with a 1 bit:
+            self.buffer[0] = 0x80;
+        }
+        // Store the length of input data (in bits):
+        let (high, low) = self.buffer[SHA512_SHORT_BLOCK_LENGTH..].split_at_mut(8);
+        high.copy_from_slice(&bitcount[1].to_be_bytes());
+        low.copy_from_slice(&bitcount[0].to_be_bytes());
+
+        // Final transform:
+        SHA512Transform(&mut self.state, &self.buffer);
+    }
+
+    /// The first `N` bytes of the big-endian state: the digest once [`Sha512Core::last`] ran.
+    fn digest<const N: usize>(&self) -> [u8; N] {
+        let mut digest = [0u8; N];
+        for (out, word) in digest.chunks_mut(8).zip(self.state) {
+            out.copy_from_slice(&word.to_be_bytes()[..out.len()]);
+        }
+        digest
+    }
+}
+
+/// `SHA2_CTX` as SHA-384 uses it: a SHA-384 hash in progress, from [`Sha384Ctx::new`] to
+/// [`Sha384Ctx::finalize`].
+///
+/// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
+/// hash.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sha384Ctx(Sha512Core);
+
+impl Sha384Ctx {
+    /// `SHA384Init`.
+    pub fn new() -> Self {
+        Self(Sha512Core::new(SHA384_INITIAL_HASH_VALUE))
+    }
+
+    /// `SHA384Update`: the same as SHA-512's.
+    pub fn update(&mut self, data: &[u8]) {
+        self.0.update(data);
+    }
+
+    /// `SHA384Final`: SHA-512's padding, the first six state words as the digest; the context
+    /// is wiped.
+    pub fn finalize(&mut self) -> [u8; SHA384_DIGEST_LENGTH] {
+        self.0.last();
+
+        // Save the hash data for output:
+        let digest = self.0.digest();
+
+        // Zero out state data
+        wipe(self);
+        digest
+    }
+}
+
+/// `SHA2_CTX` as SHA-512 uses it: a SHA-512 hash in progress, from [`Sha512Ctx::new`] to
+/// [`Sha512Ctx::finalize`].
+///
+/// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
+/// hash.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sha512Ctx(Sha512Core);
+
+impl Sha512Ctx {
+    /// `SHA512Init`.
+    pub fn new() -> Self {
+        Self(Sha512Core::new(SHA512_INITIAL_HASH_VALUE))
+    }
+
+    /// `SHA512Update`.
+    pub fn update(&mut self, data: &[u8]) {
+        self.0.update(data);
+    }
+
+    /// `SHA512Final`: pads, returns the digest (big-endian) and wipes the context.
+    pub fn finalize(&mut self) -> [u8; SHA512_DIGEST_LENGTH] {
+        self.0.last();
+
+        // Save the hash data for output:
+        let digest = self.0.digest();
+
+        // Zero out state data
+        wipe(self);
+        digest
     }
 }
 
@@ -358,14 +660,6 @@ fn sigma1_512(x: u64) -> u64 {
     x.rotate_right(19) ^ x.rotate_right(61) ^ (x >> 6)
 }
 
-/// `SHA256Init`.
-#[allow(non_snake_case)] // the C name
-pub fn SHA256Init(context: &mut Sha2Ctx) {
-    context.state.st32 = SHA256_INITIAL_HASH_VALUE;
-    context.buffer[..SHA256_BLOCK_LENGTH].fill(0);
-    context.bitcount = [0; 2];
-}
-
 /// `SHA256Transform`: the compression function over one 64-byte block.
 #[allow(non_snake_case)] // the C name
 pub fn SHA256Transform(state: &mut [u32; 8], data: &[u8; SHA256_BLOCK_LENGTH]) {
@@ -414,112 +708,6 @@ pub fn SHA256Transform(state: &mut [u32; 8], data: &[u8; SHA256_BLOCK_LENGTH]) {
     }
 }
 
-/// `SHA256Update`.
-#[allow(non_snake_case)] // the C name
-pub fn SHA256Update(context: &mut Sha2Ctx, data: &[u8]) {
-    let mut data = data;
-
-    // Calling with no data is valid (we do nothing)
-    if data.is_empty() {
-        return;
-    }
-
-    let usedspace = ((context.bitcount[0] >> 3) % SHA256_BLOCK_LENGTH as u64) as usize;
-    if usedspace > 0 {
-        // Calculate how much free space is available in the buffer
-        let freespace = SHA256_BLOCK_LENGTH - usedspace;
-
-        if data.len() >= freespace {
-            // Fill the buffer completely and process it
-            context.buffer[usedspace..SHA256_BLOCK_LENGTH].copy_from_slice(&data[..freespace]);
-            context.bitcount[0] = context.bitcount[0].wrapping_add((freespace as u64) << 3);
-            data = &data[freespace..];
-            let mut block = [0u8; SHA256_BLOCK_LENGTH];
-            block.copy_from_slice(&context.buffer[..SHA256_BLOCK_LENGTH]);
-            SHA256Transform(&mut context.state.st32, &block);
-        } else {
-            // The buffer is not yet full
-            context.buffer[usedspace..usedspace + data.len()].copy_from_slice(data);
-            context.bitcount[0] = context.bitcount[0].wrapping_add((data.len() as u64) << 3);
-            return;
-        }
-    }
-    while data.len() >= SHA256_BLOCK_LENGTH {
-        // Process as many complete blocks as we can
-        let mut block = [0u8; SHA256_BLOCK_LENGTH];
-        block.copy_from_slice(&data[..SHA256_BLOCK_LENGTH]);
-        SHA256Transform(&mut context.state.st32, &block);
-        context.bitcount[0] = context.bitcount[0].wrapping_add((SHA256_BLOCK_LENGTH as u64) << 3);
-        data = &data[SHA256_BLOCK_LENGTH..];
-    }
-    if !data.is_empty() {
-        // There's left-overs, so save 'em
-        context.buffer[..data.len()].copy_from_slice(data);
-        context.bitcount[0] = context.bitcount[0].wrapping_add((data.len() as u64) << 3);
-    }
-}
-
-/// `SHA256Final`: pads, writes the digest (big-endian) and wipes the context.
-#[allow(non_snake_case)] // the C name
-pub fn SHA256Final(digest: &mut [u8; SHA256_DIGEST_LENGTH], context: &mut Sha2Ctx) {
-    let mut usedspace = ((context.bitcount[0] >> 3) % SHA256_BLOCK_LENGTH as u64) as usize;
-    let bitcount = context.bitcount[0].to_be_bytes();
-
-    if usedspace > 0 {
-        // Begin padding with a 1 bit:
-        context.buffer[usedspace] = 0x80;
-        usedspace += 1;
-
-        if usedspace <= SHA256_SHORT_BLOCK_LENGTH {
-            // Set-up for the last transform:
-            context.buffer[usedspace..SHA256_SHORT_BLOCK_LENGTH].fill(0);
-        } else {
-            if usedspace < SHA256_BLOCK_LENGTH {
-                context.buffer[usedspace..SHA256_BLOCK_LENGTH].fill(0);
-            }
-            // Do second-to-last transform:
-            let mut block = [0u8; SHA256_BLOCK_LENGTH];
-            block.copy_from_slice(&context.buffer[..SHA256_BLOCK_LENGTH]);
-            SHA256Transform(&mut context.state.st32, &block);
-
-            // And set-up for the last transform:
-            context.buffer[..SHA256_SHORT_BLOCK_LENGTH].fill(0);
-        }
-    } else {
-        // Set-up for the last transform:
-        context.buffer[..SHA256_SHORT_BLOCK_LENGTH].fill(0);
-
-        // Begin padding with a 1 bit:
-        context.buffer[0] = 0x80;
-    }
-    // Set the bit count:
-    context.buffer[SHA256_SHORT_BLOCK_LENGTH..SHA256_BLOCK_LENGTH].copy_from_slice(&bitcount);
-
-    // Final transform:
-    let mut block = [0u8; SHA256_BLOCK_LENGTH];
-    block.copy_from_slice(&context.buffer[..SHA256_BLOCK_LENGTH]);
-    SHA256Transform(&mut context.state.st32, &block);
-
-    for (chunk, word) in digest
-        .as_chunks_mut::<4>()
-        .0
-        .iter_mut()
-        .zip(context.state.st32)
-    {
-        *chunk = word.to_be_bytes();
-    }
-    // Clean up state data:
-    wipe(context);
-}
-
-/// `SHA512Init`.
-#[allow(non_snake_case)] // the C name
-pub fn SHA512Init(context: &mut Sha2Ctx) {
-    context.state.st64 = SHA512_INITIAL_HASH_VALUE;
-    context.buffer.fill(0);
-    context.bitcount = [0; 2];
-}
-
 /// `SHA512Transform`: the compression function over one 128-byte block.
 #[allow(non_snake_case)] // the C name
 pub fn SHA512Transform(state: &mut [u64; 8], data: &[u8; SHA512_BLOCK_LENGTH]) {
@@ -564,143 +752,6 @@ pub fn SHA512Transform(state: &mut [u64; 8], data: &[u8; SHA512_BLOCK_LENGTH]) {
         *s = s.wrapping_add(v);
     }
 }
-
-/// `SHA512Update` (and `SHA384Update`).
-#[allow(non_snake_case)] // the C name
-pub fn SHA512Update(context: &mut Sha2Ctx, data: &[u8]) {
-    let mut data = data;
-
-    // Calling with no data is valid (we do nothing)
-    if data.is_empty() {
-        return;
-    }
-
-    let usedspace = ((context.bitcount[0] >> 3) % SHA512_BLOCK_LENGTH as u64) as usize;
-    if usedspace > 0 {
-        // Calculate how much free space is available in the buffer
-        let freespace = SHA512_BLOCK_LENGTH - usedspace;
-
-        if data.len() >= freespace {
-            // Fill the buffer completely and process it
-            context.buffer[usedspace..].copy_from_slice(&data[..freespace]);
-            addinc128(&mut context.bitcount, (freespace as u64) << 3);
-            data = &data[freespace..];
-            let block = context.buffer;
-            SHA512Transform(&mut context.state.st64, &block);
-        } else {
-            // The buffer is not yet full
-            context.buffer[usedspace..usedspace + data.len()].copy_from_slice(data);
-            addinc128(&mut context.bitcount, (data.len() as u64) << 3);
-            return;
-        }
-    }
-    while data.len() >= SHA512_BLOCK_LENGTH {
-        // Process as many complete blocks as we can
-        let mut block = [0u8; SHA512_BLOCK_LENGTH];
-        block.copy_from_slice(&data[..SHA512_BLOCK_LENGTH]);
-        SHA512Transform(&mut context.state.st64, &block);
-        addinc128(&mut context.bitcount, (SHA512_BLOCK_LENGTH as u64) << 3);
-        data = &data[SHA512_BLOCK_LENGTH..];
-    }
-    if !data.is_empty() {
-        // There's left-overs, so save 'em
-        context.buffer[..data.len()].copy_from_slice(data);
-        addinc128(&mut context.bitcount, (data.len() as u64) << 3);
-    }
-}
-
-/// `SHA512Last`: pads the last block with the 128-bit length and runs the final transform.
-#[allow(non_snake_case)] // the C name
-pub fn SHA512Last(context: &mut Sha2Ctx) {
-    let mut usedspace = ((context.bitcount[0] >> 3) % SHA512_BLOCK_LENGTH as u64) as usize;
-    let bitcount = context.bitcount;
-
-    if usedspace > 0 {
-        // Begin padding with a 1 bit:
-        context.buffer[usedspace] = 0x80;
-        usedspace += 1;
-
-        if usedspace <= SHA512_SHORT_BLOCK_LENGTH {
-            // Set-up for the last transform:
-            context.buffer[usedspace..SHA512_SHORT_BLOCK_LENGTH].fill(0);
-        } else {
-            if usedspace < SHA512_BLOCK_LENGTH {
-                context.buffer[usedspace..SHA512_BLOCK_LENGTH].fill(0);
-            }
-            // Do second-to-last transform:
-            let block = context.buffer;
-            SHA512Transform(&mut context.state.st64, &block);
-
-            // And set-up for the last transform:
-            context.buffer[..SHA512_BLOCK_LENGTH - 2].fill(0);
-        }
-    } else {
-        // Prepare for final transform:
-        context.buffer[..SHA512_SHORT_BLOCK_LENGTH].fill(0);
-
-        // Begin padding with a 1 bit:
-        context.buffer[0] = 0x80;
-    }
-    // Store the length of input data (in bits):
-    context.buffer[SHA512_SHORT_BLOCK_LENGTH..SHA512_SHORT_BLOCK_LENGTH + 8]
-        .copy_from_slice(&bitcount[1].to_be_bytes());
-    context.buffer[SHA512_SHORT_BLOCK_LENGTH + 8..].copy_from_slice(&bitcount[0].to_be_bytes());
-
-    // Final transform:
-    let block = context.buffer;
-    SHA512Transform(&mut context.state.st64, &block);
-}
-
-/// `SHA512Final`: pads, writes the digest (big-endian) and wipes the context.
-#[allow(non_snake_case)] // the C name
-pub fn SHA512Final(digest: &mut [u8; SHA512_DIGEST_LENGTH], context: &mut Sha2Ctx) {
-    SHA512Last(context);
-
-    // Save the hash data for output:
-    for (chunk, word) in digest
-        .as_chunks_mut::<8>()
-        .0
-        .iter_mut()
-        .zip(context.state.st64)
-    {
-        *chunk = word.to_be_bytes();
-    }
-
-    // Zero out state data
-    wipe(context);
-}
-
-/// `SHA384Init`.
-#[allow(non_snake_case)] // the C name
-pub fn SHA384Init(context: &mut Sha2Ctx) {
-    context.state.st64 = SHA384_INITIAL_HASH_VALUE;
-    context.buffer[..SHA384_BLOCK_LENGTH].fill(0);
-    context.bitcount = [0; 2];
-}
-
-/// `SHA384Update`: the same as SHA-512's.
-#[allow(non_snake_case)] // the C name
-pub fn SHA384Update(context: &mut Sha2Ctx, data: &[u8]) {
-    SHA512Update(context, data);
-}
-
-/// `SHA384Final`: SHA-512's padding, the first six state words as the digest.
-#[allow(non_snake_case)] // the C name
-pub fn SHA384Final(digest: &mut [u8; SHA384_DIGEST_LENGTH], context: &mut Sha2Ctx) {
-    SHA512Last(context);
-
-    // Save the hash data for output:
-    for (chunk, word) in digest
-        .as_chunks_mut::<8>()
-        .0
-        .iter_mut()
-        .zip(context.state.st64)
-    {
-        *chunk = word.to_be_bytes();
-    }
-    // Zero out state data
-    wipe(context);
-}
 /* </CODE> */
 
 /* <TESTS> */
@@ -708,39 +759,31 @@ pub fn SHA384Final(digest: &mut [u8; SHA384_DIGEST_LENGTH], context: &mut Sha2Ct
 mod tests {
     // Known-answer tests for SHA-256, SHA-384 and SHA-512: the FIPS 180-4 examples ("abc", the
     // 448-bit and 896-bit messages, one million "a"), the empty message, and the digest of the
-    // digests of every length around the block boundaries (`hashlib`).
+    // digests of every length around the block boundaries (`hashlib`); a property test that
+    // any split of a random message gives the one-shot digest.
 
     use super::*;
-    use crate::crypto::testutil::{c_table, hex};
+    use crate::crypto::testutil::{XorShift, c_table, hex};
 
     extern crate std;
     use std::vec::Vec;
 
     fn sha256(data: &[u8]) -> [u8; SHA256_DIGEST_LENGTH] {
-        let mut ctx = Sha2Ctx::default();
-        let mut out = [0u8; SHA256_DIGEST_LENGTH];
-        SHA256Init(&mut ctx);
-        SHA256Update(&mut ctx, data);
-        SHA256Final(&mut out, &mut ctx);
-        out
+        let mut ctx = Sha256Ctx::new();
+        ctx.update(data);
+        ctx.finalize()
     }
 
     fn sha384(data: &[u8]) -> [u8; SHA384_DIGEST_LENGTH] {
-        let mut ctx = Sha2Ctx::default();
-        let mut out = [0u8; SHA384_DIGEST_LENGTH];
-        SHA384Init(&mut ctx);
-        SHA384Update(&mut ctx, data);
-        SHA384Final(&mut out, &mut ctx);
-        out
+        let mut ctx = Sha384Ctx::new();
+        ctx.update(data);
+        ctx.finalize()
     }
 
     fn sha512(data: &[u8]) -> [u8; SHA512_DIGEST_LENGTH] {
-        let mut ctx = Sha2Ctx::default();
-        let mut out = [0u8; SHA512_DIGEST_LENGTH];
-        SHA512Init(&mut ctx);
-        SHA512Update(&mut ctx, data);
-        SHA512Final(&mut out, &mut ctx);
-        out
+        let mut ctx = Sha512Ctx::new();
+        ctx.update(data);
+        ctx.finalize()
     }
 
     const M448: &[u8] = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
@@ -825,25 +868,21 @@ mod tests {
     #[test]
     fn one_million_a() {
         let chunk = [b'a'; 1000];
-
-        let mut ctx = Sha2Ctx::default();
-        let mut out = [0u8; SHA256_DIGEST_LENGTH];
-        SHA256Init(&mut ctx);
+        let mut ctx = Sha256Ctx::new();
         for _ in 0..1000 {
-            SHA256Update(&mut ctx, &chunk);
+            ctx.update(&chunk);
         }
-        SHA256Final(&mut out, &mut ctx);
+        let out = ctx.finalize();
         assert_eq!(
             out.to_vec(),
             hex("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
         );
 
-        let mut out = [0u8; SHA384_DIGEST_LENGTH];
-        SHA384Init(&mut ctx);
+        let mut ctx = Sha384Ctx::new();
         for _ in 0..1000 {
-            SHA384Update(&mut ctx, &chunk);
+            ctx.update(&chunk);
         }
-        SHA384Final(&mut out, &mut ctx);
+        let out = ctx.finalize();
         assert_eq!(
             out.to_vec(),
             hex(
@@ -851,12 +890,11 @@ mod tests {
             )
         );
 
-        let mut out = [0u8; SHA512_DIGEST_LENGTH];
-        SHA512Init(&mut ctx);
+        let mut ctx = Sha512Ctx::new();
         for _ in 0..1000 {
-            SHA512Update(&mut ctx, &chunk);
+            ctx.update(&chunk);
         }
-        SHA512Final(&mut out, &mut ctx);
+        let out = ctx.finalize();
         assert_eq!(
             out.to_vec(),
             hex(
@@ -901,32 +939,55 @@ mod tests {
         for chunk in [
             1usize, 3, 7, 55, 56, 63, 64, 65, 111, 112, 127, 128, 129, 399,
         ] {
-            let mut ctx = Sha2Ctx::default();
-            let mut o256 = [0u8; SHA256_DIGEST_LENGTH];
-            SHA256Init(&mut ctx);
+            let mut ctx = Sha256Ctx::new();
             for piece in msg.chunks(chunk) {
-                SHA256Update(&mut ctx, piece);
+                ctx.update(piece);
             }
-            SHA256Final(&mut o256, &mut ctx);
+            let o256 = ctx.finalize();
             assert_eq!(o256, w256, "sha256 by {chunk}");
             // Final wipes the context.
-            assert_eq!(ctx, Sha2Ctx::default());
+            assert_eq!(ctx, Sha256Ctx::default());
 
-            let mut o384 = [0u8; SHA384_DIGEST_LENGTH];
-            SHA384Init(&mut ctx);
+            let mut ctx = Sha384Ctx::new();
             for piece in msg.chunks(chunk) {
-                SHA384Update(&mut ctx, piece);
+                ctx.update(piece);
             }
-            SHA384Final(&mut o384, &mut ctx);
+            let o384 = ctx.finalize();
             assert_eq!(o384, w384, "sha384 by {chunk}");
 
-            let mut o512 = [0u8; SHA512_DIGEST_LENGTH];
-            SHA512Init(&mut ctx);
+            let mut ctx = Sha512Ctx::new();
             for piece in msg.chunks(chunk) {
-                SHA512Update(&mut ctx, piece);
+                ctx.update(piece);
             }
-            SHA512Final(&mut o512, &mut ctx);
+            let o512 = ctx.finalize();
             assert_eq!(o512, w512, "sha512 by {chunk}");
+        }
+    }
+
+    #[test]
+    fn random_splits_give_the_one_shot_digests() {
+        let mut rng = XorShift::new(0x7368_6132_7370_6c74);
+        for _ in 0..200 {
+            let len = rng.below(700);
+            let msg = rng.bytes(len);
+            let (mut c256, mut c384, mut c512) =
+                (Sha256Ctx::new(), Sha384Ctx::new(), Sha512Ctx::new());
+            for piece in rng.split(&msg) {
+                c256.update(piece);
+            }
+            for piece in rng.split(&msg) {
+                c384.update(piece);
+            }
+            for piece in rng.split(&msg) {
+                c512.update(piece);
+            }
+            assert_eq!(c256.finalize(), sha256(&msg), "sha256, {len} bytes");
+            assert_eq!(c384.finalize(), sha384(&msg), "sha384, {len} bytes");
+            assert_eq!(c512.finalize(), sha512(&msg), "sha512, {len} bytes");
+            // finalize wipes each context where it lives.
+            assert_eq!(c256, Sha256Ctx::default());
+            assert_eq!(c384, Sha384Ctx::default());
+            assert_eq!(c512, Sha512Ctx::default());
         }
     }
 

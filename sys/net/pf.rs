@@ -91,7 +91,7 @@ use core::mem::size_of;
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use crate::crypto::sha2::{SHA512Final, SHA512Init, SHA512Update, Sha2Ctx};
+use crate::crypto::sha2::Sha512Ctx;
 use crate::dev::rnd::{arc4random, arc4random_buf, arc4random_uniform};
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
@@ -243,7 +243,7 @@ pub static PF_HDR_LIMIT: core::sync::atomic::AtomicI32 = core::sync::atomic::Ato
 
 /// `pf_tcp_secret_ctx`, `pf_tcp_secret`, `pf_tcp_secret_init`, `pf_tcp_iss_off`.
 struct PfTcpSecret {
-    ctx: Cell<Option<Sha2Ctx>>,
+    ctx: Cell<Option<Sha512Ctx>>,
     secret: Cell<[u8; 16]>,
     init: Cell<bool>,
     iss_off: Cell<u32>,
@@ -4571,9 +4571,8 @@ pub fn pf_tcp_iss(pd: &mut PfPdesc) -> u32 {
         let mut s = [0u8; 16];
         arc4random_buf(&mut s);
         sec.secret.set(s);
-        let mut c = Sha2Ctx::default();
-        SHA512Init(&mut c);
-        SHA512Update(&mut c, &s);
+        let mut c = Sha512Ctx::new();
+        c.update(&s);
         sec.ctx.set(Some(c));
         sec.init.set(true);
     }
@@ -4582,24 +4581,23 @@ pub fn pf_tcp_iss(pd: &mut PfPdesc) -> u32 {
     };
 
     let th = *pd.tcp();
-    SHA512Update(&mut ctx, &pd.rdomain.to_ne_bytes());
-    SHA512Update(&mut ctx, &th.th_sport.to_ne_bytes());
-    SHA512Update(&mut ctx, &th.th_dport.to_ne_bytes());
+    ctx.update(&pd.rdomain.to_ne_bytes());
+    ctx.update(&th.th_sport.to_ne_bytes());
+    ctx.update(&th.th_dport.to_ne_bytes());
     if pd.af == AF_INET {
         let s = pd.ld_addr(pd.src);
         let d = pd.ld_addr(pd.dst);
-        SHA512Update(&mut ctx, &s.addr8[..4]);
-        SHA512Update(&mut ctx, &d.addr8[..4]);
+        ctx.update(&s.addr8[..4]);
+        ctx.update(&d.addr8[..4]);
     }
     #[cfg(feature = "inet6")]
     if pd.af == AF_INET6 {
         let s = pd.ld_addr(pd.src);
         let d = pd.ld_addr(pd.dst);
-        SHA512Update(&mut ctx, &s.addr8);
-        SHA512Update(&mut ctx, &d.addr8);
+        ctx.update(&s.addr8);
+        ctx.update(&d.addr8);
     }
-    let mut digest = [0u8; SHA512_DIGEST_LENGTH];
-    SHA512Final(&mut digest, &mut ctx);
+    let digest: [u8; SHA512_DIGEST_LENGTH] = ctx.finalize();
     let off = sec.iss_off.get().wrapping_add(4096);
     sec.iss_off.set(off);
     u32::from_ne_bytes([digest[0], digest[1], digest[2], digest[3]])
