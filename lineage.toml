@@ -1105,8 +1105,7 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/hmac.rs"
 lz = ["sys/crypto/hmac.rs"]
-status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs"]
+status = "redesigned"
 
 [[module]]
 rust = "sys/crypto/idgen.rs"
@@ -2197,7 +2196,7 @@ status = "inherited"
 rust = "sys/dev/softraid_crypto.rs"
 lz = ["sys/dev/softraid_crypto.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/sha1.rs"]
+adapted_by = ["sys/crypto/sha1.rs", "sys/crypto/hmac.rs"]
 
 [[module]]
 rust = "sys/dev/softraid_raid0.rs"

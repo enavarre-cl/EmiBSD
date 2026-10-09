@@ -115,7 +115,7 @@ use crate::crypto::cryptodev::{
     CRD_F_ENCRYPT, CRD_F_IV_EXPLICIT, CRD_F_IV_PRESENT, CRYPTO_AES_XTS, CRYPTO_F_IOV, CryptoBuf,
     Cryptodesc, Cryptoini, Cryptop, RIJNDAEL128_BLOCK_LEN,
 };
-use crate::crypto::hmac::{HMAC_SHA1_Final, HMAC_SHA1_Init, HMAC_SHA1_Update, HmacSha1Ctx};
+use crate::crypto::hmac::HmacSha1Ctx;
 use crate::crypto::rijndael::{
     AES_MAXKEYBYTES, RijndaelCtx, rijndael_decrypt, rijndael_encrypt, rijndael_set_key,
     rijndael_set_key_enc_only,
@@ -683,7 +683,6 @@ pub fn sr_crypto_calculate_check_hmac_sha1(
     key: &[Cell<u8>],
     check_digest: &mut [u8; SHA1_DIGEST_LENGTH],
 ) {
-    let mut hmacctx = HmacSha1Ctx::default();
     let mut shactx = Sha1Ctx::new();
     let mut chunk = [0u8; 64];
 
@@ -692,13 +691,13 @@ pub fn sr_crypto_calculate_check_hmac_sha1(
     let mut check_key = shactx.finalize();
 
     // mac = HMAC_SHA1_k(unencrypted key)
-    HMAC_SHA1_Init(&mut hmacctx, &check_key);
+    let mut hmacctx = HmacSha1Ctx::new(&check_key);
     for part in key.chunks(chunk.len()) {
         let bytes = &mut chunk[..part.len()];
         cells_read(bytes, part);
-        HMAC_SHA1_Update(&mut hmacctx, bytes);
+        hmacctx.update(bytes);
     }
-    HMAC_SHA1_Final(check_digest, &mut hmacctx);
+    *check_digest = hmacctx.finalize();
 
     explicit_bzero(&mut check_key);
     explicit_bzero(&mut chunk);
