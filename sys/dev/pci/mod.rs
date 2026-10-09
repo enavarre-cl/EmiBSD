@@ -33,7 +33,8 @@
 //! `piixreg`) the ICH and PIIX4 SMBus controllers (`ichiic* at pci?`, `piixpm* at pci?`, M16e); `ehci_pci` the EHCI front-end
 //! (`ehci* at pci?`, M16b); `uhci_pci` the UHCI front-end (`uhci* at pci?`, M16b);
 //! `ohci_pci` the OHCI front-end (`ohci* at pci?`, M16b); `vmwpvs` VMware's paravirtual SCSI
-//! adapter (`vmwpvs* at pci?`, M16a). The machine side
+//! adapter (`vmwpvs* at pci?`, M16a); `sdhc_pci` the SD Host Controller front-end (`sdhc* at
+//! pci?`, M16a). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
 pub mod ahci_pci;
@@ -74,6 +75,7 @@ pub mod ppbreg;
 pub mod puc;
 pub mod pucdata;
 pub mod pucvar;
+pub mod sdhc_pci;
 pub mod siop_pci;
 pub mod siop_pci_common;
 pub mod uhci_pci;

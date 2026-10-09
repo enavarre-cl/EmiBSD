@@ -34,7 +34,8 @@
 //! `wsmouse* at ums? mux 0`, `uwacom* at uhidev?` and `wsmouse* at uwacom? mux 0` (M16b), `uhid* at uhidev?`, `uaudio* at uhub?`, `audio* at uaudio?`, `ugen* at uhub?` (M16b), `cpu0 at mainbus?`
 //! and, with `MULTIPROCESSOR`, `GENERIC.MP`'s `cpu* at mainbus?`;
 //! `azalia* at pci?` and `audio* at azalia?` (M12); `vioscsi* at virtio?` and `cd* at
-//! scsibus?`, `psci* at fdt? early 1`, `ahci* at pci?`, `nvme* at pci?`, `mpi* at pci?` (M16a), `em* at pci?`, `simplefb* at
+//! scsibus?`, `psci* at fdt? early 1`, `ahci* at pci?`, `nvme* at pci?`, `mpi* at pci?` (M16a), `sdhc* at pci?` and `sdmmc*
+//! at sdhc?` (M16a), `em* at pci?`, `simplefb* at
 //! fdt?` and `wsdisplay* at simplefb?` (M13);
 //! `re* at pci?`, `rgephy* at mii?`, `rlphy* at mii?` and `ukphy* at mii?` (M13);
 //! `vmx* at pci?` (M13); `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13);
@@ -55,9 +56,10 @@
 //! attach below it) and `agintc` (`device agintc: fdt`, whose ITS `agintcmsi` attaches
 //! below it). Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
-//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `ehci*`, `uhci*`, `ohci*`, `azalia*`, `ahci*`, `nvme*`, `mpi*`, `ppb*`,
+//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `ehci*`, `uhci*`, `ohci*`, `azalia*`, `ahci*`, `nvme*`, `mpi*`, `sdhc*`, `ppb*`,
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
-//! ...), `ahci*` at `fdt?`, `ehci*` at `acpi?` and `fdt?`, the other host
+//! ...), `ahci*` at `fdt?`, `sdhc*` at `acpi?` and `fdt?`, `sdmmc*` at the other SD/MMC
+//! controllers, `bwfm*` at `sdmmc?`, `ehci*` at `acpi?` and `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
 //! `umass*`, `uhidev*`, `uaudio*`, `cdce*`, `uftdi*` and `ugen*`, the devices at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*`
 //! but the one at `ukbd?`, every `wsmouse*` but the ones at `ums?` and `uwacom?`, every `ucom*` but the one at `uftdi?`, ...),
@@ -115,6 +117,7 @@ use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::ohci_pci::OHCI_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::ppb::{PPB_CA, PPB_CD};
+use crate::dev::pci::sdhc_pci::SDHC_PCI_CA;
 use crate::dev::pci::uhci_pci::UHCI_PCI_CA;
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
@@ -123,6 +126,8 @@ use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
 use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
+use crate::dev::sdmmc::sdhc::SDHC_CD;
+use crate::dev::sdmmc::sdmmc::{SDMMC_CA, SDMMC_CD};
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::usb::ehci::EHCI_CD;
 use crate::dev::usb::if_cdce::{CDCE_CA, CDCE_CD};
@@ -236,8 +241,13 @@ const PV_AZALIA: &[i16] = &[17, 62];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
 /// `softraid0` (`cfdata[11]`), `umass*` (`cfdata[24]`), `vioscsi*` (`cfdata[27]`), `ahci*`
-/// (`cfdata[30]`, through atascsi), `nvme*` (`cfdata[31]`) and `mpi*` (`cfdata[70]`).
-const PV_VIOBLK: &[i16] = &[5, 11, 24, 27, 30, 31, 70];
+/// (`cfdata[30]`, through atascsi), `nvme*` (`cfdata[31]`), `mpi*` (`cfdata[70]`) and
+/// `sdmmc*` (`cfdata[72]`, M16a).
+const PV_VIOBLK: &[i16] = &[5, 11, 24, 27, 30, 31, 70, 72];
+
+/// `pv[]` for children of `sdhc*` (`cfdata[71]`) through the `sdmmcbus` attribute
+/// (`conf/files`: `define sdmmcbus {}`, no locators).
+const PV_SDHC: &[i16] = &[71];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[9]`).
 const PV_SCSIBUS: &[i16] = &[9];
@@ -315,9 +325,9 @@ const NFREE: usize = 8;
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    72
+    74
 } else {
-    71
+    73
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -421,7 +431,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 9: scsibus* at scsi? (vioblk, umass, vioscsi, ahci, nvme), and at softraid? (GENERIC's `scsibus* at
+    // 9: scsibus* at scsi? (vioblk, umass, vioscsi, ahci, nvme, mpi, sdmmc), and at softraid? (GENERIC's `scsibus* at
     // softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,
@@ -1146,7 +1156,21 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 71: cpu* at mainbus? (GENERIC.MP)
+    // 71: sdhc* at pci? (M16a)
+    Cfdata::new(
+        &SDHC_PCI_CA,
+        &SDHC_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 72: sdmmc* at sdhc? (M16a)
+    Cfdata::new(&SDMMC_CA, &SDMMC_CD, 0, FSTATE_STAR, &[], 0, PV_SDHC, 0, 0),
+    // 73: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
     // The free slots.

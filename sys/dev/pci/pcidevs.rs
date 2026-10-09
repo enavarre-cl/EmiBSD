@@ -67,7 +67,8 @@
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
 //!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c`, `if_re_pci.c`,
-//!   `if_vmx.c`, `if_dc_pci.c`, `vga_pci.c`, `ppb.c`, `ehci_pci.c` and arm64's `acpipci.c`). The whole header, and `pcidevs_data.h` for
+//!   `if_vmx.c`, `if_dc_pci.c`, `vga_pci.c`, `ppb.c`, `ehci_pci.c`, `sdhc_pci.c` and arm64's
+//!   `acpipci.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -1998,6 +1999,29 @@ pub const PCI_PRODUCT_LINKSYS_PCM200: u32 = 0xab09;
 pub const PCI_VENDOR_HAWKING: u32 = 0x17b3;
 /// `PCI_PRODUCT_HAWKING_PN672TX`: PN672TX.
 pub const PCI_PRODUCT_HAWKING_PN672TX: u32 = 0xab08;
+// M16a (sdhc_pci.c): the SD host controllers it names.
+/// `PCI_PRODUCT_REALTEK_RTS5209`: RTS5209 Card Reader.
+pub const PCI_PRODUCT_REALTEK_RTS5209: u32 = 0x5209;
+/// `PCI_VENDOR_RICOH`: Ricoh.
+pub const PCI_VENDOR_RICOH: u32 = 0x1180;
+/// `PCI_PRODUCT_RICOH_R5U822`: 5U822 SD/MMC.
+pub const PCI_PRODUCT_RICOH_R5U822: u32 = 0xe822;
+/// `PCI_PRODUCT_RICOH_R5U823`: 5U823 SD/MMC.
+pub const PCI_PRODUCT_RICOH_R5U823: u32 = 0xe823;
+/// `PCI_VENDOR_TI`: TI.
+pub const PCI_VENDOR_TI: u32 = 0x104c;
+/// `PCI_PRODUCT_TI_PCI7XX1_FLASH`: PCI7XX1 Flash.
+pub const PCI_PRODUCT_TI_PCI7XX1_FLASH: u32 = 0x8033;
+/// `PCI_PRODUCT_TI_PCI7XX1_SD`: PCI7XX1 SD.
+pub const PCI_PRODUCT_TI_PCI7XX1_SD: u32 = 0x8034;
+/// `PCI_VENDOR_ENE`: ENE.
+pub const PCI_VENDOR_ENE: u32 = 0x1524;
+/// `PCI_PRODUCT_ENE_SDCARD`: SD.
+pub const PCI_PRODUCT_ENE_SDCARD: u32 = 0x0550;
+/// `PCI_VENDOR_GENESYS`: Genesys Logic.
+pub const PCI_VENDOR_GENESYS: u32 = 0x17a0;
+/// `PCI_PRODUCT_GENESYS_GL9755`: GL9755.
+pub const PCI_PRODUCT_GENESYS_GL9755: u32 = 0x9755;
 /* </CODE> */
 
 /* <TESTS> */
@@ -3949,6 +3973,31 @@ mod tests {
             ("PCI_PRODUCT_SYMBIOS_FC949X", PCI_PRODUCT_SYMBIOS_FC949X),
             ("PCI_PRODUCT_SYMBIOS_FC939X", PCI_PRODUCT_SYMBIOS_FC939X),
             ("PCI_PRODUCT_SYMBIOS_FC949E", PCI_PRODUCT_SYMBIOS_FC949E),
+        ] {
+            assert_eq!(
+                crate::reftest::int(&defs, name),
+                Some(i64::from(value)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn sdhc_pci_ids_match_the_generated_header() {
+        let defs = crate::reftest::defines("sys/dev/pci/pcidevs.h");
+        for (name, value) in [
+            ("PCI_PRODUCT_REALTEK_RTS5209", PCI_PRODUCT_REALTEK_RTS5209),
+            ("PCI_VENDOR_RICOH", PCI_VENDOR_RICOH),
+            ("PCI_PRODUCT_RICOH_R5U822", PCI_PRODUCT_RICOH_R5U822),
+            ("PCI_PRODUCT_RICOH_R5U823", PCI_PRODUCT_RICOH_R5U823),
+            ("PCI_VENDOR_TI", PCI_VENDOR_TI),
+            ("PCI_PRODUCT_TI_PCI7XX1_FLASH", PCI_PRODUCT_TI_PCI7XX1_FLASH),
+            ("PCI_PRODUCT_TI_PCI7XX1_SD", PCI_PRODUCT_TI_PCI7XX1_SD),
+            ("PCI_VENDOR_ENE", PCI_VENDOR_ENE),
+            ("PCI_PRODUCT_ENE_SDCARD", PCI_PRODUCT_ENE_SDCARD),
+            ("PCI_VENDOR_GENESYS", PCI_VENDOR_GENESYS),
+            ("PCI_PRODUCT_GENESYS_GL9755", PCI_PRODUCT_GENESYS_GL9755),
         ] {
             assert_eq!(
                 crate::reftest::int(&defs, name),
