@@ -27,12 +27,12 @@
 //!                                          target/disk-A-NAME[-sdK].img instead;
 //!                                          --smp N (1..=8; qemu, smoke, smoke2) gives
 //!                                          every VM N processors;
-//!                                          --usb, --audio hda|ac97 and --expect-tone (qemu,
+//!                                          --usb, --audio hda|ac97|usb and --expect-tone (qemu,
 //!                                          smoke) add M12's devices: a qemu-xhci with a
-//!                                          USB stick and keyboard, Intel HDA or AC97 into a
-//!                                          WAV file that must hold a tone (devices.rs);
-//!                                          --usb-hc ehci (M16b) puts the stick on a
-//!                                          usb-ehci instead
+//!                                          USB stick and keyboard, Intel HDA, AC97 or a
+//!                                          usb-audio (M16b) into a WAV file that must hold
+//!                                          a tone (devices.rs); --usb-hc ehci (M16b) puts
+//!                                          the stick on a usb-ehci instead
 //! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T]... [--until-seen]
 //!                   [--expect-ramdisk] --expect L...
 //!                                          boot headless; pass if every L appears and QEMU
@@ -60,6 +60,10 @@
 //!                                          VM (the snapshot of openbsd-snapshot.toml,
 //!                                          installed under target/openbsd), compared step by
 //!                                          step (diffopenbsd.rs)
+//! cargo xtask diff-openbsd --arch A [--ipmi] [--usb] [--usb-hc H] [--ukc CMD]... [--sh CMD] probe
+//!                                          that OpenBSD alone with the smokes' device
+//!                                          options, booted with `-c` and the UKC commands
+//!                                          given: its dmesg and CMD's output
 //! cargo xtask unsafe-report [--write]    `unsafe` blocks, fns, impls and traits per kernel
 //!                                          subsystem, test code apart; --write puts the totals
 //!                                          on docs/STATUS.md's `Unsafe` line (unsafereport.rs)
@@ -125,11 +129,12 @@ const TABLE_END: &str = "<!-- ports:end -->";
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
                      qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] [--disks N] [--disk-set NAME] [--nvme FILE] [--ahci FILE] [--scsi-cd ISO] [--lsi FILE [--lsi-cd ISO]] [--pci-serial FILE] [--reboot] [--vio-mq] [--fb] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--disk-set NAME] [--nvme FILE] [--ahci FILE] [--scsi-cd ISO] [--lsi FILE [--lsi-cd ISO]] [--pci-serial FILE] [--reboot] [--vio-mq] [--expect-pci-serial T]... [--fb] [--screenshot-after L [--screen-text ROW:COL:TEXT]] [--sendkey-after L --sendkeys K] [--usb] [--usb-hc xhci|ehci] [--usb-mouse] [--usb-tablet] [--usb-wacom-tablet] [--usb-ccid] [--usb-net] [--usb-serial FILE [--usb-serial-send-after L --usb-serial-send T]... [--expect-usb-serial T]...] [--audio hda|ac97] [--expect-tone] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--disk-set NAME] [--nvme FILE] [--ahci FILE] [--scsi-cd ISO] [--lsi FILE [--lsi-cd ISO]] [--pci-serial FILE] [--reboot] [--vio-mq] [--expect-pci-serial T]... [--fb] [--screenshot-after L [--screen-text ROW:COL:TEXT]] [--sendkey-after L --sendkeys K] [--usb] [--usb-hc xhci|ehci] [--usb-mouse] [--usb-tablet] [--usb-wacom-tablet] [--usb-ccid] [--usb-net] [--usb-serial FILE [--usb-serial-send-after L --usb-serial-send T]... [--expect-usb-serial T]...] [--audio hda|ac97|usb] [--expect-tone] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
                      smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
                      smoke-all [-j N] [--just PATH] RECIPE... | \
                      unsafe-report [--write] | \
-                     diff-openbsd [--arch A]... [--smp N] [--kernel-dir D] [fetch | install | run] | \
+                     diff-openbsd [--arch A]... [--smp N] [--kernel-dir D] [fetch | install | run | powerbtn] | \
+                     diff-openbsd --arch A [--ipmi] [--usb] [--usb-hc xhci|ehci] [--ukc CMD]... [--sh CMD] probe | \
                      symbolize --arch A [--kernel K] | userland --arch A | comp --arch A [--jobs N] | ntfs-image OUT [--check] | \
                      e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]... | \
                      nvme-root --arch A [--duid HEX] [--out FILE] [--root-dev DEV]>";

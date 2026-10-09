@@ -13,6 +13,7 @@ pub mod ehcireg;
 pub mod ehcivar;
 pub mod if_cdce;
 pub mod if_cdcereg;
+pub mod uaudio;
 pub mod ucom;
 pub mod ucomvar;
 pub mod uftdi;

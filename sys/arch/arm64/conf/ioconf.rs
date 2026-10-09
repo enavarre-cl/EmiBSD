@@ -13,7 +13,7 @@
 //! 1`, `pciecam* at fdt?`, `pci* at pciecam?`, `virtio* at pci?`, `xhci* at pci?`, `usb* at
 //! xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?` and `scsibus* at scsi?` below
 //! it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12), `ums* at uhidev?`,
-//! `wsmouse* at ums? mux 0`, `uwacom* at uhidev?` and `wsmouse* at uwacom? mux 0` (M16b), `uhid* at uhidev?`, `ugen* at uhub?` (M16b), `cpu0 at mainbus?`
+//! `wsmouse* at ums? mux 0`, `uwacom* at uhidev?` and `wsmouse* at uwacom? mux 0` (M16b), `uhid* at uhidev?`, `uaudio* at uhub?`, `audio* at uaudio?`, `ugen* at uhub?` (M16b), `cpu0 at mainbus?`
 //! and, with `MULTIPROCESSOR`, `GENERIC.MP`'s `cpu* at mainbus?`;
 //! `azalia* at pci?` and `audio* at azalia?` (M12); `vioscsi* at virtio?` and `cd* at
 //! scsibus?`, `psci* at fdt? early 1`, `ahci* at pci?`, `nvme* at pci?`, `em* at pci?`, `simplefb* at
@@ -37,7 +37,7 @@
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
 //! ...), `ahci*` at `fdt?`, `ehci*` at `acpi?` and `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
-//! `umass*`, `uhidev*`, `cdce*`, `uftdi*` and `ugen*`, the devices at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*`
+//! `umass*`, `uhidev*`, `uaudio*`, `cdce*`, `uftdi*` and `ugen*`, the devices at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*`
 //! but the one at `ukbd?`, every `wsmouse*` but the ones at `ums?` and `uwacom?`, every `ucom*` but the one at `uftdi?`, ...),
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
@@ -94,6 +94,7 @@ use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::usb::ehci::EHCI_CD;
 use crate::dev::usb::if_cdce::{CDCE_CA, CDCE_CD};
+use crate::dev::usb::uaudio::{UAUDIO_CA, UAUDIO_CD};
 use crate::dev::usb::ucom::{UCOM_CA, UCOM_CD};
 use crate::dev::usb::uftdi::{UFTDI_CA, UFTDI_CD};
 use crate::dev::usb::ugen::{UGEN_CA, UGEN_CD};
@@ -167,9 +168,9 @@ const PV_ACPIIORT: &[i16] = &[43];
 const LOC_PCI_UNK: &[i64] = &[-1, -1];
 
 /// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[20]`) and
-/// `ehci*` (`cfdata[59]`): `usb* at xhci?` and `usb* at ehci?` are one entry, as config(8)
+/// `ehci*` (`cfdata[60]`): `usb* at xhci?` and `usb* at ehci?` are one entry, as config(8)
 /// merges them.
-const PV_USBUS: &[i16] = &[20, 59];
+const PV_USBUS: &[i16] = &[20, 60];
 
 /// `pv[]` for children of `usb*` (`cfdata[21]`).
 const PV_USB: &[i16] = &[21];
@@ -190,8 +191,10 @@ const PV_UHIDEV: &[i16] = &[25];
 /// `loc[]` of an entry at `uhidbus` with the default `reportid = -1`.
 const LOC_UHIDBUS_UNK: &[i64] = &[-1];
 
-/// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[17]`).
-const PV_AZALIA: &[i16] = &[17];
+/// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[17]`) and
+/// `uaudio*` (`cfdata[58]`): `config(8)` merges `audio* at azalia?` and `audio* at
+/// uaudio?` into one entry.
+const PV_AZALIA: &[i16] = &[17, 58];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
 /// `softraid0` (`cfdata[11]`), `umass*` (`cfdata[24]`), `vioscsi*` (`cfdata[27]`), `ahci*`
@@ -237,18 +240,18 @@ const PV_UWACOM: &[i16] = &[55];
 /// `define wsmousedev {[mux = 0]}`).
 const LOC_WSMOUSEDEV_MUX0: &[i64] = &[0];
 
-/// `pv[]` for children of `uftdi*` (`cfdata[61]`): the `ucombus` attribute (`files.usb`:
+/// `pv[]` for children of `uftdi*` (`cfdata[62]`): the `ucombus` attribute (`files.usb`:
 /// `define ucombus {[portno = -1]}`) is carried by `uftdi` alone here.
-const PV_UFTDI: &[i16] = &[61];
+const PV_UFTDI: &[i16] = &[62];
 
 /// `loc[]` of an entry at `ucombus` with the default `portno = -1`.
 const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    64
+    65
 } else {
-    63
+    64
 };
 
 /// `cfdata[]`.
@@ -460,7 +463,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 18: audio* at azalia?
+    // 18: audio* at azalia?, audio* at uaudio?
     Cfdata::new(
         &AUDIO_CA,
         &AUDIO_CD,
@@ -910,7 +913,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 58: ugen* at uhub?
+    // 58: uaudio* at uhub?
+    Cfdata::new(
+        &UAUDIO_CA,
+        &UAUDIO_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHUB_UNK,
+        0,
+        PV_UHUB,
+        0,
+        0,
+    ),
+    // 59: ugen* at uhub?
     Cfdata::new(
         &UGEN_CA,
         &UGEN_CD,
@@ -922,7 +937,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 59: ehci* at pci?
+    // 60: ehci* at pci?
     Cfdata::new(
         &EHCI_PCI_CA,
         &EHCI_CD,
@@ -934,7 +949,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 60: cdce* at uhub?
+    // 61: cdce* at uhub?
     Cfdata::new(
         &CDCE_CA,
         &CDCE_CD,
@@ -946,7 +961,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 61: uftdi* at uhub?
+    // 62: uftdi* at uhub?
     Cfdata::new(
         &UFTDI_CA,
         &UFTDI_CD,
@@ -958,7 +973,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 62: ucom* at uftdi?
+    // 63: ucom* at uftdi?
     Cfdata::new(
         &UCOM_CA,
         &UCOM_CD,
@@ -970,7 +985,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 63: cpu* at mainbus? (GENERIC.MP)
+    // 64: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

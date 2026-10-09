@@ -1227,6 +1227,14 @@ mod tests {
 
     /// A dirhash with `hlen` slots and `dirblks` directory blocks, its arrays leaked test
     /// memory, initialised as `ufsdirhash_build` initialises one (every block empty).
+    /// The lock under which the mounting tests run `vfsinit`, whose `ufsdirhash_init` draws a
+    /// new hash key: a test that hashes a name twice holds it, so the key stays put between.
+    fn key_lock() -> MutexGuard<'static, ()> {
+        crate::uvm::uvm_pmemrange::tests::LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
     fn test_dh(hlen: i32, dirblks: i32) -> &'static Dirhash {
         let narrays = (hlen + DH_NBLKOFF - 1) / DH_NBLKOFF;
         let blocks: Vec<*mut Doff> = (0..narrays)
@@ -1252,6 +1260,7 @@ mod tests {
 
     #[test]
     fn hash_stays_in_range_and_depends_on_the_name() {
+        let _g = key_lock();
         let dh = test_dh(3 * DH_NBLKOFF, 4);
         let mut seen = BTreeSet::new();
         for i in 0..200 {
@@ -1267,6 +1276,7 @@ mod tests {
 
     #[test]
     fn slots_chain_on_collisions_and_deleted_chains_collapse() {
+        let _g = key_lock();
         // Four slots, so that names collide; the chain wraps around the end.
         let dh = test_dh(4, 4);
         let add = |name: &[u8], off: Doff| {

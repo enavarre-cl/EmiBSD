@@ -1,6 +1,6 @@
 /* <CODE> */
 //! M12's QEMU devices: USB through `qemu-xhci` (or, M16b, another host controller) and
-//! audio through Intel HDA or AC97, and M16b's USB pointers and smart card reader.
+//! audio through Intel HDA or AC97, and M16b's USB pointers, smart card reader and USB audio.
 //!
 //! `smoke` and `qemu` take, besides the flags every boot has:
 //! - `--usb`: a `qemu-xhci` controller with a `usb-storage` stick and a `usb-kbd` on its
@@ -38,9 +38,11 @@
 //!   high speed EHCI port with no companion controller ("speed mismatch"), so the keyboard
 //!   stays off that bus. A controller is one arm of [`UsbHc`]'s matches (its QEMU device and
 //!   whether the keyboard fits on it).
-//! - `--audio hda` or `--audio ac97`: QEMU's `wav` audio backend writes what the guest plays
-//!   to `<image>.wav` (removed first), through `intel-hda` + `hda-output` (`azalia(4)`) or
-//!   `AC97` (`auich(4)`).
+//! - `--audio hda`, `--audio ac97` or `--audio usb`: QEMU's `wav` audio backend writes what
+//!   the guest plays to `<image>.wav` (removed first), through `intel-hda` + `hda-output`
+//!   (`azalia(4)`), `AC97` (`auich(4)`) or (M16b) a `usb-audio` speaker on the
+//!   [`UsbHc`] bus (full speed: `xhci` only) (`uaudio(4)`; the controller comes with it, the stick and the `usb-kbd` only with
+//!   `--usb`).
 //! - `--speakers` (with `--audio`): QEMU's `coreaudio` backend instead of `wav`, so what the
 //!   guest plays comes out of the Mac's speakers; nothing is recorded, so it excludes
 //!   `--expect-tone` (`just play-audio`, by ear, outside `smoke`).
@@ -91,6 +93,8 @@ pub(crate) enum Audio {
     Hda,
     /// `AC97`: `auich(4)`.
     Ac97,
+    /// `usb-audio` on the [`UsbHc`] bus: `uaudio(4)`.
+    Usb,
 }
 
 /// The USB host controller `--usb-hc` puts the devices on.
@@ -157,7 +161,7 @@ pub(crate) struct Devices {
     pub usb_serial_send: Vec<(String, String)>,
     /// `--expect-usb-serial TEXT`, each.
     pub expect_usb_serial: Vec<String>,
-    /// `--audio hda|ac97`.
+    /// `--audio hda|ac97|usb`.
     pub audio: Option<Audio>,
     /// `--expect-tone`.
     pub expect_tone: bool,
@@ -168,9 +172,9 @@ pub(crate) struct Devices {
 static DEVICES: OnceLock<Devices> = OnceLock::new();
 
 /// Parses `--usb`, `--usb-hc <xhci|ehci>`, `--usb-mouse`, `--usb-tablet`,
-/// `--usb-wacom-tablet`, `--usb-ccid`, `--usb-net`, `--usb-serial`, `--usb-serial-send-after`/`--usb-serial-send`,
-/// `--expect-usb-serial`, `--audio <hda|ac97>`, `--speakers` and `--expect-tone` and records
-/// them for the run.
+/// `--usb-wacom-tablet`, `--usb-ccid`, `--usb-net`, `--usb-serial`,
+/// `--usb-serial-send-after`/`--usb-serial-send`, `--expect-usb-serial`,
+/// `--audio <hda|ac97|usb>`, `--speakers` and `--expect-tone` and records them for the run.
 pub(crate) fn set_from_args(args: &[&str]) -> Result<()> {
     let _ = DEVICES.set(parse(args)?);
     Ok(())
@@ -183,7 +187,10 @@ fn parse(args: &[&str]) -> Result<Devices> {
         Some(i) => match args.get(i + 1).copied() {
             Some("hda") => Some(Audio::Hda),
             Some("ac97") => Some(Audio::Ac97),
-            other => return Err(format!("--audio {other:?}: expected `hda` or `ac97`").into()),
+            Some("usb") => Some(Audio::Usb),
+            other => {
+                return Err(format!("--audio {other:?}: expected `hda`, `ac97` or `usb`").into());
+            }
         },
     };
     let expect_tone = args.contains(&"--expect-tone");
@@ -308,12 +315,13 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
         || d.usb_wacom
         || d.usb_ccid
         || d.usb_net
-        || d.usb_serial.is_some();
+        || d.usb_serial.is_some()
+        || d.audio == Some(Audio::Usb);
     if extras && !d.usb_hc.takes_full_speed() {
         return Err(
-            "--usb-mouse, --usb-tablet, --usb-wacom-tablet, --usb-ccid, --usb-net and \
-                    --usb-serial are full speed devices: they need a controller with full speed \
-                    ports (--usb-hc xhci)"
+            "--usb-mouse, --usb-tablet, --usb-wacom-tablet, --usb-ccid, --usb-net, \
+                    --usb-serial and --audio usb are full speed devices: they need a controller \
+                    with full speed ports (--usb-hc xhci)"
                 .into(),
         );
     }
@@ -389,6 +397,10 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
                 .map(String::from),
             ),
             Audio::Ac97 => args.extend(["-device", "AC97,audiodev=snd0"].map(String::from)),
+            Audio::Usb => args.extend([
+                "-device".to_string(),
+                format!("usb-audio,bus={USB_HC_ID}.0,audiodev=snd0"),
+            ]),
         }
     }
     Ok(args)
@@ -643,6 +655,8 @@ mod tests {
         assert!(d.speakers && !d.expect_tone);
         assert_eq!(d.audio, Some(Audio::Hda));
         assert!(!parse(&["--audio", "ac97"]).unwrap().speakers);
+        assert_eq!(parse(&["--audio", "usb"]).unwrap().audio, Some(Audio::Usb));
+        assert!(parse(&["--audio", "sb"]).is_err());
         assert!(parse(&["--speakers"]).is_err());
         assert!(parse(&["--audio", "hda", "--speakers", "--expect-tone"]).is_err());
     }
