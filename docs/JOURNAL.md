@@ -21,6 +21,8 @@ Boundary: _(the `docs: N0 met` commit)_. Range `lz-origin..<hash>`.
 - Idioms: _(filled at the close)_
 - Rules: the governance rewrite (`CLAUDE.md`, `.claude/rules/`), decisions 16 to 20
   (`docs/PHASE2.md`).
+- LZ sync: `f5985f1d055a..44edb2c8323e`, 2 commits (the logo, the author's block): cherry-pick
+  1, cherry-pick-conflicts 1, reimplemented 0.
 - Numbers: _(from the tools at the close: `cargo xtask unsafe-report`, `lz status`, the smoke
   count of `just ci`, the `diff-openbsd` summary per arch, `just bench` when it exists)_
 

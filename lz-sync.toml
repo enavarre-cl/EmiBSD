@@ -12,3 +12,17 @@
 
 [meta]
 lz = "f5985f1d055a380e9fe3b38837ad9d668e6d736e"
+
+[[commit]]
+lz = "4e8d3ab1281e"
+subject = "docs: replace the Ferffy mascot image"
+status = "applied"
+emibsd = "eaea97257439"
+method = "cherry-pick"
+
+[[commit]]
+lz = "44edb2c8323e"
+subject = "build: put the author's ISC notice first in every Rust file"
+status = "applied"
+emibsd = "20514daa926d"
+method = "cherry-pick-conflicts"
