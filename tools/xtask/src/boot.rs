@@ -749,6 +749,8 @@ pub(crate) fn qemu_command(
         }
     }
     crate::hwopts::add_devices(&mut cmd, root, arch)?;
+    // M16a (storage.rs): the storage controllers, after the devices above.
+    crate::storage::add_devices(&mut cmd, arch)?;
     // M12: `--usb`, `--audio` (`devices.rs`), after every other device so the PCI slots
     // the older smokes expect do not move.
     cmd.args(crate::devices::qemu_args(image)?);

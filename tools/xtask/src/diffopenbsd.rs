@@ -23,7 +23,7 @@
 //! ```text
 //! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run | powerbtn]
 //! cargo xtask diff-openbsd --arch A [--ipmi] [--nic MODEL] [--usb] [--usb-hc xhci|ehci|uhci|ohci] [--ukc CMD]...
-//!                           [--sh CMD] probe
+//!                           [--machine pc] [--ide|--megasas|...|--floppy FILE]... [--sh CMD] probe
 //! ```
 //!
 //! - `fetch`: the OpenBSD -current snapshot recorded in `tools/xtask/openbsd-snapshot.toml`
@@ -54,7 +54,10 @@
 //!   options (`hwopts.rs`: `--ipmi`, and `--nic MODEL` (M16c), the user network's NIC in
 //!   virtio-net's place, which the installed system leaves unconfigured, so `--sh` sets it
 //!   up; `devices.rs`: `--usb` and `--usb-hc xhci|ehci|uhci`,
-//!   the M12 stick on that controller, `openbsd-probe.usb` in the work directory), logs in and runs `dmesg` and the shell command
+//!   the M12 stick on that controller, `openbsd-probe.usb` in the work directory; M16a:
+//!   `--machine pc`, the installed disk then on an AHCI controller added last as EmiBSD's
+//!   boot image is, and `storage.rs`'s controllers with their disks in the run directory),
+//!   logs in and runs `dmesg` and the shell command
 //!   `--sh` gives (`<run dir>/<arch>/openbsd-probe.log`). Each `--ukc CMD` makes it boot
 //!   with `boot -c` at efiboot's `boot>` prompt and send CMD at `UKC>`, then `quit`, as an
 //!   OpenBSD user enables a GENERIC line marked `disable`. It is how M16e checked what
@@ -137,7 +140,11 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
             // A device option: `hwopts::set` or `devices::set_from_args` (main) has recorded
             // it; `probe` adds the device.
             "--ipmi" | "--usb" => {}
-            "--usb-hc" | "--nic" => {
+            "--usb-hc" | "--nic" | "--machine" => {
+                it.next();
+            }
+            // M16a: a storage controller and its disk (`storage.rs`).
+            o if crate::storage::options().any(|s| s == o) => {
                 it.next();
             }
             "fetch" | "install" | "run" | "powerbtn" | "probe" => what = a,
@@ -355,7 +362,12 @@ fn openbsd_qemu(root: &Path, arch: Arch, mode: &Boot<'_>) -> Result<Command> {
     cmd.args(["-netdev", &format!("user,id=n0{restrict}")]);
     let (dev, net) = match arch {
         Arch::Amd64 => {
-            cmd.args(["-M", "q35", "-cpu", "qemu64"]);
+            // `probe` takes `--machine pc` (hwopts, M16a: PIIX3's IDE controller).
+            let machine = match mode {
+                Boot::Probe(_) => crate::hwopts::amd64_machine(),
+                _ => "q35",
+            };
+            cmd.args(["-M", machine, "-cpu", "qemu64"]);
             ("virtio-blk-pci", "virtio-net-pci")
         }
         Arch::Arm64 => {
@@ -373,7 +385,7 @@ fn openbsd_qemu(root: &Path, arch: Arch, mode: &Boot<'_>) -> Result<Command> {
         Boot::Prepare | Boot::Probe(_) => (None, "", false),
         Boot::Run(scratch) => (Some(*scratch), "", false),
     };
-    let root_disk = [
+    let mut root_disk = vec![
         "-drive".to_string(),
         format!("if=none,format=raw,file={},id=d0", disk.display()),
         "-device".to_string(),
@@ -382,6 +394,15 @@ fn openbsd_qemu(root: &Path, arch: Arch, mode: &Boot<'_>) -> Result<Command> {
             if boot_second { "" } else { ",bootindex=0" }
         ),
     ];
+    // On `pc` (`probe --machine pc`), `hwopts::add_devices` puts the drive `hd0` on an AHCI
+    // controller added last, as it does EmiBSD's boot image, so PIIX3's IDE channels stay
+    // free: the installed disk is that drive.
+    if arch == Arch::Amd64 && crate::hwopts::machine_pc() && matches!(mode, Boot::Probe(_)) {
+        root_disk = vec![
+            "-drive".to_string(),
+            format!("if=none,format=raw,file={},id=hd0", disk.display()),
+        ];
+    }
     let other_disk = second.map(|p| {
         [
             "-drive".to_string(),
@@ -577,6 +598,8 @@ fn probe(root: &Path, arch: Arch, ukc: &[&str], sh: Option<&str>) -> Result<()> 
     let _ = fs::remove_file(&sock);
     let mut cmd = openbsd_qemu(root, arch, &Boot::Probe(&sock))?;
     crate::hwopts::add_devices(&mut cmd, root, arch)?;
+    // M16a: the storage controllers of `storage.rs`, with their disks in the run directory.
+    crate::storage::add_devices(&mut cmd, arch)?;
     // The USB devices of `devices.rs` (the stick is `openbsd-probe.usb` in the work directory).
     cmd.args(crate::devices::qemu_args(&work.join("openbsd-probe.img"))?);
     let log = work.join("openbsd-probe.log");
