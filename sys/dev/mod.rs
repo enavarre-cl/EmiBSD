@@ -59,6 +59,7 @@ pub mod pv;
 pub mod rasops;
 pub mod rd;
 pub mod rnd;
+pub mod sdmmc;
 pub mod softraid;
 pub mod softraid_concat;
 pub mod softraid_crypto;

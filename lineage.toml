@@ -2851,6 +2851,84 @@ status = "inherited"
 notes = "PLACEHOLDER: arc4random/arc4random_buf/arc4random_uniform over SplitMix64 from a constant seed (not random) so pools and XSIMPLEQ get their cookies; the entropy pool, ChaCha20, rekeying, random_start, the device and the sysctls come with M5; licence is BSD-3 with a GPL alternative, the BSD terms apply; M8: sys_getentropy (GETENTROPY_MAX, explicit_bzero); the syscall generator scans sys/dev for it; M11e: no rndlock; the placeholder state is one atomic word, safe from any CPU"
 
 [[module]]
+rust = "sys/dev/sdmmc/sdhc.rs"
+lz = ["sys/dev/sdmmc/sdhc.rs"]
+status = "inherited"
+notes = "M16a: the whole file but SDHC_DEBUG (sdhc_dump_regs not compiled, DPRINTFs comments); DIAGNOSTIC is feature diagnostic: the 32-bit-access read/write helpers with the shadow registers, sdhc_host_found (spec version, base clock, voltages, max block length, ADMA2 page via sdhc_adma_alloc, config_found of sdmmc; its 1 is EIO), sdhc_activate, sdhc_shutdown (takes the softc), the chip functions (host_reset, ocr, maxblklen, card_detect, bus_power with sdhc_select_vdd, bus_clock with sdhc_clock_divisor, bus_width, card_intr_mask/ack, signal_voltage, exec_command, hibernate_init (a Clone of the host)), start_command (transfer mode and command registers as host-tested helpers; ADMA2 descriptors written unaligned/volatile), transfer_data (DMA or PIO with unaligned words), soft_reset, wait_intr_cold/wait_intr, sdhc_intr, sdhc_needs_discover; an interrupt that needs the bus before config_found returns panics where the C passes NULL"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdhcreg.rs"
+lz = ["sys/dev/sdmmc/sdhcreg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: the standard register set (offsets as BusSize, bits at their register's width), the PCI interface classes, the clock-divisor and capability macros as functions, the %b strings (byte strings, debug only), struct sdhc_adma2_descriptor32/64 (repr(C, packed), sizes checked); reference-backed test of every define; host test of the macros"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdhcvar.rs"
+lz = ["sys/dev/sdmmc/sdhcvar.rs"]
+status = "inherited"
+notes = "M16a: struct sdhc_softc (repr(C) Softc; sc_host the attachment's array of host pointers, read through SdhcSoftc::host; the hooks are Option<fn(&SdhcSoftc, ..)> type aliases), the SDHC_F_* flags; the prototypes live in sdhc.rs; reference-backed test"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc.rs"
+lz = ["sys/dev/sdmmc/sdmmc.rs"]
+status = "inherited"
+notes = "M16a: the whole file but SDMMC_IOCTL (not configured: sdmmc_ioctl and its bio_register not compiled) and SDMMC_DEBUG (sdmmc_dump_command not compiled, DPRINTFs comments): sdmmc_ca/cd, match/attach (kthread_create_deferred, config_pending)/detach/activate, sdmmc_holds_root_device, the task thread and queue (add/del/needs_discover/discover_task), card attach/detach, enable/disable, set_bus_power (lowest common voltage as sdmmc_lowest_ocr, host-tested), function alloc/free, scan, init, sdmmc_delay, app/mmc commands, go_idle_state, send_if_cond, set_relative_addr, select_card. 0/1 returns are Result<(), Errno> (EIO); the task thread's Proc is stored when kthread_create returns"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_cis.rs"
+lz = ["sys/dev/sdmmc/sdmmc_cis.rs"]
+status = "inherited"
+notes = "M16a: the whole file: sdmmc_cisptr, sdmmc_read_cis (the tuple walk as sdmmc_parse_cis over a read function, host-tested), sdmmc_print_cis, sdmmc_check_cis_quirks (Spectec SDW-820 strings as Cis1Info::Static); Result for the C's 0/1"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_io.rs"
+lz = ["sys/dev/sdmmc/sdmmc_io.rs"]
+status = "inherited"
+notes = "M16a: the whole file: SDIO enable (CMD5), scan, init, function ready/enable/disable, attach of function drivers through config_found_sm with sdmmc_submatch (skips scsibus) and sdmmc_print, detach, CMD52/CMD53 (argument builders host-tested), the 1/2/4-byte, multi and region accesses (slices), xchg, reset, send_op_cond, card interrupt enable/disable/establish/disestablish, sdmmc_card_intr, sdmmc_intr_task, set_blocklen/bus_width/highspeed; sdmmc_verbose a static atomic (0). sdmmc_io_rw_direct releases sc_lock on a select failure as the C does (see M16a External bugs)"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_ioreg.rs"
+lz = ["sys/dev/sdmmc/sdmmc_ioreg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: SDIO commands, CMD52/CMD53 argument fields, the I/O OCR, CCCR, FBR, CIS addresses and tuple codes; SD_R5_DATA, MMC_R4/R5, SD_IO_OCR_NUM_FUNCTIONS, SD_IO_FBR_BASE as functions; reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_mem.rs"
+lz = ["sys/dev/sdmmc/sdmmc_mem.rs"]
+status = "inherited"
+notes = "M16a: the whole file but HIBERNATE (sdmmc_mem_hibernate_write not compiled) and SDMMC_DEBUG (sdmmc_print_cid not compiled, DPRINTFs comments): OCR negotiation (send_op_cond returns the OCR), 1.8 V switch, scan (CID/RCA/CSD), decode_csd/cid, SCR (send/decode, sdmmc_scr_response host-tested), cxd data, bus width, SD/MMC switch (sdmmc_switch_arg host-tested), be512_to_bitfield512, transfer mode, tuning, sd_init, mmc_init, set_blocklen, single/multi block reads and writes with or without DMA (unsafe: raw data pointer). sdmmc_mem_init drops select_card/set_blocklen's result as the C does (it overwrites error); mmc_init ignores the chip bus width's result as the C does (overwritten); scratch buffers malloc'ed M_NOWAIT as in C"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_scsi.rs"
+lz = ["sys/dev/sdmmc/sdmmc_scsi.rs"]
+status = "inherited"
+notes = "M16a: the two prototypes, defined in sdmmc_scsi.rs (shared with sdmmc_scsi.c, one licence block: the two notices are the same); M16a: the whole file but HIBERNATE (sdmmc_scsi_hibernate_io not compiled) and SDMMC_DEBUG (DPRINTFs comments): sdmmc_switch (scsi_cmd, minphys), scsi_attach/detach (scsibus at sdmmc: target 0 the host, one target per card), CCBs (alloc/free, the iopool's io_get/io_put as unsafe fns), decode_rw, sdmmc_scsi_cmd (INQUIRY, READ CAPACITY, TUR/START_STOP/SYNC no-ops, READ/WRITE 6/10 queued on the slot thread or run at once when polled), sdmmc_inquiry (reply built by sdmmc_inquiry_data, host-tested: <SD/MMC, QEMU!, 0001> removable), start/complete/done_xs, stimeout. The target is bounds-checked before sc_tgt is indexed"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmcchip.rs"
+lz = ["sys/dev/sdmmc/sdmmcchip.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct sdmmc_chip_functions (the members a controller may leave NULL are Options; a call through a missing one panics where the C jumps to 0; Result<(), Errno> for 0/errno; card_detect a bool), the sdmmc_chip_* macros as functions, the clock/voltage/timing selectors, struct sdmmcbus_attach_args; reference-backed test"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmcdevs.rs"
+lz = ["sys/dev/sdmmc/sdmmcdevs.rs"]
+status = "inherited"
+notes = "M16a: the whole generated header (10 vendors, 33 products, u16), written by hand with the generated names and values (devlist2h.awk not ported); the generator's banner kept above the licence zone; reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmcreg.rs"
+lz = ["sys/dev/sdmmc/sdmmcreg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: MMC/SD commands, OCR and R1 bits, EXT_CSD, CSD/CID/SCR field macros and SFUNC_STATUS_GROUP as lower-case functions, __bitfield/MMC_RSP_BITS over the response words' memory bytes (a range past the words reads zero bits); host tests (CSD 2.0 of QEMU's 64 MB card, CID name, RCA) and a reference-backed test"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmcvar.rs"
+lz = ["sys/dev/sdmmc/sdmmcvar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct sdmmc_csd/cid/scr, sdmmc_response, struct sdmmc_task (TAILQ via queue_adapter), struct sdmmc_command (plain, &mut to exec_command; c_error an Option<Errno>), struct sdmmc_cis (cis1_info[] as Cis1Info: an offset into cis1_info_buf or a static string, so the struct stays Copy), struct sdmmc_function (allocated whole; decoded registers in Cells under sc_lock), struct sdmmc_softc (repr(C) Softc; sc_scsibus the C's void *), struct sdmmc_attach_args (repr(C), scsibus args first), SCF_*/SFF_*/SMF_*/SMC_CAPS_*, IPL_SDMMC, the ioctl structs and numbers (from the C's LP64 sizes, unused: SDMMC_IOCTL not configured); the task/spl/assert macros as functions; reference-backed test"
+
+[[module]]
 rust = "sys/dev/softraid.rs"
 lz = ["sys/dev/softraid.rs"]
 status = "adapted"
