@@ -1301,7 +1301,7 @@ adapted_by = ["sys/crypto/aes.rs"]
 [[module]]
 rust = "sys/crypto/curve25519.rs"
 lz = ["sys/crypto/curve25519.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/crypto/des_locl.rs"

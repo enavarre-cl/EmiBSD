@@ -62,6 +62,7 @@
 //! summed in 64 bits, a Montgomery ladder over the 255 scalar bits with a constant-time swap.
 //!
 //! Upstream: sys/crypto/curve25519.h @ 3ce1f3f79392, sys/crypto/curve25519.c @ 3ce1f3f79392
+//! LZ: sys/crypto/curve25519.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module.
@@ -82,6 +83,23 @@
 //! - `curve25519` and `curve25519_generate_public` return `bool`, `true` where the C returns
 //!   nonzero (the result is not the all-zero point); keys are `[u8; 32]`.
 //! - `explicit_bzero` of the temporaries is a wipe by assignment (`crate::crypto::wipe`).
+//!
+//! ## Redesign
+//! - The field helpers that filled an out parameter return their value: `fe_frombytes` and
+//!   `fe_frombytes_impl` the element, `fe_freeze` the limbs, `fe_tobytes` the 32 bytes,
+//!   `addcarryx`/`subborrow` the pair (limb, carry) (LZ: `&mut` outputs, as the C's
+//!   pointers). The truncations to a limb or a byte take the low bytes of the wider value
+//!   ([`low32`], `to_le_bytes`) instead of `as` casts; all of them follow a mask or a shift
+//!   that leaves nothing above, so the values are the same.
+//! - The public functions keep their shape: `curve25519` and `curve25519_generate_public`
+//!   still write the point through `out`/`pub_` and return `bool`, because WireGuard keeps the
+//!   output whatever the result (the C stores `l_public` from `curve25519_generate_public`
+//!   either way) and `curve25519_generate_public` leaves `pub_` untouched for the all-zero
+//!   secret, which a returned value could not say. Both are now `#[must_use]`.
+//! - Constant time: the ladder, the conditional swap (`fe_cswap`, a mask from the scalar bit),
+//!   `cmovznz32` and the field arithmetic are unchanged; the loops run over the 255 scalar
+//!   bits and the ten limbs, whose positions are public, as in the C; the null-point checks
+//!   are `timingsafe_bcmp`.
 
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
@@ -136,6 +154,7 @@ pub struct FeLoose {
 
 /// `curve25519_generate_public`: the public key of `secret` (the multiple of the base point);
 /// `false` for the all-zero secret and, as for any other, a zero result.
+#[must_use = "false means there is no usable public key"]
 pub fn curve25519_generate_public(
     pub_: &mut [u8; CURVE25519_KEY_SIZE],
     secret: &[u8; CURVE25519_KEY_SIZE],
@@ -158,8 +177,15 @@ pub fn curve25519_generate_secret(secret: &mut [u8; CURVE25519_KEY_SIZE]) {
     curve25519_clamp_secret(secret);
 }
 
-/// `fe_frombytes_impl`: ignores the top bit of `s`.
-fn fe_frombytes_impl(h: &mut [u32; 10], s: &[u8; 32]) {
+/// The low 32 bits of `x` (what an `as u32` keeps).
+fn low32(x: u64) -> u32 {
+    let [a, b, c, d, ..] = x.to_le_bytes();
+    u32::from_le_bytes([a, b, c, d])
+}
+
+/// `fe_frombytes_impl`: the limbs of `s`, ignoring its top bit.
+fn fe_frombytes_impl(s: &[u8; 32]) -> [u32; 10] {
+    let mut h = [0u32; 10];
     let mut t = [0u8; 40];
     let mut pos = 0usize;
 
@@ -167,29 +193,30 @@ fn fe_frombytes_impl(h: &mut [u32; 10], s: &[u8; 32]) {
     for (limb, bits) in h.iter_mut().zip(LIMB_BITS) {
         let mut w = [0u8; 8];
         w.copy_from_slice(&t[pos / 8..pos / 8 + 8]);
-        *limb = ((u64::from_le_bytes(w) >> (pos % 8)) & ((1u64 << bits) - 1)) as u32;
-        pos += bits as usize;
+        *limb = low32((u64::from_le_bytes(w) >> (pos % 8)) & ((1u64 << bits) - 1));
+        pos += usize::from(bits.to_le_bytes()[0]);
     }
+    h
 }
 
 /// `fe_frombytes`.
-fn fe_frombytes(h: &mut Fe, s: &[u8; 32]) {
-    fe_frombytes_impl(&mut h.v, s);
+fn fe_frombytes(s: &[u8; 32]) -> Fe {
+    Fe {
+        v: fe_frombytes_impl(s),
+    }
 }
 
-/// `addcarryx_u25` and `addcarryx_u26`: `a + b + c` reduced to `bits` bits, with the carry out.
+/// `addcarryx_u25` and `addcarryx_u26`: `a + b + c` reduced to `bits` bits, and the carry out.
 /// The sum extracts `bits` bits of result and one bit of carry, so 32 bits are enough.
-fn addcarryx(bits: u32, c: u32, a: u32, b: u32, low: &mut u32) -> u32 {
+fn addcarryx(bits: u32, c: u32, a: u32, b: u32) -> (u32, u32) {
     let x = a.wrapping_add(b).wrapping_add(c);
-    *low = x & ((1 << bits) - 1);
-    (x >> bits) & 1
+    (x & ((1 << bits) - 1), (x >> bits) & 1)
 }
 
-/// `subborrow_u25` and `subborrow_u26`: `a - b - c` reduced to `bits` bits, with the borrow.
-fn subborrow(bits: u32, c: u32, a: u32, b: u32, low: &mut u32) -> u32 {
+/// `subborrow_u25` and `subborrow_u26`: `a - b - c` reduced to `bits` bits, and the borrow.
+fn subborrow(bits: u32, c: u32, a: u32, b: u32) -> (u32, u32) {
     let x = a.wrapping_sub(b).wrapping_sub(c);
-    *low = x & ((1 << bits) - 1);
-    x >> 31
+    (x & ((1 << bits) - 1), x >> 31)
 }
 
 /// `cmovznz32`: `z` when `t` is zero, `nz` otherwise, without a branch.
@@ -200,39 +227,42 @@ fn cmovznz32(t: u32, z: u32, nz: u32) -> u32 {
 
 /// `fe_freeze`: the fully reduced limbs of `in1`: subtract `p`, and add it back when that
 /// borrowed.
-fn fe_freeze(out: &mut [u32; 10], in1: &[u32; 10]) {
+fn fe_freeze(in1: &[u32; 10]) -> [u32; 10] {
     let mut diff = [0u32; 10];
     let mut borrow = 0u32;
     for i in 0..10 {
-        borrow = subborrow(LIMB_BITS[i], borrow, in1[i], P_LIMBS[i], &mut diff[i]);
+        (diff[i], borrow) = subborrow(LIMB_BITS[i], borrow, in1[i], P_LIMBS[i]);
     }
     let x49 = cmovznz32(borrow, 0x0, 0xffffffff);
+    let mut out = [0u32; 10];
     let mut carry = 0u32;
     for i in 0..10 {
-        carry = addcarryx(LIMB_BITS[i], carry, diff[i], x49 & P_LIMBS[i], &mut out[i]);
+        (out[i], carry) = addcarryx(LIMB_BITS[i], carry, diff[i], x49 & P_LIMBS[i]);
     }
+    out
 }
 
 /// `fe_tobytes`: the canonical 32-byte little-endian encoding.
-fn fe_tobytes(s: &mut [u8; 32], f: &Fe) {
-    let mut h = [0u32; 10];
+fn fe_tobytes(f: &Fe) -> [u8; 32] {
+    let mut s = [0u8; 32];
     let mut acc = 0u64;
     let mut bits = 0u32;
     let mut idx = 0usize;
 
-    fe_freeze(&mut h, &f.v);
-    for i in 0..10 {
-        acc |= u64::from(h[i]) << bits;
-        bits += LIMB_BITS[i];
+    let h = fe_freeze(&f.v);
+    for (limb, width) in h.iter().zip(LIMB_BITS) {
+        acc |= u64::from(*limb) << bits;
+        bits += width;
         while bits >= 8 {
-            s[idx] = acc as u8;
+            s[idx] = acc.to_le_bytes()[0];
             acc >>= 8;
             bits -= 8;
             idx += 1;
         }
     }
     // 255 bits: seven are left for the last byte.
-    s[idx] = acc as u8;
+    s[idx] = acc.to_le_bytes()[0];
+    s
 }
 
 /// `fe_0`: h = 0.
@@ -287,13 +317,13 @@ fn fe_carry(d: &[u64; 10]) -> [u32; 10] {
 
     for k in 0..10 {
         let t = d[k] + carry;
-        r[k] = (t & ((1u64 << LIMB_BITS[k]) - 1)) as u32;
+        r[k] = low32(t & ((1u64 << LIMB_BITS[k]) - 1));
         carry = t >> LIMB_BITS[k];
     }
     // `carry` is the part above 2^255: it is worth 19 times itself at limb 0.
     let t = u64::from(r[0]) + 19 * carry;
-    let c0 = (t >> 26) as u32;
-    r[0] = (t & 0x3ffffff) as u32;
+    let c0 = low32(t >> 26);
+    r[0] = low32(t & 0x3ffffff);
     let t1 = c0.wrapping_add(r[1]);
     r[1] = t1 & 0x1ffffff;
     r[2] = r[2].wrapping_add(t1 >> 25);
@@ -459,12 +489,12 @@ fn fe_mul121666(f: &FeLoose) -> Fe {
 
 /// `curve25519`: the X25519 function: `out = scalar * point`, `scalar` clamped first. `false`
 /// when `out` is the all-zero point (`point` of low order).
+#[must_use = "false means the shared point is the all-zero point"]
 pub fn curve25519(
     out: &mut [u8; CURVE25519_KEY_SIZE],
     scalar: &[u8; CURVE25519_KEY_SIZE],
     point: &[u8; CURVE25519_KEY_SIZE],
 ) -> bool {
-    let mut x1 = Fe::default();
     let mut swap = 0u32;
     let mut e = *scalar;
 
@@ -476,7 +506,7 @@ pub fn curve25519(
     // gives z2' = z3' = 0, and z2 = z3 = 0 gives z2' = z3' = 0 (fiat-crypto,
     // src/Curves/Montgomery/XZ.v and XZProofs.v). preconditions: 0 <= e < 2^255 (not
     // necessarily e < order), fe_invert(0) = 0
-    fe_frombytes(&mut x1, point);
+    let mut x1 = fe_frombytes(point);
     let mut x2 = fe_1();
     let mut z2 = fe_0();
     let mut x3 = x1;
@@ -523,7 +553,7 @@ pub fn curve25519(
 
     z2 = fe_invert(&z2);
     x2 = fe_mul_ttt(&x2, &z2);
-    fe_tobytes(out, &x2);
+    *out = fe_tobytes(&x2);
 
     wipe(&mut x1);
     wipe(&mut x2);
@@ -681,61 +711,91 @@ mod tests {
         let mut pm1 = [0xffu8; 32];
         pm1[0] = 0xec;
         pm1[31] = 0x7f;
-        let mut f = Fe::default();
-        fe_frombytes(&mut f, &pm1);
-        let mut out = [0u8; 32];
-        fe_tobytes(&mut out, &f);
-        assert_eq!(out, pm1);
+        assert_eq!(fe_tobytes(&fe_frombytes(&pm1)), pm1);
 
         let mut p = pm1;
         p[0] = 0xed; // p itself is 0
-        fe_frombytes(&mut f, &p);
-        fe_tobytes(&mut out, &f);
-        assert_eq!(out, [0; 32]);
+        assert_eq!(fe_tobytes(&fe_frombytes(&p)), [0; 32]);
 
         let mut pp1 = pm1;
         pp1[0] = 0xee; // p + 1 is 1
-        fe_frombytes(&mut f, &pp1);
-        fe_tobytes(&mut out, &f);
         let mut one = [0u8; 32];
         one[0] = 1;
-        assert_eq!(out, one);
+        assert_eq!(fe_tobytes(&fe_frombytes(&pp1)), one);
     }
 
     #[test]
     fn field_inverse() {
-        let mut x = Fe::default();
-        fe_frombytes(
-            &mut x,
-            &hexn("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c"),
-        );
+        let x = fe_frombytes(&hexn(
+            "e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c",
+        ));
         let inv = fe_invert(&x);
         let prod = fe_mul_ttt(&x, &inv);
-        let mut out = [0u8; 32];
-        fe_tobytes(&mut out, &prod);
         let mut one = [0u8; 32];
         one[0] = 1;
-        assert_eq!(out, one);
+        assert_eq!(fe_tobytes(&prod), one);
         // fe_invert(0) = 0, which the ladder relies on.
-        let zero = fe_invert(&fe_0());
-        fe_tobytes(&mut out, &zero);
-        assert_eq!(out, [0; 32]);
+        assert_eq!(fe_tobytes(&fe_invert(&fe_0())), [0; 32]);
     }
 
     #[test]
     fn mul121666_matches_the_general_product() {
-        let mut x = Fe::default();
-        fe_frombytes(
-            &mut x,
-            &hexn("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"),
-        );
+        let x = fe_frombytes(&hexn(
+            "a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4",
+        ));
         let loose = FeLoose { v: x.v };
         let mut c = Fe::default();
         c.v[0] = 121666;
-        let (mut a, mut b) = ([0u8; 32], [0u8; 32]);
-        fe_tobytes(&mut a, &fe_mul121666(&loose));
-        fe_tobytes(&mut b, &fe_mul_ttt(&x, &c));
-        assert_eq!(a, b);
+        assert_eq!(
+            fe_tobytes(&fe_mul121666(&loose)),
+            fe_tobytes(&fe_mul_ttt(&x, &c))
+        );
+    }
+
+    /// xorshift64: the property tests' generator.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    #[test]
+    fn random_diffie_hellman_agrees_and_carries_are_exact() {
+        // Two random secrets agree on the shared point (scalar multiplication commutes), and
+        // the reworked carry helpers match their definitions on random limbs.
+        let mut st = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..20 {
+            let mut a = [0u8; 32];
+            let mut b = [0u8; 32];
+            a.iter_mut().for_each(|x| *x = next(&mut st) as u8);
+            b.iter_mut().for_each(|x| *x = next(&mut st) as u8);
+            let (mut pa, mut pb) = ([0u8; 32], [0u8; 32]);
+            assert!(curve25519_generate_public(&mut pa, &a));
+            assert!(curve25519_generate_public(&mut pb, &b));
+            let (mut sa, mut sb) = ([0u8; 32], [0u8; 32]);
+            assert!(curve25519(&mut sa, &a, &pb));
+            assert!(curve25519(&mut sb, &b, &pa));
+            assert_eq!(sa, sb);
+        }
+        for _ in 0..1000 {
+            let r = next(&mut st);
+            let (x, y, c) = (
+                r as u32 & 0x7ffffff,
+                (r >> 32) as u32 & 0x7ffffff,
+                (r >> 63) as u32,
+            );
+            for bits in [25u32, 26] {
+                let sum = u64::from(x) + u64::from(y) + u64::from(c);
+                assert_eq!(
+                    addcarryx(bits, c, x, y),
+                    ((sum as u32) & ((1 << bits) - 1), ((sum >> bits) & 1) as u32)
+                );
+                let d = x.wrapping_sub(y).wrapping_sub(c);
+                assert_eq!(subborrow(bits, c, x, y), (d & ((1 << bits) - 1), d >> 31));
+            }
+            assert_eq!(low32(r), r as u32);
+        }
     }
 }
 /* </TESTS> */
