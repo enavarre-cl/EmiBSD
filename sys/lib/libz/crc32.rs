@@ -59,6 +59,7 @@
 //! The plain CRC-32 (polynomial `0xedb88320`, reflected), as zlib's `crc32()` computes it.
 //!
 //! Upstream: sys/lib/libz/crc32.c @ 3ce1f3f79392
+//! LZ: sys/lib/libz/crc32.rs@f5985f1d055a
 //!
 //! **This is an altered source version, not the original zlib `crc32.c`** (zlib licence, clause
 //! 2): it is a Rust rewrite of the file's observable behaviour, written for EmiBSD. The
@@ -86,6 +87,10 @@
 //!   matrix arithmetic with `x2nmodp`/`multmodp`) are not ported: no kernel code calls them
 //!   (`subr_disk.c` only uses `crc32`). They are the only code paths of the file left out; port
 //!   them when a caller appears.
+//!
+//! ## Redesign
+//! - Tests only: more published and zlib 1.2.12 vectors (start values other than 0 too), the
+//!   table against its bitwise definition, and chaining over random splits. The code is LZ's.
 
 /// `POLY`: the CRC-32 polynomial, reflected, with `x^32` implied.
 const POLY: u32 = 0xedb8_8320;
@@ -165,6 +170,120 @@ mod tests {
     #[test]
     fn empty_buffer_leaves_the_crc_alone() {
         assert_eq!(crc32(0xdead_beef, b""), 0xdead_beef);
+    }
+
+    /// More vectors: the CRC-32 of 32 zero, 32 0xff, ascending and descending bytes (the RFC 3720
+    /// test patterns, here with the plain CRC-32), and zlib 1.2.12's values (Python's
+    /// `zlib.crc32`) for longer inputs.
+    #[test]
+    fn more_vectors() {
+        let up: std::vec::Vec<u8> = (0..32).collect();
+        let down: std::vec::Vec<u8> = (0..32).rev().collect();
+        let a_million = std::vec![b'a'; 1_000_000];
+        let cases: &[(&[u8], u32)] = &[
+            (&[0; 32], 0x190a_55ad),
+            (&[0xff; 32], 0xff6c_ab0b),
+            (&up, 0x9126_7e8a),
+            (&down, 0x9ab0_ef72),
+            (&a_million, 0xdc25_bfbc),
+            (b"message digest", 0x2015_9d7f),
+            (b"abcdefghijklmnopqrstuvwxyz", 0x4c27_50bd),
+            (
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                0x7ca9_4a72,
+            ),
+        ];
+        for &(input, want) in cases {
+            assert_eq!(crc32(0, input), want, "len {}", input.len());
+        }
+    }
+
+    /// Start values other than 0 continue as zlib 1.2.12 does (`zlib.crc32(data, start)`).
+    #[test]
+    fn start_values_follow_zlib() {
+        let ramp: std::vec::Vec<u8> = (0..22).flat_map(|_| 0..=255u8).collect();
+        let inputs: [&[u8]; 5] = [b"\xff", b"\x00", b"abcde", &[0xff; 16], &ramp];
+        let table: [(u32, [u32; 5]); 4] = [
+            (
+                0x0000_0000,
+                [0xff000000, 0xd202ef8d, 0x8587d865, 0x3fb3c61a, 0x9b9a2e36],
+            ),
+            (
+                0x0000_0001,
+                [0x88073096, 0xa505df1b, 0xb8e7f1d5, 0x91db578b, 0x1735d36c],
+            ),
+            (
+                0xffff_ffff,
+                [0xd2fd1072, 0xffffffff, 0xbc5ad087, 0x2cf772b0, 0xddbfac2b],
+            ),
+            (
+                0xdead_beef,
+                [0xcf6b5257, 0xe269bdda, 0x1cb59760, 0x115d71fb, 0x8459e813],
+            ),
+        ];
+        for (start, wants) in table {
+            for (input, want) in inputs.iter().zip(wants) {
+                assert_eq!(
+                    crc32(start, input),
+                    want,
+                    "start {start:#010x} len {}",
+                    input.len()
+                );
+            }
+        }
+    }
+
+    /// Every table entry is the CRC of its byte value computed bit by bit (and so the CRC of a
+    /// single byte agrees with a bitwise CRC for every value).
+    #[test]
+    fn table_matches_the_bitwise_definition() {
+        fn bitwise(crc: u32, buf: &[u8]) -> u32 {
+            let mut c = !crc;
+            for &b in buf {
+                c ^= u32::from(b);
+                for _ in 0..8 {
+                    c = if c & 1 != 0 { (c >> 1) ^ POLY } else { c >> 1 };
+                }
+            }
+            !c
+        }
+        for (i, &entry) in CRC_TABLE.iter().enumerate() {
+            let mut c = i as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 { (c >> 1) ^ POLY } else { c >> 1 };
+            }
+            assert_eq!(entry, c, "entry {i}");
+            let b = [i as u8];
+            assert_eq!(crc32(0, &b), bitwise(0, &b));
+            assert_eq!(crc32(0x5a5a_5a5a, &b), bitwise(0x5a5a_5a5a, &b));
+        }
+    }
+
+    /// Random data cut at random points: chaining the pieces gives the one-call CRC.
+    #[test]
+    fn random_splits_chain() {
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for round in 0..200 {
+            let len = (next() % if round % 10 == 0 { 100_000 } else { 2000 }) as usize;
+            let data: std::vec::Vec<u8> = (0..len).map(|_| next() as u8).collect();
+            let whole = crc32(0, &data);
+            let mut cuts: std::vec::Vec<usize> = (0..next() % 8)
+                .map(|_| (next() % (len as u64 + 1)) as usize)
+                .collect();
+            cuts.push(0);
+            cuts.push(len);
+            cuts.sort_unstable();
+            let chained = cuts
+                .windows(2)
+                .fold(0, |crc, w| crc32(crc, &data[w[0]..w[1]]));
+            assert_eq!(chained, whole, "round {round} {cuts:?}");
+        }
     }
 }
 /* </TESTS> */

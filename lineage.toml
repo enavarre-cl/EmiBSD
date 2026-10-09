@@ -3875,7 +3875,7 @@ status = "inherited"
 [[module]]
 rust = "sys/lib/libz/adler32.rs"
 lz = ["sys/lib/libz/adler32.rs"]
-status = "inherited"
+status = "redesigned"
 license = "zlib"
 
 [[module]]
@@ -3887,7 +3887,7 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/crc32.rs"
 lz = ["sys/lib/libz/crc32.rs"]
-status = "inherited"
+status = "redesigned"
 license = "zlib"
 
 [[module]]
