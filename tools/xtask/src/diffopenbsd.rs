@@ -150,7 +150,8 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
             // A device option: `hwopts::set` or `devices::set_from_args` (main) has recorded
             // it; `probe` adds the device.
             "--ipmi" | "--usb" | "--virtio-rng" | "--balloon" | "--virtio-gpu" | "--pcspk"
-            | "--expect-tone" => {}
+            | "--expect-tone" | "--usb-mouse" | "--usb-tablet" | "--usb-wacom-tablet"
+            | "--usb-ccid" => {}
             "--usb-hc" | "--nic" | "--audio" | "--parallel" | "--monitor-after" | "--monitor"
             | "--sendkey-after" | "--sendkeys" | "--machine" => {
                 it.next();
