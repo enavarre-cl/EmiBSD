@@ -40,6 +40,8 @@ pub mod i8253reg;
 pub mod lancereg;
 pub mod mc146818reg;
 pub mod mc6845reg;
+pub mod mpireg;
+pub mod mpivar;
 pub mod ne2000;
 pub mod ne2000reg;
 pub mod ne2000var;

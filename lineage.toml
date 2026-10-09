@@ -2126,6 +2126,18 @@ lz = ["sys/dev/ic/mc6845reg.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ic/mpireg.rs"
+lz = ["sys/dev/ic/mpireg.rs"]
+status = "inherited"
+notes = "M16a: the whole header, generated from it and checked: every register, SGE flag, function, IOCStatus, event and config page constant (typed by use: register offsets usize, functions and whoinit u8, IOCStatus u16, flags the width of their member) and every message and page structure (repr(C), or repr(C, packed) where a member is unaligned; sizes and offsets asserted at compile time); the five function-like macros are const fns; the valueless #if notyet MPI_SCSIIO_ERR_STATUS_* block is not ported; mpi_msg_eventack_reply keeps the C's u32 ioc_status at offset 14 (22 bytes packed, 24 in C, size unused). just test-ref compares every define with the header"
+
+[[module]]
+rust = "sys/dev/ic/mpivar.rs"
+lz = ["sys/dev/ic/mpivar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct mpi_dmamem (malloc'ed, &'static), mpi_ccb_bundle (repr(C)), mpi_rcb, mpi_ccb (ccb_cookie is an enum: transfer, poll, wait mutex; mpi_poll's rv is ccb_poll_rv), mpi_softc (Cells; sc_nccbs added to bound the ccb index); MPI_DEBUG not defined and not ported"
+
+[[module]]
 rust = "sys/dev/ic/ne2000.rs"
 lz = ["sys/dev/ic/ne2000.rs"]
 status = "inherited"
