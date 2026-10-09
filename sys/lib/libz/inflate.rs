@@ -2681,7 +2681,7 @@ mod tests {
         data: &[u8],
         level: i32,
         wbits: i32,
-        strategy: i32,
+        strategy: Strategy,
         chunk: usize,
         flush: Flush,
     ) -> Vec<u8> {
@@ -2691,52 +2691,56 @@ mod tests {
         let mut strm = ZStream::new();
         assert_eq!(
             deflateInit2(&mut strm, level, Z_DEFLATED, wbits, 8, strategy),
-            Z_OK
+            Ok(())
         );
         strm.next_out = &mut out;
         let pieces: Vec<&[u8]> = data.chunks(chunk).collect();
         for (i, piece) in pieces.iter().enumerate() {
             strm.next_in = piece;
             let last = i + 1 == pieces.len();
-            let ret = deflate(&mut strm, if last { Z_FINISH } else { flush.code() });
-            assert_eq!(ret, if last { Z_STREAM_END } else { Z_OK });
+            let ret = deflate(&mut strm, if last { Flush::Finish } else { flush });
+            assert_eq!(
+                ret,
+                if last {
+                    Ok(ZStatus::StreamEnd)
+                } else {
+                    Ok(ZStatus::Ok)
+                }
+            );
             assert_eq!(strm.avail_in(), 0);
         }
         let n = strm.total_out as usize;
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
         out.truncate(n);
         out
     }
 
     #[test]
     fn round_trips_with_this_crates_deflate() {
-        use crate::zlib::{Z_DEFAULT_STRATEGY, Z_FILTERED, Z_FIXED, Z_HUFFMAN_ONLY, Z_RLE};
         for level in 0..=9 {
             let z = deflate_with(
                 CORPUS,
                 level,
                 15,
-                Z_DEFAULT_STRATEGY,
+                Strategy::Default,
                 usize::MAX,
                 Flush::NoFlush,
             );
             assert_decodes(&z, 15, CORPUS);
         }
-        for strategy in [Z_FILTERED, Z_HUFFMAN_ONLY, Z_RLE, Z_FIXED] {
+        for strategy in [
+            Strategy::Filtered,
+            Strategy::HuffmanOnly,
+            Strategy::Rle,
+            Strategy::Fixed,
+        ] {
             let z = deflate_with(CORPUS, 6, -15, strategy, usize::MAX, Flush::NoFlush);
             assert_decodes(&z, -15, CORPUS);
         }
         for wbits in [9, 12, 15] {
-            let z = deflate_with(CORPUS, 9, wbits, Z_DEFAULT_STRATEGY, 5000, Flush::FullFlush);
+            let z = deflate_with(CORPUS, 9, wbits, Strategy::Default, 5000, Flush::FullFlush);
             assert_decodes(&z, wbits, CORPUS);
-            let z = deflate_with(
-                CORPUS,
-                9,
-                -wbits,
-                Z_DEFAULT_STRATEGY,
-                3000,
-                Flush::SyncFlush,
-            );
+            let z = deflate_with(CORPUS, 9, -wbits, Strategy::Default, 3000, Flush::SyncFlush);
             assert_decodes(&z, -wbits, CORPUS);
         }
     }
@@ -2745,13 +2749,12 @@ mod tests {
     fn round_trips_the_ipcomp_way() {
         // xform_ipcomp.c: raw deflate of a packet with Flush::Finish, raw inflate with
         // Flush::PartialFlush into fresh buffers
-        use crate::zlib::Z_DEFAULT_STRATEGY;
         for packet in [&CORPUS[..1400], &CORPUS[5000..5100], CORPUS] {
             let z = deflate_with(
                 packet,
                 -1,
                 -MAX_WBITS,
-                Z_DEFAULT_STRATEGY,
+                Strategy::Default,
                 usize::MAX,
                 Flush::NoFlush,
             );
@@ -2767,7 +2770,7 @@ mod tests {
     /// `mem_level` (an empty input too, which `deflate_with` has no piece for).
     fn deflate_all(input: &[u8], level: i32, wbits: i32, mem_level: i32) -> Vec<u8> {
         use crate::deflate::{deflate, deflateEnd};
-        use crate::zlib::{Z_DEFAULT_STRATEGY, Z_DEFLATED, deflateInit2};
+        use crate::zlib::{Z_DEFLATED, deflateInit2};
         let mut out = vec![0u8; input.len() + input.len() / 8 + 1024];
         let mut strm = ZStream::new();
         assert_eq!(
@@ -2777,15 +2780,15 @@ mod tests {
                 Z_DEFLATED,
                 wbits,
                 mem_level,
-                Z_DEFAULT_STRATEGY
+                Strategy::Default
             ),
-            Z_OK
+            Ok(())
         );
         strm.next_in = input;
         strm.next_out = &mut out;
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
         let n = strm.total_out as usize;
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
         out.truncate(n);
         out
     }
@@ -2825,7 +2828,7 @@ mod tests {
         use crate::zlib::deflateInit;
         let mut out = vec![0u8; CORPUS.len() * 2];
         let mut strm = ZStream::new();
-        assert_eq!(deflateInit(&mut strm, 6), Z_OK);
+        assert_eq!(deflateInit(&mut strm, 6), Ok(()));
         strm.next_out = &mut out;
         let flushes = [
             Flush::NoFlush,
@@ -2836,12 +2839,15 @@ mod tests {
         ];
         for (i, piece) in CORPUS.chunks(3000).enumerate() {
             strm.next_in = piece;
-            assert_eq!(deflate(&mut strm, flushes[i % flushes.len()].code()), Z_OK);
+            assert_eq!(
+                deflate(&mut strm, flushes[i % flushes.len()]),
+                Ok(ZStatus::Ok)
+            );
             assert_eq!(strm.avail_in(), 0);
         }
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
         let n = strm.total_out as usize;
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
         let z = &out[..n];
         assert_decodes(z, 15, CORPUS);
         for slow in BOTH {
@@ -2856,27 +2862,27 @@ mod tests {
     #[test]
     fn round_trips_ipcomp_output_buffers() {
         use crate::deflate::{deflate, deflateEnd};
-        use crate::zlib::{Z_DEFAULT_STRATEGY, Z_DEFLATED, deflateInit2};
+        use crate::zlib::{Z_DEFLATED, deflateInit2};
         for size in [1, 100, 1000, 1400, 9000] {
             let packet = &CORPUS[..size];
             let mut bufs: Vec<Vec<u8>> = (0..40).map(|_| vec![0u8; 512]).collect();
             let mut used = Vec::new();
             let mut c = ZStream::new();
             assert_eq!(
-                deflateInit2(&mut c, 6, Z_DEFLATED, -11, 8, Z_DEFAULT_STRATEGY),
-                Z_OK
+                deflateInit2(&mut c, 6, Z_DEFLATED, -11, 8, Strategy::Default),
+                Ok(())
             );
             c.next_in = packet;
             for buf in bufs.iter_mut() {
                 c.next_out = buf;
-                let ret = deflate(&mut c, Z_FINISH);
+                let ret = deflate(&mut c, Flush::Finish);
                 used.push(512 - c.avail_out());
-                if ret == Z_STREAM_END {
+                if ret == Ok(ZStatus::StreamEnd) {
                     break;
                 }
-                assert_eq!(ret, Z_OK);
+                assert_eq!(ret, Ok(ZStatus::Ok));
             }
-            assert_eq!(deflateEnd(&mut c), Z_OK);
+            assert_eq!(deflateEnd(&mut c), Ok(()));
             let z: Vec<u8> = bufs
                 .iter()
                 .zip(&used)

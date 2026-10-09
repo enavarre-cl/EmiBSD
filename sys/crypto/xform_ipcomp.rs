@@ -73,8 +73,8 @@ use alloc::vec::Vec;
 
 use crate::sys::errno::Errno;
 use libz::{
-    Flush, MAX_WBITS, Z_DEFAULT_COMPRESSION, Z_DEFAULT_STRATEGY, Z_FINISH, Z_OK, Z_STREAM_END,
-    ZCode, ZStream, deflate, deflateEnd, deflateInit2, inflate, inflateEnd, inflateInit2,
+    Flush, MAX_WBITS, Strategy, Z_DEFAULT_COMPRESSION, ZStatus, ZStream, deflate, deflateEnd,
+    deflateInit2, inflate, inflateEnd, inflateInit2,
 };
 
 /// `Z_METHOD`: the deflate compression method.
@@ -115,7 +115,7 @@ pub fn deflate_global(data: &[u8], decomp: bool) -> Result<Vec<u8>, Errno> {
     if decomp {
         let _ = inflateEnd(&mut zbuf);
     } else {
-        deflateEnd(&mut zbuf);
+        let _ = deflateEnd(&mut zbuf);
     }
     drop(zbuf);
     error?;
@@ -152,7 +152,7 @@ fn deflate_global_run<'a>(
     deflate_global_next(zbuf, slots, i, size)?;
 
     let error = if decomp {
-        inflateInit2(zbuf, window_inflate).code()
+        inflateInit2(zbuf, window_inflate)
     } else {
         deflateInit2(
             zbuf,
@@ -160,24 +160,24 @@ fn deflate_global_run<'a>(
             Z_METHOD,
             window_deflate,
             Z_MEMLEVEL,
-            Z_DEFAULT_STRATEGY,
+            Strategy::Default,
         )
     };
-    if error != Z_OK {
+    if error.is_err() {
         return Err(Errno::EINVAL);
     }
 
     loop {
         let error = if decomp {
-            inflate(zbuf, Flush::PartialFlush).code()
+            inflate(zbuf, Flush::PartialFlush)
         } else {
-            deflate(zbuf, Z_FINISH)
+            deflate(zbuf, Flush::Finish)
         };
-        if error == Z_STREAM_END {
-            return Ok(());
-        }
-        if error != Z_OK {
-            return Err(Errno::EINVAL);
+        match error {
+            Ok(ZStatus::StreamEnd) => return Ok(()),
+            Ok(ZStatus::Ok) => {}
+            // Z_NEED_DICT and the errors: the C's `error != Z_OK`
+            Ok(ZStatus::NeedDict) | Err(_) => return Err(Errno::EINVAL),
         }
         if zbuf.avail_out() == 0 && *i < ZBUF - 1 {
             // we need more output space, allocate size

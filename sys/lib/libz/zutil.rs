@@ -62,6 +62,7 @@
 //! (`zlibVersion`, `zlibCompileFlags`, `zError`).
 //!
 //! Upstream: sys/lib/libz/zutil.h @ 3ce1f3f79392, sys/lib/libz/zutil.c @ 3ce1f3f79392
+//! LZ: sys/lib/libz/zutil.rs@f5985f1d055a
 //!
 //! **This is an altered source version, not the original zlib `zutil.h`/`zutil.c`** (zlib
 //! licence, clause 2): a Rust rewrite written for EmiBSD. The original's notice is kept above.
@@ -86,11 +87,16 @@
 //! - The 16-bit and non-Unix target sections (MSDOS, OS/2, Windows, Amiga, VMS, TOPS-20, ...),
 //!   `F_OPEN`, `ptrdiff_t`, `local`, the `uch`/`ush`/`ulg` typedefs and `Z_U8` have no
 //!   counterpart; `OS_CODE` is the Unix value, 3.
+//!
+//! ## Redesign
+//! - `ERR_RETURN` takes a [`ZError`] and returns it, for `return Err(ERR_RETURN(strm, ..))`:
+//!   the stream functions return a `Result` (`zlib.rs`). LZ took and returned the `i32`
+//!   code. `ERR_MSG` and `zError` keep the `i32` code: `zError` is zlib's API for any code.
 
 #![allow(non_snake_case)] // zlib's names are camelCase or upper case in C (zError, ERR_MSG)
 
 use crate::zconf::{MAX_MEM_LEVEL, MAX_WBITS};
-use crate::zlib::{ZLIB_VERSION, ZStream};
+use crate::zlib::{ZError, ZLIB_VERSION, ZStream};
 
 /// `SLOW` (`-DSLOW` in `sys/lib/libz/Makefile`): `inflate()` never calls `inflate_fast()`.
 pub(crate) const SLOW: bool = true;
@@ -161,8 +167,8 @@ pub fn ERR_MSG(err: i32) -> &'static str {
 
 /// `ERR_RETURN(strm, err)`: sets `strm.msg` to the message of `err` and returns `err`. To be
 /// used only when the state is known to be valid.
-pub fn ERR_RETURN(strm: &mut ZStream<'_>, err: i32) -> i32 {
-    strm.msg = Some(ERR_MSG(err));
+pub fn ERR_RETURN(strm: &mut ZStream<'_>, err: ZError) -> ZError {
+    strm.msg = Some(ERR_MSG(err.code()));
     err
 }
 
@@ -222,7 +228,7 @@ mod tests {
     #[test]
     fn err_return_sets_the_message() {
         let mut strm = ZStream::new();
-        assert_eq!(ERR_RETURN(&mut strm, Z_BUF_ERROR), Z_BUF_ERROR);
+        assert_eq!(ERR_RETURN(&mut strm, ZError::Buf), ZError::Buf);
         assert_eq!(strm.msg, Some("buffer error"));
     }
 

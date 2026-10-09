@@ -88,9 +88,10 @@
 //!   still the `Z_*` constants, and [`ZCode::code`] gives the C value of any result, for
 //!   callers that keep a status integer of their own (libsa's `cread`). LZ returned the `i32`
 //!   codes.
-//! - The flush parameter is a [`Flush`] (the `Z_*` flush constants stay, as the C values), so
-//!   an out-of-range flush cannot be passed. The `inflateInit*` macros return the `Result` of
-//!   the functions they call.
+//! - The flush parameter is a [`Flush`] and the compression strategy a [`Strategy`] (the `Z_*`
+//!   constants stay, as the C values), so an out-of-range flush or strategy cannot be passed.
+//!   The `deflateInit*` and `inflateInit*` macros return the `Result` of the functions they
+//!   call.
 
 #![allow(non_snake_case)] // zlib's API names are camelCase in C (deflateInit2_, inflateReset2)
 
@@ -265,6 +266,25 @@ impl Flush {
     }
 }
 
+impl TryFrom<i32> for Flush {
+    type Error = ZError;
+
+    /// The flush mode of a C value; `ZError::Stream` for a value outside `Z_NO_FLUSH ..=
+    /// Z_TREES`, as `deflate()` and `inflate()` treat one.
+    fn try_from(code: i32) -> Result<Self, ZError> {
+        Ok(match code {
+            Z_NO_FLUSH => Self::NoFlush,
+            Z_PARTIAL_FLUSH => Self::PartialFlush,
+            Z_SYNC_FLUSH => Self::SyncFlush,
+            Z_FULL_FLUSH => Self::FullFlush,
+            Z_FINISH => Self::Finish,
+            Z_BLOCK => Self::Block,
+            Z_TREES => Self::Trees,
+            _ => return Err(ZError::Stream),
+        })
+    }
+}
+
 /// `struct internal_state`: what `z_stream.state` points at. Each variant is the private state
 /// of one kind of stream; `None` is the C's `Z_NULL` (not initialised, or ended).
 #[derive(Default)]
@@ -386,6 +406,54 @@ pub struct GzHeader {
     pub done: i32,
 }
 
+/// The compression strategy of `deflateInit2()` and `deflateParams()` (the C's
+/// `Z_DEFAULT_STRATEGY` .. `Z_FIXED`). The order is the C values' order, which `deflate()`
+/// compares.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Strategy {
+    /// `Z_DEFAULT_STRATEGY`: for normal data.
+    Default,
+    /// `Z_FILTERED`: for data produced by a filter (small values, somewhat random): fewer
+    /// short matches.
+    Filtered,
+    /// `Z_HUFFMAN_ONLY`: Huffman coding only, no string matches.
+    HuffmanOnly,
+    /// `Z_RLE`: matches of distance one only (run-length encoding).
+    Rle,
+    /// `Z_FIXED`: no dynamic Huffman codes.
+    Fixed,
+}
+
+impl Strategy {
+    /// The C value of the strategy (`Z_DEFAULT_STRATEGY` .. `Z_FIXED`).
+    pub const fn code(self) -> i32 {
+        match self {
+            Self::Default => Z_DEFAULT_STRATEGY,
+            Self::Filtered => Z_FILTERED,
+            Self::HuffmanOnly => Z_HUFFMAN_ONLY,
+            Self::Rle => Z_RLE,
+            Self::Fixed => Z_FIXED,
+        }
+    }
+}
+
+impl TryFrom<i32> for Strategy {
+    type Error = ZError;
+
+    /// The strategy of a C value; `ZError::Stream` for a value outside `Z_DEFAULT_STRATEGY ..=
+    /// Z_FIXED`, as `deflateInit2()` and `deflateParams()` refuse one.
+    fn try_from(code: i32) -> Result<Self, ZError> {
+        Ok(match code {
+            Z_DEFAULT_STRATEGY => Self::Default,
+            Z_FILTERED => Self::Filtered,
+            Z_HUFFMAN_ONLY => Self::HuffmanOnly,
+            Z_RLE => Self::Rle,
+            Z_FIXED => Self::Fixed,
+            _ => return Err(ZError::Stream),
+        })
+    }
+}
+
 /// The C return code of a zlib result: the value the C function would have returned.
 pub trait ZCode {
     /// The C value: `Z_OK`, `Z_STREAM_END`, `Z_NEED_DICT` or a negative error code.
@@ -412,7 +480,7 @@ impl ZCode for Result<(), ZError> {
 
 /// `deflateInit(strm, level)`: the zlib.h macro, [`deflateInit_`](crate::deflate::deflateInit_)
 /// with this library's version and stream size.
-pub fn deflateInit(strm: &mut ZStream<'_>, level: i32) -> i32 {
+pub fn deflateInit(strm: &mut ZStream<'_>, level: i32) -> Result<(), ZError> {
     crate::deflate::deflateInit_(strm, level, ZLIB_VERSION, size_of::<ZStream<'_>>() as i32)
 }
 
@@ -425,8 +493,8 @@ pub fn deflateInit2(
     method: i32,
     windowBits: i32,
     memLevel: i32,
-    strategy: i32,
-) -> i32 {
+    strategy: Strategy,
+) -> Result<(), ZError> {
     crate::deflate::deflateInit2_(
         strm,
         level,
@@ -515,9 +583,26 @@ mod tests {
         ];
         for (code, flush) in flushes.into_iter().enumerate() {
             assert_eq!(usize::try_from(flush.code()), Ok(code));
+            assert_eq!(Flush::try_from(flush.code()), Ok(flush));
         }
+        assert_eq!(Flush::try_from(-1), Err(ZError::Stream));
+        assert_eq!(Flush::try_from(7), Err(ZError::Stream));
         // the order deflate compares is the order of the C values
         assert!(flushes.windows(2).all(|w| w[0] < w[1]));
+        let strategies = [
+            Strategy::Default,
+            Strategy::Filtered,
+            Strategy::HuffmanOnly,
+            Strategy::Rle,
+            Strategy::Fixed,
+        ];
+        for (code, strategy) in strategies.into_iter().enumerate() {
+            assert_eq!(usize::try_from(strategy.code()), Ok(code));
+            assert_eq!(Strategy::try_from(strategy.code()), Ok(strategy));
+        }
+        assert_eq!(Strategy::try_from(-1), Err(ZError::Stream));
+        assert_eq!(Strategy::try_from(5), Err(ZError::Stream));
+        assert!(strategies.windows(2).all(|w| w[0] < w[1]));
     }
 }
 /* </TESTS> */

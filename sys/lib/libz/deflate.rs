@@ -62,6 +62,7 @@
 //! and the rest of zlib's compression functions.
 //!
 //! Upstream: sys/lib/libz/deflate.c @ 3ce1f3f79392, sys/lib/libz/deflate.h @ 3ce1f3f79392
+//! LZ: sys/lib/libz/deflate.rs@f5985f1d055a
 //!
 //! **This is an altered source version, not the original zlib `deflate.c`/`deflate.h`** (zlib
 //! licence, clause 2): a Rust rewrite written for EmiBSD. The original's notice is kept above
@@ -96,8 +97,8 @@
 //!
 //! ## Deviations
 //! - The state has no `strm` back-pointer: every function that needs the stream takes it as a
-//!   parameter next to the state. `deflateStateCheck` checks that the stream's state is a
-//!   deflate state with a valid status; `zalloc`/`zfree` are always `zcalloc`/`zcfree`
+//!   parameter next to the state. The C's `deflateStateCheck` checks that the stream's state
+//!   is a deflate state with a valid status; `zalloc`/`zfree` are always `zcalloc`/`zcfree`
 //!   (`zopenbsd.rs`), so their checks and `Z_SOLO` have no counterpart.
 //! - The buffers are `Vec`s from `zcalloc` and the pointers into them are offsets:
 //!   `pending_out` is an index into `pending_buf`, and `sym_buf` is the offset of the symbol
@@ -121,8 +122,8 @@
 //! - `deflate()`'s `next_out == Z_NULL` and `next_in == Z_NULL` checks have no counterpart: a
 //!   slice is never null.
 //! - `GZIP` is not defined (the kernel's zlib is built with `NO_GZIP`): `GZIP_STATE`, the
-//!   gzip header states of `deflate()` (`EXTRA_STATE` .. `HCRC_STATE` are still accepted by
-//!   `deflateStateCheck`, as in the C, but nothing enters them), the gzip trailer, the
+//!   gzip header states of `deflate()` (`EXTRA_STATE` .. `HCRC_STATE`, which the C's
+//!   `deflateStateCheck` accepts but nothing enters), the gzip trailer, the
 //!   `windowBits > 15` gzip request, `HCRC_UPDATE`, the CRC-32 in `read_buf` and
 //!   `gzhead`/`gzindex` are left out. `deflateSetHeader` refuses every stream, as the C does
 //!   when `wrap` cannot be 2.
@@ -135,16 +136,39 @@
 //!   are for 16-bit targets and are left out.
 //! - `deflateCopy` copies `next_in` but gives the copy an empty `next_out`: two streams cannot
 //!   hold the same `&mut` output buffer.
-//! - `deflateGetDictionary` returns `Z_BUF_ERROR` when `dictionary` is shorter than the
+//! - `deflateGetDictionary` fails with `ZError::Buf` when `dictionary` is shorter than the
 //!   history it would get (the C writes past the caller's buffer).
-//! - `deflatePending`, `deflateUsed` and `deflateGetDictionary` take `Option<&mut _>` for
-//!   their optional output parameters; `deflateBound` and `deflateBound_z` are the same
-//!   function on LP64 (`uLong` and `z_size_t` are both 64 bits).
+//! - `deflateBound` and `deflateBound_z` are the same function on LP64 (`uLong` and `z_size_t`
+//!   are both 64 bits).
 //! - OpenBSD's copy has no `deflate_copyright` string (it keeps only the comment asking for
 //!   an acknowledgement), so neither has this file.
 //! - `match_available` and `slid` are `bool`; window positions and lengths are `usize`, and
 //!   the C's unsigned differences that may wrap (`strstart - hash_head`, `strstart -
 //!   match_start`) use `wrapping_sub`.
+//!
+//! ## Redesign
+//! - Every function returns a `Result` instead of a zlib status code (`zlib.rs`, [`ZStatus`]
+//!   and [`ZError`]): `deflate()` returns `Ok(ZStatus::Ok | StreamEnd)` or the error, the
+//!   others `Result<(), ZError>` (`deflateEnd` still frees the state when it reports
+//!   `ZError::Data` for a stream freed in the middle). `with_state`, `state_ref` and
+//!   `state_mut` return `Err(ZError::Stream)` for a missing state, so the callers no longer
+//!   pass the error value.
+//! - The values the C returns through out parameters are the `Ok` value: `deflatePending`
+//!   returns `(pending, bits)`, `deflateUsed` the bits, `deflateGetDictionary` the length
+//!   (LZ: `Option<&mut _>` parameters). `deflatePending`'s `Z_BUF_ERROR` for a count that does
+//!   not fit `unsigned` (unreachable: the pending buffer is at most 128K) is `ZError::Buf`
+//!   without the counts.
+//! - `flush` is a [`Flush`]: `deflate()` refuses only `Flush::Trees` (the C's `flush >
+//!   Z_BLOCK`; a negative flush cannot be built). `strategy` is a [`Strategy`], so
+//!   `deflateInit2_` and `deflateParams` have no strategy range check left.
+//! - `status` is a [`DeflateStatus`] instead of the `*_STATE` integers. `deflateStateCheck`
+//!   is gone: what is left of it, that the stream holds a deflate state, is the `match` in
+//!   `with_state`, `state_ref` and `state_mut`, since a status can no longer be out of range.
+//!   The gzip states (`EXTRA_STATE` .. `HCRC_STATE`), which nothing enters without `GZIP`,
+//!   have no variant.
+//! - `last_flush` is a [`LastFlush`]: the flush of the previous call, or the C's `-2` (no call
+//!   since the reset) and `-1` (the output was full: do not report `Z_BUF_ERROR` next time)
+//!   as variants; `RANK` takes their C values.
 
 #![allow(non_snake_case)] // zlib's names (deflateInit2_, putShortMSB)
 #![allow(non_upper_case_globals)] // zlib's names (Buf_size, configuration_table)
@@ -158,10 +182,8 @@ use crate::trees::{
 };
 use crate::zconf::{MAX_MEM_LEVEL, MAX_WBITS};
 use crate::zlib::{
-    GzHeader, InternalState, Z_BLOCK, Z_BUF_ERROR, Z_DATA_ERROR, Z_DEFAULT_COMPRESSION,
-    Z_DEFAULT_STRATEGY, Z_DEFLATED, Z_FILTERED, Z_FINISH, Z_FIXED, Z_FULL_FLUSH, Z_HUFFMAN_ONLY,
-    Z_MEM_ERROR, Z_NO_FLUSH, Z_OK, Z_PARTIAL_FLUSH, Z_RLE, Z_STREAM_END, Z_STREAM_ERROR, Z_UNKNOWN,
-    Z_VERSION_ERROR, ZLIB_VERSION, ZStream,
+    Flush, GzHeader, InternalState, Strategy, Z_DEFAULT_COMPRESSION, Z_DEFLATED, Z_UNKNOWN, ZError,
+    ZLIB_VERSION, ZStatus, ZStream,
 };
 use crate::zopenbsd::{zcalloc, zcalloc_box, zcfree};
 use crate::zutil::{
@@ -201,22 +223,6 @@ pub(crate) const MAX_BITS: usize = 15;
 /// `Buf_size`: size of bit buffer in bi_buf.
 pub(crate) const Buf_size: i32 = 16;
 
-/// `INIT_STATE`: zlib header -> BUSY_STATE. The stream status values follow.
-pub(crate) const INIT_STATE: i32 = 42;
-// GZIP_STATE (57, gzip header -> BUSY_STATE | EXTRA_STATE) exists only with GZIP.
-/// `EXTRA_STATE`: gzip extra block -> NAME_STATE.
-pub(crate) const EXTRA_STATE: i32 = 69;
-/// `NAME_STATE`: gzip file name -> COMMENT_STATE.
-pub(crate) const NAME_STATE: i32 = 73;
-/// `COMMENT_STATE`: gzip comment -> HCRC_STATE.
-pub(crate) const COMMENT_STATE: i32 = 91;
-/// `HCRC_STATE`: gzip header CRC -> BUSY_STATE.
-pub(crate) const HCRC_STATE: i32 = 103;
-/// `BUSY_STATE`: deflate -> FINISH_STATE.
-pub(crate) const BUSY_STATE: i32 = 113;
-/// `FINISH_STATE`: stream complete.
-pub(crate) const FINISH_STATE: i32 = 666;
-
 /// `LIT_BUFS`: bytes of `pending_buf` per symbol-buffer entry (4 without `LIT_MEM`).
 pub(crate) const LIT_BUFS: usize = 4;
 
@@ -227,6 +233,43 @@ pub(crate) const MIN_LOOKAHEAD: usize = MAX_MATCH + MIN_MATCH + 1;
 /// `WIN_INIT`: number of bytes after end of data in window to initialize in order to avoid
 /// memory checker errors from longest match routines.
 pub(crate) const WIN_INIT: usize = MAX_MATCH;
+
+/// The stream status (`INIT_STATE`, `BUSY_STATE`, `FINISH_STATE` of `deflate.h`). The gzip
+/// header states (`GZIP_STATE`, `EXTRA_STATE`, `NAME_STATE`, `COMMENT_STATE`, `HCRC_STATE`)
+/// exist only with `GZIP`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DeflateStatus {
+    /// `INIT_STATE`: zlib header -> `Busy`.
+    Init,
+    /// `BUSY_STATE`: deflate -> `Finish`.
+    Busy,
+    /// `FINISH_STATE`: stream complete.
+    Finish,
+}
+
+/// `last_flush`: what the previous `deflate()` call left for the next one to compare its
+/// flush with (`RANK`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LastFlush {
+    /// The C's `-2`: no `deflate()` call since the stream was reset.
+    Reset,
+    /// The C's `-1`: the last call filled the output, so the next one must not report
+    /// `Z_BUF_ERROR` for having nothing to do.
+    OutputFull,
+    /// The flush parameter of the previous call.
+    Flush(Flush),
+}
+
+impl LastFlush {
+    /// The C value of `last_flush`.
+    const fn code(self) -> i32 {
+        match self {
+            Self::Reset => -2,
+            Self::OutputFull => -1,
+            Self::Flush(f) => f.code(),
+        }
+    }
+}
 
 /// `ct_data`: data structure describing a single value and its code string.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -270,7 +313,7 @@ pub(crate) struct TreeDesc {
 /// stream.
 pub(crate) struct DeflateState {
     /// `status`: as the name implies.
-    pub(crate) status: i32,
+    pub(crate) status: DeflateStatus,
     /// `pending_buf`: output still pending.
     pub(crate) pending_buf: Vec<u8>,
     /// `pending_buf_size`: size of pending_buf.
@@ -284,7 +327,7 @@ pub(crate) struct DeflateState {
     /// `method`: can only be DEFLATED.
     pub(crate) method: u8,
     /// `last_flush`: value of flush param for previous deflate call.
-    pub(crate) last_flush: i32,
+    pub(crate) last_flush: LastFlush,
 
     // used by deflate.rs:
     /// `w_size`: LZ77 window size (32K by default).
@@ -347,7 +390,7 @@ pub(crate) struct DeflateState {
     /// `level`: compression level (1..9).
     pub(crate) level: i32,
     /// `strategy`: favor or force Huffman coding.
-    pub(crate) strategy: i32,
+    pub(crate) strategy: Strategy,
     /// `good_match`: use a faster search when the previous match is longer than this.
     pub(crate) good_match: u32,
     /// `nice_match`: stop searching when current match exceeds this.
@@ -426,14 +469,14 @@ impl DeflateState {
         let w_size = 1 << w_bits;
         let hash_size = 1 << hash_bits;
         Some(Self {
-            status: 0,
+            status: DeflateStatus::Init,
             pending_buf: zcalloc(lit_bufsize * LIT_BUFS)?,
             pending_buf_size: lit_bufsize * 4,
             pending_out: 0,
             pending: 0,
             wrap: 0,
             method: 0,
-            last_flush: 0,
+            last_flush: LastFlush::Reset,
             w_size,
             w_bits,
             w_mask: w_size - 1,
@@ -457,7 +500,7 @@ impl DeflateState {
             max_chain_length: 0,
             max_lazy_match: 0,
             level: 0,
-            strategy: 0,
+            strategy: Strategy::Default,
             good_match: 0,
             nice_match: 0,
             dyn_ltree: zcalloc(HEAP_SIZE)?,
@@ -822,14 +865,19 @@ fn fill_window(strm: &mut ZStream<'_>, s: &mut DeflateState) {
 
 /// `deflateInit_`: [`deflateInit2_`] with the default method, window, memory level and
 /// strategy.
-pub fn deflateInit_(strm: &mut ZStream<'_>, level: i32, version: &str, stream_size: i32) -> i32 {
+pub fn deflateInit_(
+    strm: &mut ZStream<'_>,
+    level: i32,
+    version: &str,
+    stream_size: i32,
+) -> Result<(), ZError> {
     deflateInit2_(
         strm,
         level,
         Z_DEFLATED,
         MAX_WBITS,
         DEF_MEM_LEVEL,
-        Z_DEFAULT_STRATEGY,
+        Strategy::Default,
         version,
         stream_size,
     )
@@ -848,10 +896,10 @@ pub fn deflateInit2_(
     method: i32,
     windowBits: i32,
     memLevel: i32,
-    strategy: i32,
+    strategy: Strategy,
     version: &str,
     stream_size: i32,
-) -> i32 {
+) -> Result<(), ZError> {
     let mut level = level;
     let mut windowBits = windowBits;
     let mut wrap = 1;
@@ -860,7 +908,7 @@ pub fn deflateInit2_(
     if version.bytes().next() != my_version.bytes().next()
         || stream_size != size_of::<ZStream<'_>>() as i32
     {
-        return Z_VERSION_ERROR;
+        return Err(ZError::Version);
     }
 
     strm.msg = None;
@@ -874,7 +922,7 @@ pub fn deflateInit2_(
         // suppress zlib wrapper
         wrap = 0;
         if windowBits < -15 {
-            return Z_STREAM_ERROR;
+            return Err(ZError::Stream);
         }
         windowBits = -windowBits;
     }
@@ -883,10 +931,9 @@ pub fn deflateInit2_(
         || method != Z_DEFLATED
         || !(8..=15).contains(&windowBits)
         || !(0..=9).contains(&level)
-        || !(0..=Z_FIXED).contains(&strategy)
         || (windowBits == 8 && wrap != 1)
     {
-        return Z_STREAM_ERROR;
+        return Err(ZError::Stream);
     }
     if windowBits == 8 {
         windowBits = 9; // until 256-byte window bug fixed
@@ -935,52 +982,29 @@ pub fn deflateInit2_(
         // The window, hash or pending buffer could not be allocated (the state itself is
         // allocated last here; the C allocates it first and fails without a message then).
         strm.state = InternalState::None;
-        strm.msg = Some(ERR_MSG(Z_MEM_ERROR));
-        return Z_MEM_ERROR;
+        strm.msg = Some(ERR_MSG(ZError::Mem.code()));
+        return Err(ZError::Mem);
     };
-    s.status = INIT_STATE; // to pass state test in deflateReset()
+    s.status = DeflateStatus::Init; // to pass state test in deflateReset()
     s.wrap = wrap;
     s.high_water = 0; // nothing written to s->window yet
     s.level = level;
     s.strategy = strategy;
     s.method = method as u8;
 
-    let Some(s) = zcalloc_box(s) else {
-        return Z_MEM_ERROR;
-    };
+    let s = zcalloc_box(s).ok_or(ZError::Mem)?;
     strm.state = InternalState::Deflate(s);
 
     deflateReset(strm)
 }
 
-/// `deflateStateCheck`: check for a valid deflate stream state. Return true (the C's 1) if
-/// not ok.
-fn deflateStateCheck(strm: &ZStream<'_>) -> bool {
-    let InternalState::Deflate(s) = &strm.state else {
-        return true;
-    };
-    !matches!(
-        s.status,
-        INIT_STATE
-            | EXTRA_STATE
-            | NAME_STATE
-            | COMMENT_STATE
-            | HCRC_STATE
-            | BUSY_STATE
-            | FINISH_STATE
-    )
-}
-
 /// Run `f` on the stream and its deflate state, taken out of the stream for the call and put
-/// back after it; `err` without calling `f` if `deflateStateCheck` fails.
+/// back after it; `Err(ZError::Stream)` without calling `f` if the stream has no deflate
+/// state (the C's `deflateStateCheck`).
 fn with_state<'a, R>(
     strm: &mut ZStream<'a>,
-    err: R,
-    f: impl FnOnce(&mut ZStream<'a>, &mut DeflateState) -> R,
-) -> R {
-    if deflateStateCheck(strm) {
-        return err;
-    }
+    f: impl FnOnce(&mut ZStream<'a>, &mut DeflateState) -> Result<R, ZError>,
+) -> Result<R, ZError> {
     match core::mem::take(&mut strm.state) {
         InternalState::Deflate(mut s) => {
             let ret = f(strm, &mut s);
@@ -989,38 +1013,37 @@ fn with_state<'a, R>(
         }
         other => {
             strm.state = other;
-            err
+            Err(ZError::Stream)
         }
     }
 }
 
-/// The deflate state of `strm`, if `deflateStateCheck` accepts it.
-fn state_ref<'s>(strm: &'s ZStream<'_>) -> Option<&'s DeflateState> {
+/// The deflate state of `strm`, or `Err(ZError::Stream)` if it has none (the C's
+/// `deflateStateCheck`).
+fn state_ref<'s>(strm: &'s ZStream<'_>) -> Result<&'s DeflateState, ZError> {
     match &strm.state {
-        InternalState::Deflate(s) if !deflateStateCheck(strm) => Some(s),
-        _ => None,
+        InternalState::Deflate(s) => Ok(s),
+        _ => Err(ZError::Stream),
     }
 }
 
-/// The deflate state of `strm`, mutable, if `deflateStateCheck` accepts it.
-fn state_mut<'s>(strm: &'s mut ZStream<'_>) -> Option<&'s mut DeflateState> {
-    if deflateStateCheck(strm) {
-        return None;
-    }
+/// The deflate state of `strm`, mutable, or `Err(ZError::Stream)` if it has none (the C's
+/// `deflateStateCheck`).
+fn state_mut<'s>(strm: &'s mut ZStream<'_>) -> Result<&'s mut DeflateState, ZError> {
     match &mut strm.state {
-        InternalState::Deflate(s) => Some(s),
-        _ => None,
+        InternalState::Deflate(s) => Ok(s),
+        _ => Err(ZError::Stream),
     }
 }
 
 /// `deflateSetDictionary`: initialize the compression dictionary from `dictionary`. Must be
 /// called immediately after `deflateInit`, `deflateInit2` or `deflateReset` (any time for a
 /// raw stream, as long as no input is pending in the window).
-pub fn deflateSetDictionary(strm: &mut ZStream<'_>, dictionary: &[u8]) -> i32 {
-    with_state(strm, Z_STREAM_ERROR, |strm, s| {
+pub fn deflateSetDictionary(strm: &mut ZStream<'_>, dictionary: &[u8]) -> Result<(), ZError> {
+    with_state(strm, |strm, s| {
         let wrap = s.wrap;
-        if wrap == 2 || (wrap == 1 && s.status != INIT_STATE) || s.lookahead != 0 {
-            return Z_STREAM_ERROR;
+        if wrap == 2 || (wrap == 1 && s.status != DeflateStatus::Init) || s.lookahead != 0 {
+            return Err(ZError::Stream);
         }
 
         // when using zlib wrappers, compute Adler-32 for provided dictionary
@@ -1073,41 +1096,33 @@ pub fn deflateSetDictionary(strm: &mut ZStream<'_>, dictionary: &[u8]) -> i32 {
         s.prev_length = MIN_MATCH - 1;
         s.match_available = false;
         s.wrap = wrap;
-        Z_OK
+        Ok(())
     })
 }
 
 /// `deflateGetDictionary`: copy the sliding dictionary (up to the window size, the last
-/// bytes compressed) to `dictionary`, if given, and its length to `dictLength`. Returns
-/// `Z_BUF_ERROR` if `dictionary` is too short for it.
+/// bytes compressed) to `dictionary`, if given, and return its length (the C's
+/// `dictLength`). `Err(ZError::Buf)` if `dictionary` is too short for it.
 pub fn deflateGetDictionary(
     strm: &ZStream<'_>,
     dictionary: Option<&mut [u8]>,
-    dictLength: Option<&mut u32>,
-) -> i32 {
-    let Some(s) = state_ref(strm) else {
-        return Z_STREAM_ERROR;
-    };
+) -> Result<usize, ZError> {
+    let s = state_ref(strm)?;
     let len = (s.strstart + s.lookahead).min(s.w_size);
     if let Some(dictionary) = dictionary
         && len != 0
     {
-        let Some(dst) = dictionary.get_mut(..len) else {
-            return Z_BUF_ERROR;
-        };
+        let dst = dictionary.get_mut(..len).ok_or(ZError::Buf)?;
         let end = s.strstart + s.lookahead;
         dst.copy_from_slice(&s.window[end - len..end]);
     }
-    if let Some(dictLength) = dictLength {
-        *dictLength = len as u32;
-    }
-    Z_OK
+    Ok(len)
 }
 
 /// `deflateResetKeep`: reset the stream for a new compression without freeing it and
 /// without resetting the "longest match" parameters (see `deflateReset`).
-pub fn deflateResetKeep(strm: &mut ZStream<'_>) -> i32 {
-    with_state(strm, Z_STREAM_ERROR, |strm, s| {
+pub fn deflateResetKeep(strm: &mut ZStream<'_>) -> Result<(), ZError> {
+    with_state(strm, |strm, s| {
         strm.total_in = 0;
         strm.total_out = 0;
         strm.msg = None; // use zfree if we ever allocate msg dynamically
@@ -1120,13 +1135,13 @@ pub fn deflateResetKeep(strm: &mut ZStream<'_>) -> i32 {
             s.wrap = -s.wrap; // was made negative by deflate(..., Z_FINISH);
         }
         // wrap == 2 starts in GZIP_STATE with a CRC-32 only with GZIP.
-        s.status = INIT_STATE;
+        s.status = DeflateStatus::Init;
         strm.adler = adler32(0, None);
-        s.last_flush = -2;
+        s.last_flush = LastFlush::Reset;
 
         _tr_init(s);
 
-        Z_OK
+        Ok(())
     })
 }
 
@@ -1155,70 +1170,43 @@ fn lm_init(s: &mut DeflateState) {
 
 /// `deflateReset`: reset the stream for a new compression with the same parameters,
 /// without freeing and reallocating it.
-pub fn deflateReset(strm: &mut ZStream<'_>) -> i32 {
-    let ret = deflateResetKeep(strm);
-    if ret == Z_OK
-        && let Some(s) = state_mut(strm)
-    {
-        lm_init(s);
-    }
-    ret
+pub fn deflateReset(strm: &mut ZStream<'_>) -> Result<(), ZError> {
+    deflateResetKeep(strm)?;
+    lm_init(state_mut(strm)?);
+    Ok(())
 }
 
 /// `deflateSetHeader`: provide gzip header information for a gzip stream. The kernel's zlib
-/// has no gzip streams (`NO_GZIP`: `wrap` is never 2), so this always returns
-/// `Z_STREAM_ERROR`, as the C does in that build.
-pub fn deflateSetHeader(strm: &mut ZStream<'_>, head: &GzHeader) -> i32 {
+/// has no gzip streams (`NO_GZIP`: `wrap` is never 2), so this always fails with
+/// `ZError::Stream`, as the C does in that build.
+pub fn deflateSetHeader(strm: &mut ZStream<'_>, head: &GzHeader) -> Result<(), ZError> {
     // The C: `if (deflateStateCheck(strm) || strm->state->wrap != 2) return Z_STREAM_ERROR;`
     // and it would keep `head` for the gzip header. Both conditions refuse here.
     let _ = (strm, head);
-    Z_STREAM_ERROR
+    Err(ZError::Stream)
 }
 
 /// `deflatePending`: the number of bytes of output generated but not yet delivered in
-/// `next_out` (`pending`) and the number of bits not yet written out (`bits`).
-pub fn deflatePending(
-    strm: &ZStream<'_>,
-    pending: Option<&mut u32>,
-    bits: Option<&mut i32>,
-) -> i32 {
-    let Some(s) = state_ref(strm) else {
-        return Z_STREAM_ERROR;
-    };
-    if let Some(bits) = bits {
-        *bits = s.bi_valid;
-    }
-    if let Some(pending) = pending {
-        match u32::try_from(s.pending) {
-            Ok(p) => *pending = p,
-            Err(_) => {
-                *pending = u32::MAX;
-                return Z_BUF_ERROR;
-            }
-        }
-    }
-    Z_OK
+/// `next_out` (`pending`) and the number of bits not yet written out (`bits`), as
+/// `(pending, bits)`. `Err(ZError::Buf)` if `pending` does not fit a `u32` (it cannot: the
+/// pending buffer is at most 128K).
+pub fn deflatePending(strm: &ZStream<'_>) -> Result<(u32, i32), ZError> {
+    let s = state_ref(strm)?;
+    let pending = u32::try_from(s.pending).map_err(|_| ZError::Buf)?;
+    Ok((pending, s.bi_valid))
 }
 
 /// `deflateUsed`: the number of bits used in the last byte of the last completed deflate
 /// block (1..8; 0 if no block was completed at a byte boundary yet).
-pub fn deflateUsed(strm: &ZStream<'_>, bits: Option<&mut i32>) -> i32 {
-    let Some(s) = state_ref(strm) else {
-        return Z_STREAM_ERROR;
-    };
-    if let Some(bits) = bits {
-        *bits = s.bi_used;
-    }
-    Z_OK
+pub fn deflateUsed(strm: &ZStream<'_>) -> Result<i32, ZError> {
+    Ok(state_ref(strm)?.bi_used)
 }
 
 /// `deflatePrime`: insert the `bits` (0..16) low bits of `value` in the output stream.
-pub fn deflatePrime(strm: &mut ZStream<'_>, bits: i32, value: i32) -> i32 {
-    let Some(s) = state_mut(strm) else {
-        return Z_STREAM_ERROR;
-    };
+pub fn deflatePrime(strm: &mut ZStream<'_>, bits: i32, value: i32) -> Result<(), ZError> {
+    let s = state_mut(strm)?;
     if !(0..=16).contains(&bits) || s.sym_buf < s.pending_out + ((Buf_size as usize + 7) >> 3) {
-        return Z_BUF_ERROR;
+        return Err(ZError::Buf);
     }
     let mut bits = bits;
     let mut value = value;
@@ -1233,34 +1221,33 @@ pub fn deflatePrime(strm: &mut ZStream<'_>, bits: i32, value: i32) -> i32 {
             break;
         }
     }
-    Z_OK
+    Ok(())
 }
 
 /// `deflateParams`: change the compression level and strategy mid-stream. If the
 /// compression function changes, the input so far is compressed and flushed first (as with
 /// `Z_BLOCK`); `Z_BUF_ERROR` if there was not enough output space for that.
-pub fn deflateParams(strm: &mut ZStream<'_>, level: i32, strategy: i32) -> i32 {
-    with_state(strm, Z_STREAM_ERROR, |strm, s| {
+pub fn deflateParams(strm: &mut ZStream<'_>, level: i32, strategy: Strategy) -> Result<(), ZError> {
+    with_state(strm, |strm, s| {
         let mut level = level;
         if level == Z_DEFAULT_COMPRESSION {
             level = 6;
         }
-        if !(0..=9).contains(&level) || !(0..=Z_FIXED).contains(&strategy) {
-            return Z_STREAM_ERROR;
+        if !(0..=9).contains(&level) {
+            return Err(ZError::Stream);
         }
         let func = configuration_table[s.level as usize].func;
 
         if (strategy != s.strategy || func != configuration_table[level as usize].func)
-            && s.last_flush != -2
+            && s.last_flush != LastFlush::Reset
         {
             // Flush the last buffer:
-            let err = deflate_(strm, s, Z_BLOCK);
-            if err == Z_STREAM_ERROR {
-                return err;
+            if let Err(ZError::Stream) = deflate_(strm, s, Flush::Block) {
+                return Err(ZError::Stream);
             }
             if strm.avail_in() != 0 || (s.strstart as i64 - s.block_start) + s.lookahead as i64 != 0
             {
-                return Z_BUF_ERROR;
+                return Err(ZError::Buf);
             }
         }
         if s.level != level {
@@ -1280,7 +1267,7 @@ pub fn deflateParams(strm: &mut ZStream<'_>, level: i32, strategy: i32) -> i32 {
             s.max_chain_length = u32::from(config.max_chain);
         }
         s.strategy = strategy;
-        Z_OK
+        Ok(())
     })
 }
 
@@ -1291,15 +1278,13 @@ pub fn deflateTune(
     max_lazy: i32,
     nice_length: i32,
     max_chain: i32,
-) -> i32 {
-    let Some(s) = state_mut(strm) else {
-        return Z_STREAM_ERROR;
-    };
+) -> Result<(), ZError> {
+    let s = state_mut(strm)?;
     s.good_match = good_length as u32;
     s.max_lazy_match = max_lazy as u32;
     s.nice_match = nice_length;
     s.max_chain_length = max_chain as u32;
-    Z_OK
+    Ok(())
 }
 
 /// `deflateBound_z`: an upper bound on the compressed size after deflation of `sourceLen`
@@ -1350,7 +1335,7 @@ pub fn deflateBound_z(strm: &ZStream<'_>, sourceLen: usize) -> usize {
     }
 
     // if can't get parameters, return larger bound plus a wrapper
-    let Some(s) = state_ref(strm) else {
+    let Ok(s) = state_ref(strm) else {
         let bound = fixedlen.max(storelen);
         return bound.saturating_add(18);
     };
@@ -1419,29 +1404,29 @@ fn flush_pending(strm: &mut ZStream<'_>, s: &mut DeflateState) {
 }
 
 /// `deflate`: compress as much data as possible from `next_in` into `next_out`, stopping
-/// when the input is consumed or the output is full. `flush` is `Z_NO_FLUSH`,
-/// `Z_PARTIAL_FLUSH`, `Z_SYNC_FLUSH`, `Z_FULL_FLUSH`, `Z_FINISH` or `Z_BLOCK`. Returns
-/// `Z_OK` if some progress was made, `Z_STREAM_END` once all input was consumed and all
-/// output flushed after `Z_FINISH`, `Z_STREAM_ERROR` for an inconsistent stream and
-/// `Z_BUF_ERROR` if no progress was possible.
-pub fn deflate(strm: &mut ZStream<'_>, flush: i32) -> i32 {
-    if !(0..=Z_BLOCK).contains(&flush) {
-        return Z_STREAM_ERROR;
+/// when the input is consumed or the output is full. `flush` is any [`Flush`] but `Trees`.
+/// Returns `Ok(ZStatus::Ok)` if some progress was made, `Ok(ZStatus::StreamEnd)` once all
+/// input was consumed and all output flushed after `Flush::Finish`; fails with
+/// `ZError::Stream` for an inconsistent stream (or `Flush::Trees`) and `ZError::Buf` if no
+/// progress was possible.
+pub fn deflate(strm: &mut ZStream<'_>, flush: Flush) -> Result<ZStatus, ZError> {
+    if flush > Flush::Block {
+        return Err(ZError::Stream);
     }
-    with_state(strm, Z_STREAM_ERROR, |strm, s| deflate_(strm, s, flush))
+    with_state(strm, |strm, s| deflate_(strm, s, flush))
 }
 
 /// The body of `deflate` once the state is checked (`deflateParams` calls it too).
-fn deflate_(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> i32 {
-    if s.status == FINISH_STATE && flush != Z_FINISH {
-        return ERR_RETURN(strm, Z_STREAM_ERROR);
+fn deflate_(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: Flush) -> Result<ZStatus, ZError> {
+    if s.status == DeflateStatus::Finish && flush != Flush::Finish {
+        return Err(ERR_RETURN(strm, ZError::Stream));
     }
     if strm.avail_out() == 0 {
-        return ERR_RETURN(strm, Z_BUF_ERROR);
+        return Err(ERR_RETURN(strm, ZError::Buf));
     }
 
     let old_flush = s.last_flush; // value of flush param for previous deflate call
-    s.last_flush = flush;
+    s.last_flush = LastFlush::Flush(flush);
 
     // Flush as much pending output as possible
     if s.pending != 0 {
@@ -1451,30 +1436,33 @@ fn deflate_(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> i32 {
             // possibly with both pending and avail_in equal to zero. There won't be anything
             // to do, but this is not an error situation so make sure we return OK instead of
             // BUF_ERROR at next call of deflate:
-            s.last_flush = -1;
-            return Z_OK;
+            s.last_flush = LastFlush::OutputFull;
+            return Ok(ZStatus::Ok);
         }
 
         // Make sure there is something to do and avoid duplicate consecutive flushes. For
         // repeated and useless calls with Z_FINISH, we keep returning Z_STREAM_END instead of
         // Z_BUF_ERROR.
-    } else if strm.avail_in() == 0 && RANK(flush) <= RANK(old_flush) && flush != Z_FINISH {
-        return ERR_RETURN(strm, Z_BUF_ERROR);
+    } else if strm.avail_in() == 0
+        && RANK(flush.code()) <= RANK(old_flush.code())
+        && flush != Flush::Finish
+    {
+        return Err(ERR_RETURN(strm, ZError::Buf));
     }
 
     // User must not provide more input after the first FINISH:
-    if s.status == FINISH_STATE && strm.avail_in() != 0 {
-        return ERR_RETURN(strm, Z_BUF_ERROR);
+    if s.status == DeflateStatus::Finish && strm.avail_in() != 0 {
+        return Err(ERR_RETURN(strm, ZError::Buf));
     }
 
     // Write the header
-    if s.status == INIT_STATE && s.wrap == 0 {
-        s.status = BUSY_STATE;
+    if s.status == DeflateStatus::Init && s.wrap == 0 {
+        s.status = DeflateStatus::Busy;
     }
-    if s.status == INIT_STATE {
+    if s.status == DeflateStatus::Init {
         // zlib header
         let mut header = (Z_DEFLATED as u32 + ((s.w_bits as u32 - 8) << 4)) << 8;
-        let level_flags = if s.strategy >= Z_HUFFMAN_ONLY || s.level < 2 {
+        let level_flags = if s.strategy >= Strategy::HuffmanOnly || s.level < 2 {
             0
         } else if s.level < 6 {
             1
@@ -1497,26 +1485,28 @@ fn deflate_(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> i32 {
             putShortMSB(s, strm.adler & 0xffff);
         }
         strm.adler = adler32(0, None);
-        s.status = BUSY_STATE;
+        s.status = DeflateStatus::Busy;
 
         // Compression must start with an empty pending buffer
         flush_pending(strm, s);
         if s.pending != 0 {
-            s.last_flush = -1;
-            return Z_OK;
+            s.last_flush = LastFlush::OutputFull;
+            return Ok(ZStatus::Ok);
         }
     }
     // GZIP_STATE, EXTRA_STATE, NAME_STATE, COMMENT_STATE and HCRC_STATE (the gzip header)
     // only exist with GZIP.
 
     // Start a new block or continue the current one.
-    if strm.avail_in() != 0 || s.lookahead != 0 || (flush != Z_NO_FLUSH && s.status != FINISH_STATE)
+    if strm.avail_in() != 0
+        || s.lookahead != 0
+        || (flush != Flush::NoFlush && s.status != DeflateStatus::Finish)
     {
         let bstate = if s.level == 0 {
             deflate_stored(strm, s, flush)
-        } else if s.strategy == Z_HUFFMAN_ONLY {
+        } else if s.strategy == Strategy::HuffmanOnly {
             deflate_huff(strm, s, flush)
-        } else if s.strategy == Z_RLE {
+        } else if s.strategy == Strategy::Rle {
             deflate_rle(strm, s, flush)
         } else {
             match configuration_table[s.level as usize].func {
@@ -1527,27 +1517,27 @@ fn deflate_(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> i32 {
         };
 
         if bstate == BlockState::FinishStarted || bstate == BlockState::FinishDone {
-            s.status = FINISH_STATE;
+            s.status = DeflateStatus::Finish;
         }
         if bstate == BlockState::NeedMore || bstate == BlockState::FinishStarted {
             if strm.avail_out() == 0 {
-                s.last_flush = -1; // avoid BUF_ERROR next call, see above
+                s.last_flush = LastFlush::OutputFull; // avoid BUF_ERROR next call, see above
             }
-            return Z_OK;
+            return Ok(ZStatus::Ok);
             // If flush != Z_NO_FLUSH && avail_out == 0, the next call of deflate should use
             // the same flush parameter to make sure that the flush is complete. So we don't
             // have to output an empty block here, this will be done at next call. This also
             // ensures that for a very small output buffer, we emit at most one empty block.
         }
         if bstate == BlockState::BlockDone {
-            if flush == Z_PARTIAL_FLUSH {
+            if flush == Flush::PartialFlush {
                 _tr_align(s);
-            } else if flush != Z_BLOCK {
+            } else if flush != Flush::Block {
                 // FULL_FLUSH or SYNC_FLUSH
                 _tr_stored_block(s, None, 0, false);
                 // For a full flush, this empty block will be recognized as a special marker
                 // by inflate_sync().
-                if flush == Z_FULL_FLUSH {
+                if flush == Flush::FullFlush {
                     CLEAR_HASH(s); // forget history
                     if s.lookahead == 0 {
                         s.strstart = 0;
@@ -1558,17 +1548,17 @@ fn deflate_(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> i32 {
             }
             flush_pending(strm, s);
             if strm.avail_out() == 0 {
-                s.last_flush = -1; // avoid BUF_ERROR at next call, see above
-                return Z_OK;
+                s.last_flush = LastFlush::OutputFull; // avoid BUF_ERROR at next call, see above
+                return Ok(ZStatus::Ok);
             }
         }
     }
 
-    if flush != Z_FINISH {
-        return Z_OK;
+    if flush != Flush::Finish {
+        return Ok(ZStatus::Ok);
     }
     if s.wrap <= 0 {
-        return Z_STREAM_END;
+        return Ok(ZStatus::StreamEnd);
     }
 
     // Write the trailer (the gzip trailer, for wrap == 2, only exists with GZIP)
@@ -1579,35 +1569,34 @@ fn deflate_(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> i32 {
     if s.wrap > 0 {
         s.wrap = -s.wrap; // write the trailer only once!
     }
-    if s.pending != 0 { Z_OK } else { Z_STREAM_END }
+    Ok(if s.pending != 0 {
+        ZStatus::Ok
+    } else {
+        ZStatus::StreamEnd
+    })
 }
 
-/// `deflateEnd`: free the stream's state. Returns `Z_DATA_ERROR` if the stream was freed
-/// prematurely (some input or output was discarded), `Z_OK` otherwise.
-pub fn deflateEnd(strm: &mut ZStream<'_>) -> i32 {
-    let Some(s) = state_ref(strm) else {
-        return Z_STREAM_ERROR;
-    };
-    let status = s.status;
+/// `deflateEnd`: free the stream's state. Fails with `ZError::Data` if the stream was freed
+/// prematurely (some input or output was discarded; the state is freed all the same).
+pub fn deflateEnd(strm: &mut ZStream<'_>) -> Result<(), ZError> {
+    let status = state_ref(strm)?.status;
 
     // Deallocate in reverse order of allocations: the state's buffers go with it.
     if let InternalState::Deflate(s) = core::mem::take(&mut strm.state) {
         zcfree(s);
     }
 
-    if status == BUSY_STATE {
-        Z_DATA_ERROR
+    if status == DeflateStatus::Busy {
+        Err(ZError::Data)
     } else {
-        Z_OK
+        Ok(())
     }
 }
 
 /// `deflateCopy`: set `dest` to a complete copy of `source`, which must be a deflate stream.
 /// `dest` gets `source`'s input and counters but an empty `next_out`.
-pub fn deflateCopy<'a>(dest: &mut ZStream<'a>, source: &ZStream<'a>) -> i32 {
-    let Some(ss) = state_ref(source) else {
-        return Z_STREAM_ERROR;
-    };
+pub fn deflateCopy<'a>(dest: &mut ZStream<'a>, source: &ZStream<'a>) -> Result<(), ZError> {
+    let ss = state_ref(source)?;
 
     // zmemcpy(dest, source, sizeof(z_stream)), but for next_out (a &mut is not copied)
     dest.next_in = source.next_in;
@@ -1619,9 +1608,7 @@ pub fn deflateCopy<'a>(dest: &mut ZStream<'a>, source: &ZStream<'a>) -> i32 {
     dest.adler = source.adler;
     dest.state = InternalState::None;
 
-    let Some(mut ds) = DeflateState::alloc(ss.w_bits, ss.hash_bits, ss.lit_bufsize) else {
-        return Z_MEM_ERROR;
-    };
+    let mut ds = DeflateState::alloc(ss.w_bits, ss.hash_bits, ss.lit_bufsize).ok_or(ZError::Mem)?;
     // following copies, as in the C, only what holds data
     ds.window[..ss.high_water].copy_from_slice(&ss.window[..ss.high_water]);
     let prev_len = if ss.slid || ss.strstart - ss.insert > ds.w_size {
@@ -1652,11 +1639,8 @@ pub fn deflateCopy<'a>(dest: &mut ZStream<'a>, source: &ZStream<'a>) -> i32 {
         heap: ds.heap,
         ..*ss
     };
-    let Some(ds) = zcalloc_box(ds) else {
-        return Z_MEM_ERROR;
-    };
-    dest.state = InternalState::Deflate(ds);
-    Z_OK
+    dest.state = InternalState::Deflate(zcalloc_box(ds).ok_or(ZError::Mem)?);
+    Ok(())
 }
 
 /// `longest_match`: set match_start to the longest match starting at the given string and
@@ -1803,7 +1787,7 @@ macro_rules! FLUSH_BLOCK {
 /// deflate_stored() is written to minimize the number of times an input byte is copied. It
 /// is most efficient with large input and output buffers, which maximizes the opportunities
 /// to have a single copy from next_in to next_out.
-fn deflate_stored(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> BlockState {
+fn deflate_stored(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: Flush) -> BlockState {
     // Smallest worthy block size when not flushing or finishing. By default this is 32K. This
     // can be as small as 507 bytes for memLevel == 1. For large input and output buffers, the
     // stored block size will be larger.
@@ -1842,8 +1826,8 @@ fn deflate_stored(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> B
         // pending buffer instead. Also don't write an empty block when flushing -- deflate()
         // does that.
         if len < min_block
-            && ((len == 0 && flush != Z_FINISH)
-                || flush == Z_NO_FLUSH
+            && ((len == 0 && flush != Flush::Finish)
+                || flush == Flush::NoFlush
                 || len != left + strm.avail_in())
         {
             break;
@@ -1851,7 +1835,7 @@ fn deflate_stored(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> B
 
         // Make a dummy stored block in pending to get the header bytes, including any pending
         // bits. This also updates the debugging counts.
-        last = flush == Z_FINISH && len == left + strm.avail_in();
+        last = flush == Flush::Finish && len == left + strm.avail_in();
         _tr_stored_block(s, None, 0, last);
 
         // Replace the lengths in the dummy stored block with len.
@@ -1933,8 +1917,8 @@ fn deflate_stored(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> B
     }
 
     // If flushing and all input has been consumed, then done.
-    if flush != Z_NO_FLUSH
-        && flush != Z_FINISH
+    if flush != Flush::NoFlush
+        && flush != Flush::Finish
         && strm.avail_in() == 0
         && s.strstart as i64 == s.block_start
     {
@@ -1979,13 +1963,13 @@ fn deflate_stored(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> B
     min_block = have.min(s.w_size);
     left = (s.strstart as i64 - s.block_start) as usize;
     if left >= min_block
-        || ((left != 0 || flush == Z_FINISH)
-            && flush != Z_NO_FLUSH
+        || ((left != 0 || flush == Flush::Finish)
+            && flush != Flush::NoFlush
             && strm.avail_in() == 0
             && left <= have)
     {
         len = left.min(have);
-        last = flush == Z_FINISH && strm.avail_in() == 0 && len == left;
+        last = flush == Flush::Finish && strm.avail_in() == 0 && len == left;
         _tr_stored_block(s, Some(s.block_start as usize), len, last);
         s.block_start += len as i64;
         flush_pending(strm, s);
@@ -2004,14 +1988,14 @@ fn deflate_stored(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> B
 /// block state. This function does not perform lazy evaluation of matches and inserts new
 /// strings in the dictionary only for unmatched strings or for short matches. It is used
 /// only for the fast compression options.
-fn deflate_fast(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> BlockState {
+fn deflate_fast(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: Flush) -> BlockState {
     loop {
         // Make sure that we always have enough lookahead, except at the end of the input
         // file. We need MAX_MATCH bytes for the next match, plus MIN_MATCH bytes to insert
         // the string following the next match.
         if s.lookahead < MIN_LOOKAHEAD {
             fill_window(strm, s);
-            if s.lookahead < MIN_LOOKAHEAD && flush == Z_NO_FLUSH {
+            if s.lookahead < MIN_LOOKAHEAD && flush == Flush::NoFlush {
                 return BlockState::NeedMore;
             }
             if s.lookahead == 0 {
@@ -2077,7 +2061,7 @@ fn deflate_fast(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Blo
         }
     }
     s.insert = s.strstart.min(MIN_MATCH - 1);
-    if flush == Z_FINISH {
+    if flush == Flush::Finish {
         FLUSH_BLOCK!(strm, s, true);
         return BlockState::FinishDone;
     }
@@ -2090,7 +2074,7 @@ fn deflate_fast(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Blo
 /// `deflate_slow`: same as above, but achieves better compression. We use a lazy evaluation
 /// for matches: a match is finally adopted only if there is no better match at the next
 /// window position.
-fn deflate_slow(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> BlockState {
+fn deflate_slow(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: Flush) -> BlockState {
     // Process the input block.
     loop {
         // Make sure that we always have enough lookahead, except at the end of the input
@@ -2098,7 +2082,7 @@ fn deflate_slow(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Blo
         // the string following the next match.
         if s.lookahead < MIN_LOOKAHEAD {
             fill_window(strm, s);
-            if s.lookahead < MIN_LOOKAHEAD && flush == Z_NO_FLUSH {
+            if s.lookahead < MIN_LOOKAHEAD && flush == Flush::NoFlush {
                 return BlockState::NeedMore;
             }
             if s.lookahead == 0 {
@@ -2129,7 +2113,7 @@ fn deflate_slow(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Blo
             // longest_match() sets match_start
 
             if s.match_length <= 5
-                && (s.strategy == Z_FILTERED
+                && (s.strategy == Strategy::Filtered
                     || (s.match_length == MIN_MATCH
                         && s.strstart.wrapping_sub(s.match_start) > TOO_FAR))
             {
@@ -2189,13 +2173,13 @@ fn deflate_slow(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Blo
             s.lookahead -= 1;
         }
     }
-    zassert!(flush != Z_NO_FLUSH, "no flush?");
+    zassert!(flush != Flush::NoFlush, "no flush?");
     if s.match_available {
         _tr_tally_lit(s, s.window[s.strstart - 1]);
         s.match_available = false;
     }
     s.insert = s.strstart.min(MIN_MATCH - 1);
-    if flush == Z_FINISH {
+    if flush == Flush::Finish {
         FLUSH_BLOCK!(strm, s, true);
         return BlockState::FinishDone;
     }
@@ -2208,13 +2192,13 @@ fn deflate_slow(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Blo
 /// `deflate_rle`: for Z_RLE, simply look for runs of bytes, generate matches only of
 /// distance one. Do not maintain a hash table. (It will be regenerated if this run of
 /// deflate switches away from Z_RLE.)
-fn deflate_rle(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> BlockState {
+fn deflate_rle(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: Flush) -> BlockState {
     loop {
         // Make sure that we always have enough lookahead, except at the end of the input
         // file. We need MAX_MATCH bytes for the longest run, plus one for the unrolled loop.
         if s.lookahead <= MAX_MATCH {
             fill_window(strm, s);
-            if s.lookahead <= MAX_MATCH && flush == Z_NO_FLUSH {
+            if s.lookahead <= MAX_MATCH && flush == Flush::NoFlush {
                 return BlockState::NeedMore;
             }
             if s.lookahead == 0 {
@@ -2258,7 +2242,7 @@ fn deflate_rle(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Bloc
         }
     }
     s.insert = 0;
-    if flush == Z_FINISH {
+    if flush == Flush::Finish {
         FLUSH_BLOCK!(strm, s, true);
         return BlockState::FinishDone;
     }
@@ -2270,13 +2254,13 @@ fn deflate_rle(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Bloc
 
 /// `deflate_huff`: for Z_HUFFMAN_ONLY, do not look for matches. Do not maintain a hash table.
 /// (It will be regenerated if this run of deflate switches away from Huffman.)
-fn deflate_huff(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> BlockState {
+fn deflate_huff(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: Flush) -> BlockState {
     loop {
         // Make sure that we have a literal to write.
         if s.lookahead == 0 {
             fill_window(strm, s);
             if s.lookahead == 0 {
-                if flush == Z_NO_FLUSH {
+                if flush == Flush::NoFlush {
                     return BlockState::NeedMore;
                 }
                 break; // flush the current block
@@ -2293,7 +2277,7 @@ fn deflate_huff(strm: &mut ZStream<'_>, s: &mut DeflateState, flush: i32) -> Blo
         }
     }
     s.insert = 0;
-    if flush == Z_FINISH {
+    if flush == Flush::Finish {
         FLUSH_BLOCK!(strm, s, true);
         return BlockState::FinishDone;
     }
@@ -2393,13 +2377,13 @@ mod tests {
     /// What the driver does between `deflateInit2` and `deflateEnd`.
     #[derive(Debug, Clone, Copy)]
     enum Schedule {
-        /// All input with `Z_FINISH`.
+        /// All input with `Flush::Finish`.
         Finish,
-        /// Input up to `at` with `flush`, the rest with `Z_FINISH`.
-        Flush(i32, usize),
-        /// Input up to `at` with `Z_NO_FLUSH`, `deflateParams(level, strategy)`, the rest with
-        /// `Z_FINISH`.
-        Params(usize, i32, i32),
+        /// Input up to `at` with `flush`, the rest with `Flush::Finish`.
+        Flush(Flush, usize),
+        /// Input up to `at` with `Flush::NoFlush`, `deflateParams(level, strategy)`, the rest with
+        /// `Flush::Finish`.
+        Params(usize, i32, Strategy),
     }
 
     /// The output buffers handed to the stream: one buffer cut into `chunk`-sized pieces, one
@@ -2425,20 +2409,23 @@ mod tests {
     }
 
     /// `deflate(flush)` over `input` with fresh output buffers until a call leaves room in its
-    /// buffer (and, for `Z_FINISH`, returns `Z_STREAM_END`).
-    fn feed<'a>(strm: &mut ZStream<'a>, slots: &mut Slots<'a>, input: &'a [u8], flush: i32) {
+    /// buffer (and, for `Flush::Finish`, returns `Ok(ZStatus::StreamEnd)`).
+    fn feed<'a>(strm: &mut ZStream<'a>, slots: &mut Slots<'a>, input: &'a [u8], flush: Flush) {
         strm.next_in = input;
         loop {
             slots.give(strm);
             let ret = deflate(strm, flush);
             assert!(
-                matches!(ret, Z_OK | Z_STREAM_END | Z_BUF_ERROR),
-                "deflate: {ret}"
+                matches!(
+                    ret,
+                    Ok(ZStatus::Ok) | Ok(ZStatus::StreamEnd) | Err(ZError::Buf)
+                ),
+                "deflate: {ret:?}"
             );
             slots.taken(strm);
             if strm.avail_out() != 0 {
-                if flush == Z_FINISH {
-                    assert_eq!(ret, Z_STREAM_END);
+                if flush == Flush::Finish {
+                    assert_eq!(ret, Ok(ZStatus::StreamEnd));
                 }
                 break;
             }
@@ -2457,7 +2444,7 @@ mod tests {
     /// Compress `data` the way `gen_deflate.py`'s `run` does.
     fn run(
         data: &[u8],
-        (level, wbits, memlevel, strategy): (i32, i32, i32, i32),
+        (level, wbits, memlevel, strategy): (i32, i32, i32, Strategy),
         schedule: Schedule,
         chunk: usize,
         dictionary: Option<&[u8]>,
@@ -2474,23 +2461,23 @@ mod tests {
             };
             let mut strm = ZStream::new();
             let ret = deflateInit2(&mut strm, level, Z_DEFLATED, wbits, memlevel, strategy);
-            assert_eq!(ret, Z_OK);
+            assert_eq!(ret, Ok(()));
             if let Some(d) = dictionary {
-                assert_eq!(deflateSetDictionary(&mut strm, d), Z_OK);
+                assert_eq!(deflateSetDictionary(&mut strm, d), Ok(()));
             }
             bound = deflateBound_z(&strm, data.len());
             match schedule {
-                Schedule::Finish => feed(&mut strm, &mut slots, data, Z_FINISH),
+                Schedule::Finish => feed(&mut strm, &mut slots, data, Flush::Finish),
                 Schedule::Flush(flush, at) => {
                     feed(&mut strm, &mut slots, &data[..at], flush);
-                    feed(&mut strm, &mut slots, &data[at..], Z_FINISH);
+                    feed(&mut strm, &mut slots, &data[at..], Flush::Finish);
                 }
                 Schedule::Params(at, l, s) => {
-                    feed(&mut strm, &mut slots, &data[..at], Z_NO_FLUSH);
+                    feed(&mut strm, &mut slots, &data[..at], Flush::NoFlush);
                     slots.give(&mut strm);
-                    assert_eq!(deflateParams(&mut strm, l, s), Z_OK);
+                    assert_eq!(deflateParams(&mut strm, l, s), Ok(()));
                     slots.taken(&strm);
-                    feed(&mut strm, &mut slots, &data[at..], Z_FINISH);
+                    feed(&mut strm, &mut slots, &data[at..], Flush::Finish);
                 }
             }
             total_in = strm.total_in;
@@ -2499,7 +2486,7 @@ mod tests {
                 strm.total_out,
                 slots.used.iter().map(|&(_, n)| n as u64).sum::<u64>()
             );
-            assert_eq!(deflateEnd(&mut strm), Z_OK);
+            assert_eq!(deflateEnd(&mut strm), Ok(()));
             used = slots.used;
         }
         let mut bytes = Vec::new();
@@ -2518,7 +2505,7 @@ mod tests {
     struct Case<'v> {
         line: &'v str,
         input: &'v str,
-        params: (i32, i32, i32, i32),
+        params: (i32, i32, i32, Strategy),
         schedule: Schedule,
         chunk: usize,
         dict: Option<usize>,
@@ -2542,14 +2529,14 @@ mod tests {
                 "params" => Schedule::Params(
                     s[1].parse().unwrap(),
                     s[2].parse().unwrap(),
-                    s[3].parse().unwrap(),
+                    Strategy::try_from(s[3].parse::<i32>().unwrap()).unwrap(),
                 ),
                 name => {
                     let flush = match name {
-                        "partial" => Z_PARTIAL_FLUSH,
-                        "sync" => crate::zlib::Z_SYNC_FLUSH,
-                        "full" => Z_FULL_FLUSH,
-                        "block" => Z_BLOCK,
+                        "partial" => Flush::PartialFlush,
+                        "sync" => Flush::SyncFlush,
+                        "full" => Flush::FullFlush,
+                        "block" => Flush::Block,
                         _ => panic!("schedule {name}"),
                     };
                     Schedule::Flush(flush, s[1].parse().unwrap())
@@ -2558,7 +2545,7 @@ mod tests {
             cases.push(Case {
                 line,
                 input: f[1],
-                params: (num(2), num(3), num(4), num(5)),
+                params: (num(2), num(3), num(4), Strategy::try_from(num(5)).unwrap()),
                 schedule,
                 chunk: f[7].parse().unwrap(),
                 dict: (f[8] != "-").then(|| f[8].split(':').nth(1).unwrap().parse().unwrap()),
@@ -2614,7 +2601,7 @@ mod tests {
                     c.line, got.0, got.1, got.2, got.3
                 ));
             }
-            // zlib.h: the bound holds when all input is compressed with Z_FINISH (other flushes
+            // zlib.h: the bound holds when all input is compressed with Flush::Finish (other flushes
             // may exceed it).
             if matches!(c.schedule, Schedule::Finish) {
                 assert!(
@@ -2639,7 +2626,7 @@ mod tests {
         let text = input(&inputs, "text");
         let ipcomp = run(
             text,
-            (Z_DEFAULT_COMPRESSION, -12, 8, Z_DEFAULT_STRATEGY),
+            (Z_DEFAULT_COMPRESSION, -12, 8, Strategy::Default),
             Schedule::Finish,
             BIG,
             None,
@@ -2647,7 +2634,7 @@ mod tests {
         assert_eq!(ipcomp.bytes, IPCOMP_TEXT);
         let zlib9 = run(
             text,
-            (9, 15, 8, Z_DEFAULT_STRATEGY),
+            (9, 15, 8, Strategy::Default),
             Schedule::Finish,
             BIG,
             None,
@@ -2655,7 +2642,7 @@ mod tests {
         assert_eq!(zlib9.bytes, ZLIB_TEXT_L9);
         let raw1 = run(
             text,
-            (1, -15, 8, Z_DEFAULT_STRATEGY),
+            (1, -15, 8, Strategy::Default),
             Schedule::Finish,
             BIG,
             None,
@@ -2663,9 +2650,9 @@ mod tests {
         assert_eq!(raw1.bytes, RAW_TEXT_L1);
     }
 
-    /// The IPComp path of `xform_ipcomp.c`: a raw stream with a 4 KiB window, `Z_FINISH`
-    /// repeatedly with fresh 16-byte output buffers: `Z_OK` while a buffer fills up, then
-    /// `Z_STREAM_END`; `deflateEnd` is `Z_OK`.
+    /// The IPComp path of `xform_ipcomp.c`: a raw stream with a 4 KiB window, `Flush::Finish`
+    /// repeatedly with fresh 16-byte output buffers: `Ok(ZStatus::Ok)` while a buffer fills up, then
+    /// `Ok(ZStatus::StreamEnd)`; `deflateEnd` is `Ok(ZStatus::Ok)`.
     #[test]
     fn ipcomp_finish_with_small_buffers() {
         let mut space = [0u8; 2048];
@@ -2678,9 +2665,9 @@ mod tests {
                 Z_DEFLATED,
                 -12,
                 8,
-                Z_DEFAULT_STRATEGY,
+                Strategy::Default,
             );
-            assert_eq!(ret, Z_OK);
+            assert_eq!(ret, Ok(()));
             strm.next_in = TEXT;
             let mut rest: &mut [u8] = &mut space;
             let mut calls = 0;
@@ -2688,23 +2675,23 @@ mod tests {
                 let (piece, r) = core::mem::take(&mut rest).split_at_mut(16);
                 rest = r;
                 strm.next_out = piece;
-                let ret = deflate(&mut strm, Z_FINISH);
+                let ret = deflate(&mut strm, Flush::Finish);
                 calls += 1;
                 written += 16 - strm.avail_out();
-                if ret == Z_STREAM_END {
+                if ret == Ok(ZStatus::StreamEnd) {
                     break;
                 }
-                assert_eq!(ret, Z_OK);
+                assert_eq!(ret, Ok(ZStatus::Ok));
                 assert_eq!(strm.avail_out(), 0, "Z_OK with room left");
             }
             assert!(calls > 50);
             assert_eq!(strm.total_in, TEXT.len() as u64);
             assert_eq!(strm.total_out, written as u64);
-            // more Z_FINISH calls keep returning Z_STREAM_END
+            // more Flush::Finish calls keep returning Ok(ZStatus::StreamEnd)
             let mut extra = [0u8; 4];
             strm.next_out = &mut extra;
-            assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
-            assert_eq!(deflateEnd(&mut strm), Z_OK);
+            assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+            assert_eq!(deflateEnd(&mut strm), Ok(()));
         }
         assert_eq!(&space[..written], IPCOMP_TEXT);
     }
@@ -2727,9 +2714,12 @@ mod tests {
             (6, Z_DEFLATED, 15, 8, -1),
         ];
         for (level, method, wbits, mem, strategy) in bad {
-            let ret = deflateInit2(&mut strm, level, method, wbits, mem, strategy);
+            // a strategy out of range cannot be built: its conversion is refused alike
+            let ret = Strategy::try_from(strategy)
+                .and_then(|s| deflateInit2(&mut strm, level, method, wbits, mem, s));
             assert_eq!(
-                ret, Z_STREAM_ERROR,
+                ret,
+                Err(ZError::Stream),
                 "{level} {method} {wbits} {mem} {strategy}"
             );
         }
@@ -2739,18 +2729,21 @@ mod tests {
             Z_DEFLATED,
             15,
             8,
-            0,
+            Strategy::Default,
             "2.0",
             size_of::<ZStream<'_>>() as i32,
         );
-        assert_eq!(ret, Z_VERSION_ERROR);
+        assert_eq!(ret, Err(ZError::Version));
         let ret = deflateInit_(&mut strm, 6, ZLIB_VERSION, 4);
-        assert_eq!(ret, Z_VERSION_ERROR);
+        assert_eq!(ret, Err(ZError::Version));
         // a stream that was never initialised
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_ERROR);
-        assert_eq!(deflateEnd(&mut strm), Z_STREAM_ERROR);
-        assert_eq!(deflateReset(&mut strm), Z_STREAM_ERROR);
-        assert_eq!(deflateParams(&mut strm, 1, 0), Z_STREAM_ERROR);
+        assert_eq!(deflate(&mut strm, Flush::Finish), Err(ZError::Stream));
+        assert_eq!(deflateEnd(&mut strm), Err(ZError::Stream));
+        assert_eq!(deflateReset(&mut strm), Err(ZError::Stream));
+        assert_eq!(
+            deflateParams(&mut strm, 1, Strategy::Default),
+            Err(ZError::Stream)
+        );
         assert_eq!(deflateBound(&strm, 1000), 1000 + 125 + 3 + 1 + 4 + 18);
     }
 
@@ -2758,40 +2751,44 @@ mod tests {
     fn stream_errors() {
         let mut out = [0u8; 256];
         let mut strm = ZStream::new();
-        assert_eq!(deflateInit(&mut strm, Z_DEFAULT_COMPRESSION), Z_OK);
+        assert_eq!(deflateInit(&mut strm, Z_DEFAULT_COMPRESSION), Ok(()));
         assert_eq!(
             deflateSetHeader(&mut strm, &GzHeader::default()),
-            Z_STREAM_ERROR
+            Err(ZError::Stream)
         );
-        assert_eq!(deflate(&mut strm, Z_BLOCK + 1), Z_STREAM_ERROR);
-        assert_eq!(deflate(&mut strm, -1), Z_STREAM_ERROR);
+        assert_eq!(deflate(&mut strm, Flush::Trees), Err(ZError::Stream));
+        // a negative flush cannot be built: its conversion is refused alike
+        assert_eq!(
+            Flush::try_from(-1).and_then(|f| deflate(&mut strm, f)),
+            Err(ZError::Stream)
+        );
         // no output space
         strm.next_in = b"hello";
-        assert_eq!(deflate(&mut strm, Z_NO_FLUSH), Z_BUF_ERROR);
+        assert_eq!(deflate(&mut strm, Flush::NoFlush), Err(ZError::Buf));
         assert_eq!(strm.msg, Some("buffer error"));
         strm.next_out = &mut out;
-        assert_eq!(deflate(&mut strm, Z_NO_FLUSH), Z_OK);
-        // nothing to do: a second Z_NO_FLUSH without input is a buffer error
-        assert_eq!(deflate(&mut strm, Z_NO_FLUSH), Z_BUF_ERROR);
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
-        // no more input after Z_FINISH, and no other flush
+        assert_eq!(deflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+        // nothing to do: a second Flush::NoFlush without input is a buffer error
+        assert_eq!(deflate(&mut strm, Flush::NoFlush), Err(ZError::Buf));
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+        // no more input after Flush::Finish, and no other flush
         strm.next_in = b"more";
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_BUF_ERROR);
-        assert_eq!(deflate(&mut strm, Z_NO_FLUSH), Z_STREAM_ERROR);
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
-        assert_eq!(deflateEnd(&mut strm), Z_STREAM_ERROR);
+        assert_eq!(deflate(&mut strm, Flush::Finish), Err(ZError::Buf));
+        assert_eq!(deflate(&mut strm, Flush::NoFlush), Err(ZError::Stream));
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
+        assert_eq!(deflateEnd(&mut strm), Err(ZError::Stream));
     }
 
     #[test]
     fn end_while_busy_is_a_data_error() {
         let mut out = [0u8; 64];
         let mut strm = ZStream::new();
-        assert_eq!(deflateInit(&mut strm, 6), Z_OK);
+        assert_eq!(deflateInit(&mut strm, 6), Ok(()));
         strm.next_in = TEXT;
         strm.next_out = &mut out;
-        assert_eq!(deflate(&mut strm, Z_NO_FLUSH), Z_OK);
-        assert_eq!(deflateEnd(&mut strm), Z_DATA_ERROR);
+        assert_eq!(deflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+        assert_eq!(deflateEnd(&mut strm), Err(ZError::Data));
         assert!(matches!(strm.state, InternalState::None));
     }
 
@@ -2800,18 +2797,21 @@ mod tests {
         let mut a = [0u8; 2048];
         let mut b = [0u8; 2048];
         let mut strm = ZStream::new();
-        assert_eq!(deflateInit2(&mut strm, 6, Z_DEFLATED, 15, 8, 0), Z_OK);
+        assert_eq!(
+            deflateInit2(&mut strm, 6, Z_DEFLATED, 15, 8, Strategy::Default),
+            Ok(())
+        );
         strm.next_in = TEXT;
         strm.next_out = &mut a;
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
         let n = strm.total_out as usize;
-        assert_eq!(deflateReset(&mut strm), Z_OK);
+        assert_eq!(deflateReset(&mut strm), Ok(()));
         assert_eq!((strm.total_in, strm.total_out, strm.adler), (0, 0, 1));
         strm.next_in = TEXT;
         strm.next_out = &mut b;
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
         assert_eq!(strm.total_out as usize, n);
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
         assert_eq!(a[..n], b[..n]);
     }
 
@@ -2822,22 +2822,25 @@ mod tests {
         let (half1, half2) = TEXT.split_at(TEXT.len() / 2);
         let mut head = [0u8; 4096];
         let mut strm = ZStream::new();
-        assert_eq!(deflateInit2(&mut strm, 9, Z_DEFLATED, -15, 8, 0), Z_OK);
+        assert_eq!(
+            deflateInit2(&mut strm, 9, Z_DEFLATED, -15, 8, Strategy::Default),
+            Ok(())
+        );
         strm.next_in = half1;
         strm.next_out = &mut head;
-        assert_eq!(deflate(&mut strm, Z_NO_FLUSH), Z_OK);
+        assert_eq!(deflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
         let mut copy = ZStream::new();
-        assert_eq!(deflateCopy(&mut copy, &strm), Z_OK);
+        assert_eq!(deflateCopy(&mut copy, &strm), Ok(()));
         assert_eq!(copy.avail_out(), 0);
         assert_eq!(copy.total_in, strm.total_in);
         for (s, out) in [(&mut strm, &mut out1), (&mut copy, &mut out2)] {
             s.next_in = half2;
             s.next_out = out;
-            assert_eq!(deflate(s, Z_FINISH), Z_STREAM_END);
+            assert_eq!(deflate(s, Flush::Finish), Ok(ZStatus::StreamEnd));
         }
         assert_eq!(strm.total_out, copy.total_out);
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
-        assert_eq!(deflateEnd(&mut copy), Z_OK);
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
+        assert_eq!(deflateEnd(&mut copy), Ok(()));
         assert_eq!(out1, out2);
     }
 
@@ -2845,57 +2848,53 @@ mod tests {
     fn dictionary_round_trips_through_get_dictionary() {
         let mut out = [0u8; 4096];
         let mut strm = ZStream::new();
-        assert_eq!(deflateInit2(&mut strm, 6, Z_DEFLATED, 9, 8, 0), Z_OK);
+        assert_eq!(
+            deflateInit2(&mut strm, 6, Z_DEFLATED, 9, 8, Strategy::Default),
+            Ok(())
+        );
         // longer than the 512-byte window: only the tail is kept
-        assert_eq!(deflateSetDictionary(&mut strm, TEXT), Z_OK);
+        assert_eq!(deflateSetDictionary(&mut strm, TEXT), Ok(()));
         assert_eq!(strm.adler, crate::adler32::adler32(1, Some(TEXT)));
         let mut dict = [0u8; 512];
-        let mut len = 0;
-        assert_eq!(
-            deflateGetDictionary(&strm, Some(&mut dict), Some(&mut len)),
-            Z_OK
-        );
-        assert_eq!(len, 512);
+        assert_eq!(deflateGetDictionary(&strm, Some(&mut dict)), Ok(512));
+        assert_eq!(deflateGetDictionary(&strm, None), Ok(512));
         assert_eq!(dict[..], TEXT[TEXT.len() - 512..]);
         let mut short = [0u8; 100];
         assert_eq!(
-            deflateGetDictionary(&strm, Some(&mut short), None),
-            Z_BUF_ERROR
+            deflateGetDictionary(&strm, Some(&mut short)),
+            Err(ZError::Buf)
         );
         strm.next_in = b"abc";
         strm.next_out = &mut out;
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
         // a zlib stream takes a dictionary only before the first deflate
-        assert_eq!(deflateReset(&mut strm), Z_OK);
+        assert_eq!(deflateReset(&mut strm), Ok(()));
         strm.next_in = b"abc";
-        assert_eq!(deflate(&mut strm, Z_NO_FLUSH), Z_OK);
-        assert_eq!(deflateSetDictionary(&mut strm, b"abc"), Z_STREAM_ERROR);
-        assert_eq!(deflateEnd(&mut strm), Z_DATA_ERROR);
+        assert_eq!(deflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+        assert_eq!(deflateSetDictionary(&mut strm, b"abc"), Err(ZError::Stream));
+        assert_eq!(deflateEnd(&mut strm), Err(ZError::Data));
     }
 
     #[test]
     fn pending_prime_used_and_tune() {
         let mut out = [0u8; 4096];
         let mut strm = ZStream::new();
-        assert_eq!(deflateInit2(&mut strm, 6, Z_DEFLATED, -15, 8, 0), Z_OK);
-        // a raw stream may start with bits of the caller's own
-        assert_eq!(deflatePrime(&mut strm, 17, 0), Z_BUF_ERROR);
-        assert_eq!(deflatePrime(&mut strm, 3, 0b101), Z_OK);
-        assert_eq!(deflatePrime(&mut strm, 10, 0x3ff), Z_OK);
-        let (mut pending, mut bits) = (0, 0);
         assert_eq!(
-            deflatePending(&strm, Some(&mut pending), Some(&mut bits)),
-            Z_OK
+            deflateInit2(&mut strm, 6, Z_DEFLATED, -15, 8, Strategy::Default),
+            Ok(())
         );
-        assert_eq!((pending, bits), (1, 5));
-        assert_eq!(deflateTune(&mut strm, 4, 4, 8, 4), Z_OK);
+        // a raw stream may start with bits of the caller's own
+        assert_eq!(deflatePrime(&mut strm, 17, 0), Err(ZError::Buf));
+        assert_eq!(deflatePrime(&mut strm, 3, 0b101), Ok(()));
+        assert_eq!(deflatePrime(&mut strm, 10, 0x3ff), Ok(()));
+        assert_eq!(deflatePending(&strm), Ok((1, 5)));
+        assert_eq!(deflateTune(&mut strm, 4, 4, 8, 4), Ok(()));
         strm.next_in = TEXT;
         strm.next_out = &mut out;
-        assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
-        let mut used = 0;
-        assert_eq!(deflateUsed(&strm, Some(&mut used)), Z_OK);
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+        let used = deflateUsed(&strm).unwrap();
         assert!((1..=8).contains(&used));
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
         assert_eq!(out[0], 0b1111_1101);
     }
 
@@ -2903,17 +2902,182 @@ mod tests {
     fn bound_formulas() {
         let mut strm = ZStream::new();
         // the default parameters get the tight bound
-        assert_eq!(deflateInit(&mut strm, 6), Z_OK);
+        assert_eq!(deflateInit(&mut strm, 6), Ok(()));
         assert_eq!(
             deflateBound_z(&strm, 100_000),
             100_000 + 24 + 6 + 13 - 6 + 6
         );
         assert_eq!(deflateBound(&strm, u64::MAX), u64::MAX);
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
         // IPComp's: window 2^12 <= hash bits 15, level != 0: the fixed-block bound, raw
-        assert_eq!(deflateInit2(&mut strm, -1, Z_DEFLATED, -12, 8, 0), Z_OK);
+        assert_eq!(
+            deflateInit2(&mut strm, -1, Z_DEFLATED, -12, 8, Strategy::Default),
+            Ok(())
+        );
         assert_eq!(deflateBound_z(&strm, 1000), 1000 + 125 + 3 + 1 + 4);
-        assert_eq!(deflateEnd(&mut strm), Z_OK);
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
+    }
+
+    /// A small xorshift PRNG for the property tests (no proptest offline).
+    struct XorShift(u64);
+
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// Data from `rng` with some structure: runs, repeats of earlier bytes and noise, so that
+    /// every compression function finds matches, literals and runs.
+    fn prng_data(rng: &mut XorShift, len: usize) -> Vec<u8> {
+        let mut v = Vec::with_capacity(len);
+        while v.len() < len {
+            match rng.below(3) {
+                0 => {
+                    let b = rng.next() as u8;
+                    v.extend(core::iter::repeat_n(b, 1 + rng.below(300)));
+                }
+                1 if v.len() > 10 => {
+                    let from = rng.below(v.len() - 3);
+                    let n = (3 + rng.below(200)).min(v.len() - from);
+                    v.extend_from_within(from..from + n);
+                }
+                _ => {
+                    for _ in 0..1 + rng.below(100) {
+                        v.push(b'a' + (rng.next() % 16) as u8);
+                    }
+                }
+            }
+        }
+        v.truncate(len);
+        v
+    }
+
+    /// Inflate `z` (window `wbits`) in one call into a buffer of `len + 1` bytes.
+    fn inflate_all(z: &[u8], wbits: i32, len: usize) -> Vec<u8> {
+        use crate::inflate::{inflate, inflateEnd};
+        use crate::zlib::inflateInit2;
+        let mut out = vec![0u8; len + 1];
+        let mut strm = ZStream::new();
+        assert_eq!(inflateInit2(&mut strm, wbits), Ok(()));
+        strm.next_in = z;
+        strm.next_out = &mut out;
+        assert_eq!(inflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+        let n = strm.total_out as usize;
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
+        out.truncate(n);
+        out
+    }
+
+    /// Round trips at every level and strategy over PRNG data, fed in random pieces with random
+    /// flushes into random output pieces: inflate gives the input back, `deflate()` only
+    /// returns `Ok` or `ZError::Buf` (no progress), and the output fits `deflateBound`.
+    #[test]
+    fn round_trips_every_level_and_strategy() {
+        let mut rng = XorShift(0x2545_f491_4f6c_dd1d);
+        let strategies = [
+            Strategy::Default,
+            Strategy::Filtered,
+            Strategy::HuffmanOnly,
+            Strategy::Rle,
+            Strategy::Fixed,
+        ];
+        let flushes = [
+            Flush::NoFlush,
+            Flush::NoFlush,
+            Flush::PartialFlush,
+            Flush::SyncFlush,
+            Flush::FullFlush,
+            Flush::Block,
+        ];
+        for level in -1..=9 {
+            for strategy in strategies {
+                let len = rng.below(40_000);
+                let data = prng_data(&mut rng, len);
+                let wbits = if rng.below(2) == 0 {
+                    15
+                } else {
+                    -(9 + rng.below(7) as i32)
+                };
+                let mem = 1 + rng.below(9) as i32;
+                let mut out = vec![0u8; len * 2 + 4096];
+                let mut strm = ZStream::new();
+                assert_eq!(
+                    deflateInit2(&mut strm, level, Z_DEFLATED, wbits, mem, strategy),
+                    Ok(())
+                );
+                let bound = deflateBound_z(&strm, len);
+                let mut rest_in = &data[..];
+                let mut rest_out: &mut [u8] = &mut out;
+                loop {
+                    if strm.avail_in() == 0 && !rest_in.is_empty() {
+                        let (piece, r) = rest_in.split_at(rest_in.len().min(1 + rng.below(5000)));
+                        strm.next_in = piece;
+                        rest_in = r;
+                    }
+                    if strm.avail_out() == 0 {
+                        let n = rest_out.len().min(1 + rng.below(3000));
+                        let (piece, r) = core::mem::take(&mut rest_out).split_at_mut(n);
+                        strm.next_out = piece;
+                        rest_out = r;
+                    }
+                    let flush = if rest_in.is_empty() && strm.avail_in() == 0 {
+                        Flush::Finish
+                    } else {
+                        flushes[rng.below(flushes.len())]
+                    };
+                    match deflate(&mut strm, flush) {
+                        Ok(ZStatus::StreamEnd) => break,
+                        Ok(ZStatus::Ok) | Err(ZError::Buf) => {}
+                        other => panic!("level {level} {strategy:?}: {other:?}"),
+                    }
+                }
+                let n = strm.total_out as usize;
+                assert_eq!(deflateEnd(&mut strm), Ok(()));
+                assert!(
+                    inflate_all(&out[..n], wbits, len) == data,
+                    "level {level} {strategy:?} wbits {wbits} mem {mem} len {len}"
+                );
+                if level != 0 && strategy == Strategy::Default {
+                    // flushes add empty blocks the bound does not count; one Finish call does not
+                    let mut once = vec![0u8; bound];
+                    let mut s = ZStream::new();
+                    assert_eq!(
+                        deflateInit2(&mut s, level, Z_DEFLATED, wbits, mem, strategy),
+                        Ok(())
+                    );
+                    s.next_in = &data;
+                    s.next_out = &mut once;
+                    assert_eq!(deflate(&mut s, Flush::Finish), Ok(ZStatus::StreamEnd));
+                    assert_eq!(deflateEnd(&mut s), Ok(()));
+                }
+            }
+        }
+    }
+
+    /// `compress2` at every level makes a zlib stream that inflates back, with the bound
+    /// `compressBound` promises.
+    #[test]
+    fn compress_round_trips_at_every_level() {
+        use crate::compress::{compress2, compressBound_z};
+        let mut rng = XorShift(0x9e37_79b9_7f4a_7c15);
+        for level in -1..=9 {
+            let len = rng.below(20_000);
+            let data = prng_data(&mut rng, len);
+            let mut dest = vec![0u8; compressBound_z(data.len())];
+            let n = compress2(&mut dest, &data, level).unwrap();
+            assert!(
+                inflate_all(&dest[..n], 15, data.len()) == data,
+                "level {level}"
+            );
+        }
     }
 }
 /* </TESTS> */

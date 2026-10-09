@@ -104,7 +104,7 @@ use crate::deflate::{
     BL_CODES, Buf_size, CtData, D_CODES, DeflateState, HEAP_SIZE, L_CODES, LENGTH_CODES, LITERALS,
     MAX_BITS, Tree, d_code, put_byte,
 };
-use crate::zlib::{Z_BINARY, Z_FIXED, Z_TEXT, Z_UNKNOWN};
+use crate::zlib::{Strategy, Z_BINARY, Z_TEXT, Z_UNKNOWN};
 use crate::zutil::{DYN_TREES, MAX_MATCH, MIN_MATCH, STATIC_TREES, STORED_BLOCK, zassert};
 
 /// `MAX_BL_BITS`: bit length codes must not exceed MAX_BL_BITS bits.
@@ -1023,7 +1023,7 @@ pub(crate) fn _tr_flush_block(
         opt_lenb = s.opt_len.wrapping_add(3 + 7) >> 3;
         static_lenb = s.static_len.wrapping_add(3 + 7) >> 3;
 
-        if static_lenb <= opt_lenb || s.strategy == Z_FIXED {
+        if static_lenb <= opt_lenb || s.strategy == Strategy::Fixed {
             opt_lenb = static_lenb;
         }
     } else {

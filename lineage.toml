@@ -1176,7 +1176,7 @@ status = "inherited"
 rust = "sys/crypto/xform_ipcomp.rs"
 lz = ["sys/crypto/xform_ipcomp.rs"]
 status = "adapted"
-adapted_by = ["sys/lib/libz/zlib.rs", "sys/lib/libz/inflate.rs"]
+adapted_by = ["sys/lib/libz/zlib.rs", "sys/lib/libz/inflate.rs", "sys/lib/libz/deflate.rs"]
 
 [[module]]
 rust = "sys/ddb/db_command.rs"
@@ -3360,7 +3360,7 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/compress.rs"
 lz = ["sys/lib/libz/compress.rs"]
-status = "inherited"
+status = "redesigned"
 license = "zlib"
 
 [[module]]
@@ -3372,8 +3372,52 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/deflate.rs"
 lz = ["sys/lib/libz/deflate.rs"]
-status = "inherited"
+status = "redesigned"
 license = "zlib"
+
+[[module.fn]]
+lz = "sys/lib/libz/deflate.rs::INIT_STATE"
+native = ["DeflateStatus"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/lib/libz/deflate.rs::BUSY_STATE"
+native = ["DeflateStatus"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/lib/libz/deflate.rs::FINISH_STATE"
+native = ["DeflateStatus"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/lib/libz/deflate.rs::EXTRA_STATE"
+native = []
+kind = "dropped"
+reason = "a gzip header state: nothing enters it without GZIP (the kernel builds NO_GZIP); DeflateStatus has no variant for it"
+
+[[module.fn]]
+lz = "sys/lib/libz/deflate.rs::NAME_STATE"
+native = []
+kind = "dropped"
+reason = "a gzip header state: nothing enters it without GZIP (the kernel builds NO_GZIP); DeflateStatus has no variant for it"
+
+[[module.fn]]
+lz = "sys/lib/libz/deflate.rs::COMMENT_STATE"
+native = []
+kind = "dropped"
+reason = "a gzip header state: nothing enters it without GZIP (the kernel builds NO_GZIP); DeflateStatus has no variant for it"
+
+[[module.fn]]
+lz = "sys/lib/libz/deflate.rs::HCRC_STATE"
+native = []
+kind = "dropped"
+reason = "a gzip header state: nothing enters it without GZIP (the kernel builds NO_GZIP); DeflateStatus has no variant for it"
+
+[[module.fn]]
+lz = "sys/lib/libz/deflate.rs::deflateStateCheck"
+native = ["with_state", "state_ref", "state_mut"]
+kind = "merged"
 
 [[module]]
 rust = "sys/lib/libz/infback.rs"
@@ -3409,7 +3453,8 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/trees.rs"
 lz = ["sys/lib/libz/trees.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/lib/libz/deflate.rs"]
 license = "zlib"
 
 [[module]]
@@ -3432,7 +3477,7 @@ status = "redesigned"
 [[module]]
 rust = "sys/lib/libz/zutil.rs"
 lz = ["sys/lib/libz/zutil.rs"]
-status = "inherited"
+status = "redesigned"
 license = "zlib"
 
 [[module]]

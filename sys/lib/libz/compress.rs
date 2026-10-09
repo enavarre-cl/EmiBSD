@@ -55,6 +55,7 @@
 //! Compress a memory buffer in one call: `compress`, `compress2` and `compressBound`.
 //!
 //! Upstream: sys/lib/libz/compress.c @ 3ce1f3f79392
+//! LZ: sys/lib/libz/compress.rs@f5985f1d055a
 //!
 //! **This is an altered source version, not the original zlib `compress.c`** (zlib licence,
 //! clause 2): a Rust rewrite written for EmiBSD. The original's notice is kept above in full
@@ -65,36 +66,36 @@
 //!
 //! ## Deviations
 //! - `compress2` is the C's `compress2_z` and `compress` its `compress_z`: the output buffer is
-//!   a slice whose length is the space available (the C's `*destLen` on entry), and
-//!   `destLen` only receives the compressed length. The `uLong` versions, which only differ
+//!   a slice whose length is the space available (the C's `*destLen` on entry). The `uLong`
+//!   versions, which only differ
 //!   from the `z_size_t` ones on platforms where the two have different widths, are the same
 //!   functions on LP64. The `NULL` checks have no counterpart (slices are never null).
 //! - `compressBound` and `compressBound_z` are both kept, for a `u64` and a `usize` length.
+//!
+//! ## Redesign
+//! - `compress2` and `compress` return `Result<usize, ZError>`: the compressed length, the
+//!   C's `*destLen` on success, or the error (`zlib.rs`). LZ filled `destLen: &mut usize` and
+//!   returned the `i32` code. On an error the C still sets `*destLen` to what was written
+//!   (nothing, or a truncated stream nobody can use); that length is not reported here.
 
 #![allow(non_snake_case)] // zlib's names (compressBound, destLen)
 
 use crate::deflate::{deflate, deflateEnd};
-use crate::zlib::{
-    Z_DEFAULT_COMPRESSION, Z_FINISH, Z_NO_FLUSH, Z_OK, Z_STREAM_END, ZStream, deflateInit,
-};
+use crate::zlib::{Flush, Z_DEFAULT_COMPRESSION, ZError, ZStatus, ZStream, deflateInit};
 
 /// `compress2` (`compress2_z`): compresses `source` into `dest` at `level` (as in
-/// `deflateInit`) and sets `destLen` to the size of the compressed data. `dest` should be at
-/// least [`compressBound`] bytes long. Returns `Z_OK` if success, `Z_MEM_ERROR` if there was
-/// not enough memory, `Z_BUF_ERROR` if there was not enough room in the output buffer,
-/// `Z_STREAM_ERROR` if the level parameter is invalid.
-pub fn compress2(dest: &mut [u8], destLen: &mut usize, source: &[u8], level: i32) -> i32 {
+/// `deflateInit`) and returns the size of the compressed data (the C's `destLen`). `dest`
+/// should be at least [`compressBound`] bytes long. Fails with `ZError::Mem` if there was not
+/// enough memory, `ZError::Buf` if there was not enough room in the output buffer,
+/// `ZError::Stream` if the level parameter is invalid.
+pub fn compress2(dest: &mut [u8], source: &[u8], level: i32) -> Result<usize, ZError> {
     let max = u32::MAX as usize; // (uInt)-1: what one call takes at most
     let dest_size = dest.len();
     let mut left = dest_size;
     let mut sourceLen = source.len();
-    *destLen = 0;
 
     let mut stream = ZStream::new();
-    let mut err = deflateInit(&mut stream, level);
-    if err != Z_OK {
-        return err;
-    }
+    deflateInit(&mut stream, level)?;
 
     // What has not been handed to next_out and next_in yet.
     let mut dest_rest: &mut [u8] = dest;
@@ -115,24 +116,27 @@ pub fn compress2(dest: &mut [u8], destLen: &mut usize, source: &[u8], level: i32
             source_rest = rest;
             sourceLen -= n;
         }
-        err = deflate(
+        let err = deflate(
             &mut stream,
-            if sourceLen != 0 { Z_NO_FLUSH } else { Z_FINISH },
+            if sourceLen != 0 {
+                Flush::NoFlush
+            } else {
+                Flush::Finish
+            },
         );
-        if err != Z_OK {
-            break;
+        if err != Ok(ZStatus::Ok) {
+            // stream.next_out - dest
+            let destLen = dest_size - left - stream.avail_out();
+            // the C ignores deflateEnd's result: Z_DATA_ERROR after an error is expected
+            let _ = deflateEnd(&mut stream);
+            return err.map(|_| destLen);
         }
     }
-
-    // stream.next_out - dest
-    *destLen = dest_size - left - stream.avail_out();
-    deflateEnd(&mut stream);
-    if err == Z_STREAM_END { Z_OK } else { err }
 }
 
 /// `compress` (`compress_z`): [`compress2`] at `Z_DEFAULT_COMPRESSION`.
-pub fn compress(dest: &mut [u8], destLen: &mut usize, source: &[u8]) -> i32 {
-    compress2(dest, destLen, source, Z_DEFAULT_COMPRESSION)
+pub fn compress(dest: &mut [u8], source: &[u8]) -> Result<usize, ZError> {
+    compress2(dest, source, Z_DEFAULT_COMPRESSION)
 }
 
 /// `compressBound_z`: an upper bound on the compressed size after [`compress`] or
@@ -160,7 +164,6 @@ pub fn compressBound(sourceLen: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::zlib::{Z_BUF_ERROR, Z_STREAM_ERROR};
 
     const TEXT: &[u8] = include_bytes!("testdata/deflate_text.txt");
     /// zlib 1.2.12, level 9, of the test text (`compress2(.., 9)` makes the same stream).
@@ -169,11 +172,10 @@ mod tests {
     #[test]
     fn compress2_makes_a_zlib_stream() {
         let mut dest = std::vec![0u8; compressBound_z(TEXT.len())];
-        let mut len = 0;
-        assert_eq!(compress2(&mut dest, &mut len, TEXT, 9), Z_OK);
+        let len = compress2(&mut dest, TEXT, 9).unwrap();
         assert_eq!(&dest[..len], ZLIB_TEXT_L9);
         // the default level, an empty input (python3: zlib.compress(b"") == 78 9c 03 00 00 00 00 01)
-        assert_eq!(compress(&mut dest, &mut len, b""), Z_OK);
+        let len = compress(&mut dest, b"").unwrap();
         assert_eq!(
             &dest[..len],
             &[0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]
@@ -183,13 +185,17 @@ mod tests {
     #[test]
     fn errors() {
         let mut dest = [0u8; 16];
-        let mut len = 99;
-        assert_eq!(compress2(&mut dest, &mut len, TEXT, 10), Z_STREAM_ERROR);
-        assert_eq!(len, 0);
-        assert_eq!(compress(&mut dest, &mut len, TEXT), Z_BUF_ERROR);
-        assert_eq!(len, 16);
-        assert_eq!(compress(&mut [], &mut len, TEXT), Z_BUF_ERROR);
-        assert_eq!(len, 0);
+        assert_eq!(compress2(&mut dest, TEXT, 10), Err(ZError::Stream));
+        assert_eq!(compress2(&mut dest, TEXT, -2), Err(ZError::Stream));
+        assert_eq!(compress(&mut dest, TEXT), Err(ZError::Buf));
+        assert_eq!(compress(&mut [], TEXT), Err(ZError::Buf));
+        // exactly the bound fits; one byte less does not, for an input that does not compress
+        let noise: std::vec::Vec<u8> = (0u32..3000)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        let mut dest = std::vec![0u8; compressBound_z(noise.len())];
+        let len = compress2(&mut dest, &noise, 0).unwrap();
+        assert_eq!(compress2(&mut dest[..len - 1], &noise, 0), Err(ZError::Buf));
     }
 
     #[test]
