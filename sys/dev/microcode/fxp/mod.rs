@@ -15,11 +15,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 /* </LICENSES> */
-
 /* <CODE> */
-//! Microcode and firmware tables drivers load into their chips: OpenBSD
-//! `sys/dev/microcode/`. `siop` holds the SCRIPTS program of siop(4).
+//! The receive bundling microcode of the Intel EtherExpress PRO/100 (fxp(4)): OpenBSD
+//! `sys/dev/microcode/fxp/`. `rcvbundl` is `rcvbundl.h`.
 
-pub mod fxp;
-pub mod siop;
+pub mod rcvbundl;
 /* </CODE> */

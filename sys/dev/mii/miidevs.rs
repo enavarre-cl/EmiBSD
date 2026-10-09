@@ -54,7 +54,7 @@
 
 /* <CODE> */
 //! `<dev/mii/miidevs.h>`: the MII OUIs and PHY models, the subset the ported PHY drivers
-//! name (rlphy(4), rgephy(4)).
+//! name (rlphy(4), rgephy(4), inphy(4)).
 //!
 //! Upstream: sys/dev/mii/miidevs.h @ 3ce1f3f79392
 //!
@@ -69,11 +69,29 @@
 pub const MII_OUI_REALTEK: u32 = 0x000020;
 /// `MII_OUI_ICPLUS`: IC Plus.
 pub const MII_OUI_ICPLUS: u32 = 0x0090c3;
+/// `MII_OUI_INTEL`: Intel.
+pub const MII_OUI_INTEL: u32 = 0x00aa00;
 /// `MII_OUI_REALTEK2`: Realtek.
 pub const MII_OUI_REALTEK2: u32 = 0x00e04c;
 /// `MII_OUI_xxREALTEK`: Realtek.
 pub const MII_OUI_xxREALTEK: u32 = 0x000732;
 
+/// `MII_MODEL_INTEL_I82555`.
+pub const MII_MODEL_INTEL_I82555: u32 = 0x0015;
+/// `MII_STR_INTEL_I82555`.
+pub const MII_STR_INTEL_I82555: &str = "i82555";
+/// `MII_MODEL_INTEL_I82562G`.
+pub const MII_MODEL_INTEL_I82562G: u32 = 0x0031;
+/// `MII_STR_INTEL_I82562G`.
+pub const MII_STR_INTEL_I82562G: &str = "i82562G";
+/// `MII_MODEL_INTEL_I82562EM`.
+pub const MII_MODEL_INTEL_I82562EM: u32 = 0x0032;
+/// `MII_STR_INTEL_I82562EM`.
+pub const MII_STR_INTEL_I82562EM: &str = "i82562EM";
+/// `MII_MODEL_INTEL_I82562ET`.
+pub const MII_MODEL_INTEL_I82562ET: u32 = 0x0033;
+/// `MII_STR_INTEL_I82562ET`.
+pub const MII_STR_INTEL_I82562ET: &str = "i82562ET";
 /// `MII_MODEL_ICPLUS_IP101`.
 pub const MII_MODEL_ICPLUS_IP101: u32 = 0x0005;
 /// `MII_STR_ICPLUS_IP101`.
@@ -114,11 +132,17 @@ mod tests {
     fn values_match_the_c_header() {
         let defs = crate::reftest::defines("sys/dev/mii/miidevs.h");
         crate::reftest::assert_defines!(defs; MII_OUI_REALTEK, MII_OUI_ICPLUS, MII_OUI_REALTEK2,
-            MII_OUI_xxREALTEK, MII_MODEL_ICPLUS_IP101, MII_MODEL_xxREALTEK_RTL8251,
+            MII_OUI_xxREALTEK, MII_OUI_INTEL, MII_MODEL_INTEL_I82555,
+            MII_MODEL_INTEL_I82562G, MII_MODEL_INTEL_I82562EM, MII_MODEL_INTEL_I82562ET,
+            MII_MODEL_ICPLUS_IP101, MII_MODEL_xxREALTEK_RTL8251,
             MII_MODEL_xxREALTEK_RTL8201F, MII_MODEL_xxREALTEK_RTL8211FVD,
             MII_MODEL_xxREALTEK_RTL8201E, MII_MODEL_xxREALTEK_RTL8169S,
             MII_MODEL_REALTEK_RTL8201L);
         for (name, s) in [
+            ("MII_STR_INTEL_I82555", MII_STR_INTEL_I82555),
+            ("MII_STR_INTEL_I82562G", MII_STR_INTEL_I82562G),
+            ("MII_STR_INTEL_I82562EM", MII_STR_INTEL_I82562EM),
+            ("MII_STR_INTEL_I82562ET", MII_STR_INTEL_I82562ET),
             ("MII_STR_ICPLUS_IP101", MII_STR_ICPLUS_IP101),
             ("MII_STR_xxREALTEK_RTL8251", MII_STR_xxREALTEK_RTL8251),
             ("MII_STR_xxREALTEK_RTL8201F", MII_STR_xxREALTEK_RTL8201F),

@@ -41,6 +41,7 @@ pub mod consfile;
 pub mod diskmap;
 pub mod efi;
 pub mod fdt;
+pub mod firmload;
 pub mod gpio;
 pub mod hid;
 pub mod i2c;

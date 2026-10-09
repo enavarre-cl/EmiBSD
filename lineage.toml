@@ -1946,6 +1946,12 @@ lz = ["sys/dev/fdt/virtio_mmio.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/firmload.rs"
+lz = ["sys/dev/firmload.rs"]
+status = "inherited"
+notes = "M16c: the whole file but RAMDISK_HOOKS (not configured, so no retry under /mnt/etc/firmware): loadfirmware(9) returning Result<(NonNull<u8>, usize), Errno> instead of the two out-parameters; EIO without a current process or a root vnode in use; ENAMETOOLONG, ENOENT, EINVAL (not a regular file or empty), E2BIG (over FIRMWARE_MAX), ENOMEM; the caller frees the M_DEVBUF buffer; host tests (no root, name too long)"
+
+[[module]]
 rust = "sys/dev/gpio/gpio.rs"
 lz = ["sys/dev/gpio/gpio.rs"]
 status = "inherited"
@@ -2034,6 +2040,24 @@ status = "inherited"
 rust = "sys/dev/ic/comvar.rs"
 lz = ["sys/dev/ic/comvar.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/ic/fxp.rs"
+lz = ["sys/dev/ic/fxp.rs"]
+status = "inherited"
+notes = "M16c: the whole driver (SMALL_KERNEL not defined, DEBUG not defined; the microcode is loaded through loadfirmware(9)): fxp_attach, fxp_detach, fxp_activate, fxp_shutdown, fxp_init, fxp_stop, fxp_intr, fxp_rxeof, fxp_start, fxp_ioctl, fxp_mediachange/status, the EEPROM and MDI access, fxp_load_ucode, the RFA/CBL lists; QEMU i82559er (rev 9, i82559S, inphy0); deviations in the file doc: DMA structures through Dma views, Result returns, fxp_load_ucode refuses a file over MAXUCODESIZE; amd64 GENERIC only (fxp* at cardbus? is out of scope)"
+
+[[module]]
+rust = "sys/dev/ic/fxpreg.rs"
+lz = ["sys/dev/ic/fxpreg.rs"]
+status = "inherited"
+notes = "M16c: license: kept whole; the whole header: registers, command blocks (repr(C)) and the receive frame area; struct fxp_cb_nop is unused and left out"
+
+[[module]]
+rust = "sys/dev/ic/fxpvar.rs"
+lz = ["sys/dev/ic/fxpvar.rs"]
+status = "inherited"
+notes = "M16c: license: kept whole; FxpSoftc, struct fxp_ctrl, the macros as methods; see the file doc for the deviations"
 
 [[module]]
 rust = "sys/dev/ic/i8253reg.rs"
@@ -2197,9 +2221,28 @@ status = "inherited"
 license = "Carnegie Mellon notice"
 
 [[module]]
+rust = "sys/dev/microcode/fxp/rcvbundl.rs"
+lz = ["sys/dev/microcode/fxp/rcvbundl.rs"]
+status = "inherited"
+license = "Intel notice"
+notes = "M16c: license: Intel notice, kept whole; the receive-bundling ('CPUSaver') microcode arrays of the C header as const u32 arrays with their *_DWORD patch indexes and FXP_FIRMWARE (the seven files build.c writes); fxp loads them from /etc/firmware/fxp-* with loadfirmware(9), the files being built by dev/microcode/fxp/build.c in the userland build"
+
+[[module]]
 rust = "sys/dev/microcode/siop/siop.rs"
 lz = ["sys/dev/microcode/siop/siop.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/mii/inphy.rs"
+lz = ["sys/dev/mii/inphy.rs"]
+status = "inherited"
+notes = "M16c: license: NetBSD Foundation BSD-2 plus Manuel Bouyer BSD-2, kept whole; the whole file: inphy_ca/inphy_cd, inphy_funcs, inphys[] (i82555, i82562EM, i82562ET, i82562G), inphymatch, inphyattach, inphy_service (Result), inphy_status; inphy* at mii? on amd64 (fxp's PHY; QEMU: inphy0 at fxp0 phy 1: i82555, rev. 4)"
+
+[[module]]
+rust = "sys/dev/mii/inphyreg.rs"
+lz = ["sys/dev/mii/inphyreg.rs"]
+status = "inherited"
+notes = "M16c: license: NetBSD Foundation BSD-2, kept whole; the whole header: MII_INPHY_* register numbers (u32) and the SCR_/SCTRL_/SCTRL2_/LEDMASK_ bits (u16); reference-backed test"
 
 [[module]]
 rust = "sys/dev/mii/mii.rs"
@@ -2344,6 +2387,12 @@ status = "inherited"
 rust = "sys/dev/pci/if_em_soc.rs"
 lz = ["sys/dev/pci/if_em_soc.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/pci/if_fxp_pci.rs"
+lz = ["sys/dev/pci/if_fxp_pci.rs"]
+status = "inherited"
+notes = "M16c: the whole file: fxp_pci_devices, fxp_pci_match, fxp_pci_attach, fxp_pci_detach, fxp_pci_activate; fxp* at pci? in the amd64 ioconf (cfdata[77]); QEMU: fxp0 at pci0 dev 2 function 0 'Intel 82559ER' rev 0x09, i82559S: apic 0 int 22, address 52:54:00:12:34:56"
 
 [[module]]
 rust = "sys/dev/pci/if_re_pci.rs"

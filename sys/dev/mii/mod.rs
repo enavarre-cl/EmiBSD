@@ -20,9 +20,11 @@
 //! Media-independent interface PHYs: OpenBSD `sys/dev/mii/`.
 //!
 //! The mii(4) layer (`mii.c`, `mii_physubr.c`, `<dev/mii/mii.h>`, `<dev/mii/miivar.h>`), the
-//! PHY drivers the GENERICs attach at `mii?` that are ported (`rlphy`, `rgephy`, `ukphy` with
-//! `ukphy_subr`), the ids they match (`miidevs.h`) and `rgephyreg`.
+//! PHY drivers the GENERICs attach at `mii?` that are ported (`inphy`, `rlphy`, `rgephy`, `ukphy` with
+//! `ukphy_subr`), the ids they match (`miidevs.h`), `rgephyreg` and `inphyreg`.
 
+pub mod inphy;
+pub mod inphyreg;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/mii/mii.c
 pub mod mii;
 pub mod mii_physubr;

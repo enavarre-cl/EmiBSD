@@ -48,6 +48,7 @@ pub mod if_em;
 pub mod if_em_hw;
 pub mod if_em_osdep;
 pub mod if_em_soc;
+pub mod if_fxp_pci;
 pub mod if_re_pci;
 pub mod if_vmx;
 pub mod if_vmxreg;

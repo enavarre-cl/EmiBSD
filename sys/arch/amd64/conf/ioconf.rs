@@ -50,6 +50,7 @@
 //! `ehci* at pci?` and `usb* at ehci?` (M16b), `uhci* at pci?` and `usb* at uhci?` (M16b),
 //! `ohci* at pci?` and `usb* at ohci?` (M16b),
 //! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?` (M16b),
+//! `fxp* at pci?` and `inphy* at mii?` (M16c),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -98,6 +99,7 @@ use crate::dev::bio::bioattach;
 use crate::dev::i2c::i2c::{IIC_CA, IIC_CD};
 use crate::dev::ic::ahci::AHCI_CD;
 use crate::dev::ic::com::COM_CD;
+use crate::dev::ic::fxp::FXP_CD;
 use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::ic::re::RE_CD;
 use crate::dev::ic::siop::SIOP_CD;
@@ -106,6 +108,7 @@ use crate::dev::ipmi::{IPMI_CA, IPMI_CD};
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
 use crate::dev::isa::vga_isa::VGA_ISA_CA;
+use crate::dev::mii::inphy::{INPHY_CA, INPHY_CD};
 use crate::dev::mii::rgephy::{RGEPHY_CA, RGEPHY_CD};
 use crate::dev::mii::rlphy::{RLPHY_CA, RLPHY_CD};
 use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
@@ -115,6 +118,7 @@ use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
 use crate::dev::pci::ehci_pci::EHCI_PCI_CA;
 use crate::dev::pci::ichiic::{ICHIIC_CA, ICHIIC_CD};
 use crate::dev::pci::if_em::{EM_CA, EM_CD};
+use crate::dev::pci::if_fxp_pci::FXP_PCI_CA;
 use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
@@ -269,8 +273,9 @@ const PV_PUC: &[i16] = &[38];
 /// -1]}`).
 const LOC_PUC_UNK: &[i64] = &[-1];
 
-/// `pv[]` for children of the `mii` attribute, carried by `re*` (`cfdata[42]`).
-const PV_MII: &[i16] = &[42];
+/// `pv[]` for children of the `mii` attribute, carried by `re*` (`cfdata[42]`) and `fxp*`
+/// (`cfdata[77]`): `config(8)` merges the `at mii?` lines of one device.
+const PV_MII: &[i16] = &[42, 77];
 
 /// `loc[]` of an entry at `mii` with the default `phy = -1` (`conf/files`: `define mii {[phy =
 /// -1]}`).
@@ -350,11 +355,11 @@ const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 77 entries, 78 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 79 entries, 80 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    78
+    80
 } else {
-    77
+    79
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -1216,7 +1221,31 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_UCOMBUS,
         0,
     ),
-    // 77: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 77: fxp* at pci?
+    Cfdata::new(
+        &FXP_PCI_CA,
+        &FXP_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 78: inphy* at mii?
+    Cfdata::new(
+        &INPHY_CA,
+        &INPHY_CD,
+        0,
+        FSTATE_STAR,
+        LOC_MII_UNK,
+        0,
+        PV_MII,
+        LN_MII,
+        0,
+    ),
+    // 79: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

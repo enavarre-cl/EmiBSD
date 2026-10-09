@@ -1688,6 +1688,102 @@ pub const PCI_PRODUCT_TTTECH_MC322: u32 = 0x000a;
 /// `PCI_PRODUCT_USR2_USR997902`: USR997902.
 pub const PCI_PRODUCT_USR2_USR997902: u32 = 0x0116;
 
+// fxp(4) (M16c): if_fxp_pci.c's fxp_pci_devices[].
+/// `PCI_PRODUCT_INTEL_8255X`: 8255x.
+pub const PCI_PRODUCT_INTEL_8255X: u32 = 0x1229;
+/// `PCI_PRODUCT_INTEL_82552`: 82552.
+pub const PCI_PRODUCT_INTEL_82552: u32 = 0x10fe;
+/// `PCI_PRODUCT_INTEL_82559`: 82559.
+pub const PCI_PRODUCT_INTEL_82559: u32 = 0x1030;
+/// `PCI_PRODUCT_INTEL_82559ER`: 82559ER.
+pub const PCI_PRODUCT_INTEL_82559ER: u32 = 0x1209;
+/// `PCI_PRODUCT_INTEL_82562`: 82562.
+pub const PCI_PRODUCT_INTEL_82562: u32 = 0x2449;
+/// `PCI_PRODUCT_INTEL_82562EH_HPNA_0`: 82562EH HomePNA.
+pub const PCI_PRODUCT_INTEL_82562EH_HPNA_0: u32 = 0x1035;
+/// `PCI_PRODUCT_INTEL_82562EH_HPNA_1`: 82562EH HomePNA.
+pub const PCI_PRODUCT_INTEL_82562EH_HPNA_1: u32 = 0x1036;
+/// `PCI_PRODUCT_INTEL_82562EH_HPNA_2`: 82562EH HomePNA.
+pub const PCI_PRODUCT_INTEL_82562EH_HPNA_2: u32 = 0x1037;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_0`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_0: u32 = 0x1031;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_1`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_1: u32 = 0x1032;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_2`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_2: u32 = 0x1039;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_3`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_3: u32 = 0x103d;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_4`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_4: u32 = 0x1050;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_5`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_5: u32 = 0x1051;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_6`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_6: u32 = 0x1065;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_7`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_7: u32 = 0x106a;
+/// `PCI_PRODUCT_INTEL_PRO_100_VE_8`: PRO/100 VE.
+pub const PCI_PRODUCT_INTEL_PRO_100_VE_8: u32 = 0x106b;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_0`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_0: u32 = 0x1033;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_1`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_1: u32 = 0x1034;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_2`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_2: u32 = 0x1038;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_3`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_3: u32 = 0x103b;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_4`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_4: u32 = 0x103c;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_5`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_5: u32 = 0x103e;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_6`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_6: u32 = 0x1052;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_7`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_7: u32 = 0x1053;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_8`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_8: u32 = 0x1054;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_9`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_9: u32 = 0x1055;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_10`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_10: u32 = 0x1056;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_11`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_11: u32 = 0x1057;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_12`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_12: u32 = 0x1058;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_13`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_13: u32 = 0x1066;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_14`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_14: u32 = 0x1067;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_15`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_15: u32 = 0x1091;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_16`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_16: u32 = 0x1092;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_17`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_17: u32 = 0x1093;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_18`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_18: u32 = 0x1094;
+/// `PCI_PRODUCT_INTEL_PRO_100_VM_19`: PRO/100 VM.
+pub const PCI_PRODUCT_INTEL_PRO_100_VM_19: u32 = 0x1095;
+/// `PCI_PRODUCT_INTEL_PRO_100_M`: PRO/100 M.
+pub const PCI_PRODUCT_INTEL_PRO_100_M: u32 = 0x1059;
+/// `PCI_PRODUCT_INTEL_PRO_100`: PRO/100.
+pub const PCI_PRODUCT_INTEL_PRO_100: u32 = 0x1029;
+/// `PCI_PRODUCT_INTEL_82801DB_LAN`: 82801DB LAN.
+pub const PCI_PRODUCT_INTEL_82801DB_LAN: u32 = 0x103a;
+/// `PCI_PRODUCT_INTEL_82801E_LAN_1`: 82801E LAN.
+pub const PCI_PRODUCT_INTEL_82801E_LAN_1: u32 = 0x2459;
+/// `PCI_PRODUCT_INTEL_82801E_LAN_2`: 82801E LAN.
+pub const PCI_PRODUCT_INTEL_82801E_LAN_2: u32 = 0x245d;
+/// `PCI_PRODUCT_INTEL_82801FB_LAN`: 82801FB LAN.
+pub const PCI_PRODUCT_INTEL_82801FB_LAN: u32 = 0x266c;
+/// `PCI_PRODUCT_INTEL_82801FB_LAN_2`: 82801FB LAN.
+pub const PCI_PRODUCT_INTEL_82801FB_LAN_2: u32 = 0x1064;
+/// `PCI_PRODUCT_INTEL_82801FBM_LAN`: 82801FBM LAN.
+pub const PCI_PRODUCT_INTEL_82801FBM_LAN: u32 = 0x1068;
+/// `PCI_PRODUCT_INTEL_82801GB_LAN`: 82801GB LAN.
+pub const PCI_PRODUCT_INTEL_82801GB_LAN: u32 = 0x27dc;
+/// `PCI_PRODUCT_INTEL_82801GB_LAN_2`: 82801GB LAN.
+pub const PCI_PRODUCT_INTEL_82801GB_LAN_2: u32 = 0x1069;
+
 // vmx(4) (M13): if_vmx.c's vmx_devices[].
 
 /// `PCI_VENDOR_VMWARE`: VMware.
@@ -2854,6 +2950,187 @@ mod tests {
             (
                 "PCI_PRODUCT_SMSC_VICTORY66_PM",
                 PCI_PRODUCT_SMSC_VICTORY66_PM,
+            ),
+        ] {
+            assert_eq!(
+                crate::reftest::int(&defs, name),
+                Some(i64::from(value)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn fxp_ids_match_the_generated_header() {
+        let defs = crate::reftest::defines("sys/dev/pci/pcidevs.h");
+        for (name, value) in [
+            ("PCI_PRODUCT_INTEL_8255X", PCI_PRODUCT_INTEL_8255X),
+            ("PCI_PRODUCT_INTEL_82552", PCI_PRODUCT_INTEL_82552),
+            ("PCI_PRODUCT_INTEL_82559", PCI_PRODUCT_INTEL_82559),
+            ("PCI_PRODUCT_INTEL_82559ER", PCI_PRODUCT_INTEL_82559ER),
+            ("PCI_PRODUCT_INTEL_82562", PCI_PRODUCT_INTEL_82562),
+            (
+                "PCI_PRODUCT_INTEL_82562EH_HPNA_0",
+                PCI_PRODUCT_INTEL_82562EH_HPNA_0,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82562EH_HPNA_1",
+                PCI_PRODUCT_INTEL_82562EH_HPNA_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82562EH_HPNA_2",
+                PCI_PRODUCT_INTEL_82562EH_HPNA_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_0",
+                PCI_PRODUCT_INTEL_PRO_100_VE_0,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_1",
+                PCI_PRODUCT_INTEL_PRO_100_VE_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_2",
+                PCI_PRODUCT_INTEL_PRO_100_VE_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_3",
+                PCI_PRODUCT_INTEL_PRO_100_VE_3,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_4",
+                PCI_PRODUCT_INTEL_PRO_100_VE_4,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_5",
+                PCI_PRODUCT_INTEL_PRO_100_VE_5,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_6",
+                PCI_PRODUCT_INTEL_PRO_100_VE_6,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_7",
+                PCI_PRODUCT_INTEL_PRO_100_VE_7,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VE_8",
+                PCI_PRODUCT_INTEL_PRO_100_VE_8,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_0",
+                PCI_PRODUCT_INTEL_PRO_100_VM_0,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_1",
+                PCI_PRODUCT_INTEL_PRO_100_VM_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_2",
+                PCI_PRODUCT_INTEL_PRO_100_VM_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_3",
+                PCI_PRODUCT_INTEL_PRO_100_VM_3,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_4",
+                PCI_PRODUCT_INTEL_PRO_100_VM_4,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_5",
+                PCI_PRODUCT_INTEL_PRO_100_VM_5,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_6",
+                PCI_PRODUCT_INTEL_PRO_100_VM_6,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_7",
+                PCI_PRODUCT_INTEL_PRO_100_VM_7,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_8",
+                PCI_PRODUCT_INTEL_PRO_100_VM_8,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_9",
+                PCI_PRODUCT_INTEL_PRO_100_VM_9,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_10",
+                PCI_PRODUCT_INTEL_PRO_100_VM_10,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_11",
+                PCI_PRODUCT_INTEL_PRO_100_VM_11,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_12",
+                PCI_PRODUCT_INTEL_PRO_100_VM_12,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_13",
+                PCI_PRODUCT_INTEL_PRO_100_VM_13,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_14",
+                PCI_PRODUCT_INTEL_PRO_100_VM_14,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_15",
+                PCI_PRODUCT_INTEL_PRO_100_VM_15,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_16",
+                PCI_PRODUCT_INTEL_PRO_100_VM_16,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_17",
+                PCI_PRODUCT_INTEL_PRO_100_VM_17,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_18",
+                PCI_PRODUCT_INTEL_PRO_100_VM_18,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_PRO_100_VM_19",
+                PCI_PRODUCT_INTEL_PRO_100_VM_19,
+            ),
+            ("PCI_PRODUCT_INTEL_PRO_100_M", PCI_PRODUCT_INTEL_PRO_100_M),
+            ("PCI_PRODUCT_INTEL_PRO_100", PCI_PRODUCT_INTEL_PRO_100),
+            (
+                "PCI_PRODUCT_INTEL_82801DB_LAN",
+                PCI_PRODUCT_INTEL_82801DB_LAN,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801E_LAN_1",
+                PCI_PRODUCT_INTEL_82801E_LAN_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801E_LAN_2",
+                PCI_PRODUCT_INTEL_82801E_LAN_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801FB_LAN",
+                PCI_PRODUCT_INTEL_82801FB_LAN,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801FB_LAN_2",
+                PCI_PRODUCT_INTEL_82801FB_LAN_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801FBM_LAN",
+                PCI_PRODUCT_INTEL_82801FBM_LAN,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801GB_LAN",
+                PCI_PRODUCT_INTEL_82801GB_LAN,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801GB_LAN_2",
+                PCI_PRODUCT_INTEL_82801GB_LAN_2,
             ),
         ] {
             assert_eq!(
