@@ -3079,5 +3079,183 @@ mod tests {
             );
         }
     }
+
+    /// Every strategy, in the C's order.
+    const STRATEGIES: [Strategy; 5] = [
+        Strategy::Default,
+        Strategy::Filtered,
+        Strategy::HuffmanOnly,
+        Strategy::Rle,
+        Strategy::Fixed,
+    ];
+
+    /// Compress `data` in one `Flush::Finish` call, with `dict` preset if given.
+    fn compress_once(
+        data: &[u8],
+        dict: Option<&[u8]>,
+        level: i32,
+        wbits: i32,
+        mem: i32,
+        strategy: Strategy,
+    ) -> Vec<u8> {
+        let mut out = vec![0u8; data.len() * 2 + 1024];
+        let mut strm = ZStream::new();
+        assert_eq!(
+            deflateInit2(&mut strm, level, Z_DEFLATED, wbits, mem, strategy),
+            Ok(())
+        );
+        if let Some(dict) = dict {
+            assert_eq!(deflateSetDictionary(&mut strm, dict), Ok(()));
+        }
+        strm.next_in = data;
+        strm.next_out = &mut out;
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+        let n = strm.total_out as usize;
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
+        out.truncate(n);
+        out
+    }
+
+    /// The zlib wrapper as RFC 1950 and deflate.c write it, for every windowBits, level and
+    /// strategy, with and without a dictionary: CMF names method 8 and the window (2^9 for
+    /// windowBits 8), FLEVEL follows the level (0 for levels 0-1 and the Huffman-only, RLE and
+    /// fixed strategies), FDICT is set with a dictionary and its Adler-32 follows, FCHECK is
+    /// `31 - header % 31` (31, not 0, when the rest is already a multiple), and the trailer
+    /// is the data's Adler-32. Between them is exactly the raw stream of the same parameters.
+    #[test]
+    fn zlib_wrapper_follows_the_parameters() {
+        let mut rng = XorShift(0x6a09_e667_f3bc_c908);
+        let data = prng_data(&mut rng, 5000);
+        let dict = prng_data(&mut rng, 700);
+        for wbits in 8..=15 {
+            let w = wbits.max(9);
+            for level in -1..=9 {
+                let lvl = if level == -1 { 6 } else { level };
+                for strategy in STRATEGIES {
+                    for dict in [None, Some(&dict[..])] {
+                        let z = compress_once(&data, dict, level, wbits, 8, strategy);
+                        assert_eq!(z[0], (((w - 8) << 4) | 8) as u8);
+                        let flevel = if strategy >= Strategy::HuffmanOnly || lvl < 2 {
+                            0
+                        } else if lvl < 6 {
+                            1
+                        } else if lvl == 6 {
+                            2
+                        } else {
+                            3
+                        };
+                        let fdict = if dict.is_some() { 0x20 } else { 0 };
+                        let mut header = (u32::from(z[0]) << 8) | (flevel << 6) | fdict;
+                        header += 31 - header % 31;
+                        assert_eq!(
+                            z[1], header as u8,
+                            "wbits {wbits} level {level} {strategy:?}"
+                        );
+                        let mut at = 2;
+                        if let Some(dict) = dict {
+                            assert_eq!(
+                                z[2..6],
+                                crate::adler32::adler32(1, Some(dict)).to_be_bytes()
+                            );
+                            at = 6;
+                        }
+                        let n = z.len();
+                        assert_eq!(
+                            z[n - 4..],
+                            crate::adler32::adler32(1, Some(&data)).to_be_bytes()
+                        );
+                        let raw = compress_once(&data, dict, level, -w, 8, strategy);
+                        assert!(
+                            z[at..n - 4] == raw[..],
+                            "wbits {wbits} level {level} {strategy:?} dict {}",
+                            dict.is_some()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// `deflateGetDictionary` follows the history: right after `deflateSetDictionary` it is
+    /// the dictionary's tail, and after each call that took input it is the tail of the
+    /// dictionary and all the input so far, up to the window size, at every level, raw and
+    /// zlib, whatever pieces the input came in.
+    #[test]
+    fn get_dictionary_follows_the_history() {
+        let mut rng = XorShift(0xbb67_ae85_84ca_a73b);
+        for round in 0..60 {
+            let wbits = 9 + rng.below(7) as i32;
+            let wsize = 1usize << wbits;
+            let level = rng.below(10) as i32;
+            let wbits = if round % 2 == 0 { wbits } else { -wbits };
+            let dict_len = 1 + rng.below(3 * wsize);
+            let dict = prng_data(&mut rng, dict_len);
+            let data_len = rng.below(5 * wsize);
+            let data = prng_data(&mut rng, data_len);
+            let mut out = vec![0u8; data.len() * 2 + 1024];
+            let mut buf = vec![0u8; wsize];
+            let mut strm = ZStream::new();
+            assert_eq!(
+                deflateInit2(&mut strm, level, Z_DEFLATED, wbits, 8, Strategy::Default),
+                Ok(())
+            );
+            assert_eq!(deflateGetDictionary(&strm, None), Ok(0));
+            assert_eq!(deflateSetDictionary(&mut strm, &dict), Ok(()));
+            let mut history = dict.clone();
+            let mut rest = &data[..];
+            strm.next_out = &mut out;
+            loop {
+                // the window keeps at least MAX_DIST bytes before strstart when it slides, so
+                // the dictionary is never shorter than that once the history is
+                let len = deflateGetDictionary(&strm, None).unwrap();
+                let at = format!(
+                    "round {round} level {level} wbits {wbits} at {}",
+                    history.len()
+                );
+                assert!(len <= wsize && len <= history.len(), "{at}: {len}");
+                assert!(
+                    len >= history.len().min(wsize - MIN_LOOKAHEAD),
+                    "{at}: {len}"
+                );
+                if history.len() <= wsize {
+                    assert_eq!(len, history.len(), "{at}");
+                }
+                assert_eq!(deflateGetDictionary(&strm, Some(&mut buf)), Ok(len));
+                assert!(buf[..len] == history[history.len() - len..], "{at}");
+                if rest.is_empty() {
+                    break;
+                }
+                let (piece, r) = rest.split_at(rest.len().min(1 + rng.below(2 * wsize)));
+                rest = r;
+                strm.next_in = piece;
+                assert_eq!(deflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+                assert_eq!(strm.avail_in(), 0);
+                history.extend_from_slice(piece);
+            }
+            assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+            assert_eq!(deflateEnd(&mut strm), Ok(()));
+        }
+    }
+
+    /// No wrapper this zlib builds takes a gzip header (the gzip wrapper needs GZIP).
+    #[test]
+    fn no_stream_takes_a_gzip_header() {
+        for wbits in [-15, -9, 9, 15] {
+            let mut strm = ZStream::new();
+            assert_eq!(
+                deflateInit2(&mut strm, 6, Z_DEFLATED, wbits, 8, Strategy::Default),
+                Ok(())
+            );
+            let head = GzHeader {
+                text: 1,
+                time: 0x1234_5678,
+                os: 3,
+                name: Some(b"name\0".to_vec()),
+                ..GzHeader::default()
+            };
+            assert_eq!(deflateSetHeader(&mut strm, &head), Err(ZError::Stream));
+            assert_eq!(deflateEnd(&mut strm), Ok(()));
+        }
+    }
 }
 /* </TESTS> */

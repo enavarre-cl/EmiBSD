@@ -2950,5 +2950,363 @@ mod tests {
             }
         }
     }
+
+    /// Compress `data` with this crate's deflate in one `Flush::Finish` call after
+    /// `deflateSetDictionary(dict)`, checking the `adler` the dictionary leaves (its Adler-32 for
+    /// a zlib stream; a raw stream keeps the initial value).
+    fn deflate_dict(data: &[u8], dict: &[u8], level: i32, wbits: i32) -> Vec<u8> {
+        use crate::deflate::{deflate, deflateEnd, deflateSetDictionary};
+        use crate::zlib::{Z_DEFLATED, deflateInit2};
+        let mut out = vec![0u8; data.len() + data.len() / 8 + 1024];
+        let mut strm = ZStream::new();
+        assert_eq!(
+            deflateInit2(&mut strm, level, Z_DEFLATED, wbits, 8, Strategy::Default),
+            Ok(())
+        );
+        assert_eq!(deflateSetDictionary(&mut strm, dict), Ok(()));
+        let want = if wbits > 0 { adler32(1, Some(dict)) } else { 1 };
+        assert_eq!(strm.adler, want);
+        strm.next_in = data;
+        strm.next_out = &mut out;
+        assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+        let n = strm.total_out as usize;
+        assert_eq!(deflateEnd(&mut strm), Ok(()));
+        out.truncate(n);
+        out
+    }
+
+    /// The window an inflate stream holds, oldest byte first (`inflateGetDictionary`).
+    fn window_of(strm: &mut ZStream<'_>) -> Vec<u8> {
+        let n = inflateGetDictionary(strm, None).unwrap();
+        let mut v = vec![0u8; n];
+        assert_eq!(inflateGetDictionary(strm, Some(&mut v)), Ok(n));
+        v
+    }
+
+    /// The last `n` bytes of `v` (all of it if shorter).
+    fn tail(v: &[u8], n: usize) -> &[u8] {
+        &v[v.len() - v.len().min(n)..]
+    }
+
+    /// Preset dictionaries over random data at every level and window size, raw and zlib: the
+    /// zlib stream names the dictionary's Adler-32 and makes inflate ask for it (again, if it
+    /// is asked again without one); a wrong or shortened dictionary is a data error that
+    /// leaves the stream waiting for the right one; the window then holds the dictionary's
+    /// tail, and the data comes back. A raw stream takes the dictionary up front, and without
+    /// it the first match reaches before the start (a data error).
+    #[test]
+    fn dictionaries_round_trip_raw_and_zlib() {
+        let mut rng = XorShift(0x5851_f42d_4c95_7f2d);
+        for round in 0..80 {
+            let dict_len = 300 + rng.below(if round % 4 == 0 { 70_000 } else { 3000 });
+            let dict: Vec<u8> = (0..dict_len).map(|_| b'a' + rng.below(20) as u8).collect();
+            // data that starts with the dictionary's last 100 bytes (within reach of the
+            // smallest window), so that a match into the dictionary comes first
+            let mut data = tail(&dict, 100).to_vec();
+            for _ in 0..rng.below(40) {
+                let from = rng.below(dict_len - 50);
+                data.extend_from_slice(&dict[from..from + 3 + rng.below(47)]);
+                data.push(rng.next() as u8);
+            }
+            let level = 1 + rng.below(9) as i32;
+            let wbits = 9 + rng.below(7) as i32;
+            let wsize = 1usize << wbits;
+            let mut history = dict.clone();
+            history.extend_from_slice(&data);
+            let mut wrong = dict.clone();
+            wrong[dict_len - 1] ^= 1;
+            if round % 2 == 0 {
+                let z = deflate_dict(&data, &dict, level, wbits);
+                assert_eq!(z[1] & 0x20, 0x20, "FDICT");
+                assert_eq!(z[2..6], adler32(1, Some(&dict)).to_be_bytes());
+                // windowBits 0 takes the header's size; 15 keeps its own
+                let iw = if rng.below(2) == 0 { 0 } else { 15 };
+                let iwsize = 1usize << if iw == 0 { wbits } else { 15 };
+                for slow in BOTH {
+                    let mut strm = ZStream::new();
+                    assert_eq!(inflateInit2(&mut strm, iw), Ok(()));
+                    // no output space is needed to reach the request
+                    strm.next_in = &z;
+                    for _ in 0..2 {
+                        assert_eq!(
+                            inflate_impl(&mut strm, Flush::NoFlush, slow),
+                            Ok(ZStatus::NeedDict),
+                            "round {round}"
+                        );
+                        assert_eq!(strm.adler, adler32(1, Some(&dict)));
+                        assert_eq!(strm.avail_in(), z.len() - 6);
+                        // as in the C, the return skips the count at the end of inflate()
+                        assert_eq!((strm.total_in, strm.total_out), (0, 0));
+                    }
+                    let rest = &z[6..];
+                    assert_eq!(inflateSetDictionary(&mut strm, &wrong), Err(ZError::Data));
+                    assert_eq!(
+                        inflateSetDictionary(&mut strm, &dict[1..]),
+                        Err(ZError::Data)
+                    );
+                    assert_eq!(inflateGetDictionary(&mut strm, None), Ok(0));
+                    assert_eq!(inflateSetDictionary(&mut strm, &dict), Ok(()));
+                    assert!(window_of(&mut strm) == tail(&dict, iwsize), "round {round}");
+                    let d = run(&mut strm, rest, slow, usize::MAX, 1000, Flush::NoFlush);
+                    assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "round {round}");
+                    assert!(d.out == data, "round {round}");
+                    assert_eq!(d.adler, adler32(1, Some(&data)));
+                    assert_eq!(inflateEnd(&mut strm), Ok(()));
+                }
+            } else {
+                let z = deflate_dict(&data, &dict, level, -wbits);
+                for slow in BOTH {
+                    let d = decode_all(&z, -wbits, slow);
+                    assert_eq!(d.ret, Err(ZError::Data), "round {round}: no dictionary");
+                    let mut strm = ZStream::new();
+                    assert_eq!(inflateInit2(&mut strm, -wbits), Ok(()));
+                    assert_eq!(inflateSetDictionary(&mut strm, &dict), Ok(()));
+                    assert!(window_of(&mut strm) == tail(&dict, wsize));
+                    let d = run(&mut strm, &z, slow, usize::MAX, 777, Flush::NoFlush);
+                    assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "round {round}");
+                    assert!(d.out == data, "round {round}");
+                    // the window is the tail of the dictionary and the data
+                    assert!(window_of(&mut strm) == tail(&history, wsize));
+                    assert_eq!(inflateEnd(&mut strm), Ok(()));
+                    // a wrong last byte of the dictionary shows in the output
+                    let mut strm = ZStream::new();
+                    assert_eq!(inflateInit2(&mut strm, -wbits), Ok(()));
+                    assert_eq!(inflateSetDictionary(&mut strm, &wrong), Ok(()));
+                    let d = run(&mut strm, &z, slow, usize::MAX, usize::MAX, Flush::NoFlush);
+                    assert!(d.ret != Ok(ZStatus::StreamEnd) || d.out != data);
+                    assert_eq!(inflateEnd(&mut strm), Ok(()));
+                }
+            }
+        }
+    }
+
+    /// A raw stream may take a new dictionary in the middle, after a flush: deflate and inflate
+    /// add it to the history at the same point (or replace the history when it fills the
+    /// window), and the data comes back.
+    #[test]
+    fn raw_dictionary_in_the_middle_of_a_stream() {
+        use crate::deflate::{deflate, deflateEnd, deflateSetDictionary};
+        use crate::zlib::{Z_DEFLATED, deflateInit2};
+        let mut rng = XorShift(0xda94_2042_e4dd_58b5);
+        for round in 0..24 {
+            let wbits = 9 + rng.below(7) as i32;
+            let level = rng.below(10) as i32;
+            let dict_len = 1 + rng.below(if round % 3 == 0 { 3 << wbits } else { 400 });
+            let dict: Vec<u8> = (0..dict_len).map(|_| b'A' + rng.below(8) as u8).collect();
+            let part1 = &CORPUS[..1 + rng.below(20_000)];
+            let mut part2 = tail(&dict, 200).to_vec();
+            part2.extend_from_slice(&CORPUS[..rng.below(5000)]);
+            let mut out = vec![0u8; 64 * 1024];
+            let mut strm = ZStream::new();
+            assert_eq!(
+                deflateInit2(&mut strm, level, Z_DEFLATED, -wbits, 8, Strategy::Default),
+                Ok(())
+            );
+            strm.next_in = part1;
+            strm.next_out = &mut out;
+            assert_eq!(deflate(&mut strm, Flush::SyncFlush), Ok(ZStatus::Ok));
+            let cut = strm.total_out as usize;
+            assert_eq!(deflateSetDictionary(&mut strm, &dict), Ok(()));
+            strm.next_in = &part2;
+            assert_eq!(deflate(&mut strm, Flush::Finish), Ok(ZStatus::StreamEnd));
+            let n = strm.total_out as usize;
+            assert_eq!(deflateEnd(&mut strm), Ok(()));
+            for slow in BOTH {
+                let mut strm = ZStream::new();
+                assert_eq!(inflateInit2(&mut strm, -wbits), Ok(()));
+                let d = run(&mut strm, &out[..cut], slow, 999, 1234, Flush::SyncFlush);
+                assert_eq!(d.ret, Err(ZError::Buf), "round {round}: input used up");
+                assert!(d.out == part1, "round {round}");
+                assert_eq!(inflateSetDictionary(&mut strm, &dict), Ok(()));
+                let d = run(&mut strm, &out[cut..n], slow, 999, 1234, Flush::SyncFlush);
+                assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "round {round}");
+                assert!(d.out == part2, "round {round}");
+                assert_eq!(inflateEnd(&mut strm), Ok(()));
+            }
+        }
+    }
+
+    /// Every two-byte zlib header in front of the same deflate data and check value, decoded
+    /// with windowBits 15 (both decoders), and the headers that pass the check also with 9 and
+    /// 0: a header that fails the FCHECK test, names a method other than 8, or asks for a window
+    /// over 2^15 or over the stream's windowBits is a data error; one with FDICT asks for the
+    /// dictionary whose id follows; any other decodes.
+    #[test]
+    fn every_zlib_header_is_judged_as_zlib_judges_it() {
+        let mut input = vec![0, 0];
+        input.extend_from_slice(&fixed_aaaa());
+        input.extend_from_slice(&adler32(1, Some(b"aaaa")).to_be_bytes());
+        let dictid = u32::from_be_bytes([input[2], input[3], input[4], input[5]]);
+        let mut decoded = 0;
+        for header in 0..=u16::MAX {
+            let [cmf, flg] = header.to_be_bytes();
+            input[..2].copy_from_slice(&[cmf, flg]);
+            let fcheck = header % 31 == 0;
+            let window = u32::from(cmf >> 4) + 8;
+            for (wbits, slow) in [(15, true), (15, false), (9, true), (0, true)] {
+                if !fcheck && wbits != 15 {
+                    continue;
+                }
+                let want = if !fcheck
+                    || cmf & 0x0f != 8
+                    || window > 15
+                    || (wbits != 0 && window > wbits as u32)
+                {
+                    Err(ZError::Data)
+                } else if flg & 0x20 != 0 {
+                    Ok(ZStatus::NeedDict)
+                } else {
+                    Ok(ZStatus::StreamEnd)
+                };
+                let mut out = [0u8; 16];
+                let mut strm = ZStream::new();
+                assert_eq!(inflateInit2(&mut strm, wbits), Ok(()));
+                strm.next_in = &input;
+                strm.next_out = &mut out;
+                let ret = inflate_impl(&mut strm, Flush::Finish, slow);
+                assert_eq!(ret, want, "header {header:#06x} wbits {wbits} slow {slow}");
+                match want {
+                    Err(_) => assert_eq!(strm.msg, Some("error")),
+                    Ok(ZStatus::NeedDict) => assert_eq!(strm.adler, dictid),
+                    Ok(_) => assert_eq!(strm.total_out, 4),
+                }
+                assert_eq!(inflateEnd(&mut strm), Ok(()));
+                if want == Ok(ZStatus::StreamEnd) {
+                    assert_eq!(&out[..4], b"aaaa");
+                    decoded += 1;
+                }
+            }
+        }
+        // FCHECK passes for 2115 headers; method 8, windows 2^8..2^15 and no FDICT leave 32
+        // (8 CINFO x 4 FLEVEL), decoded three times (15 in each decoder, 0), and the 8 of
+        // windows 2^8 and 2^9 once more with windowBits 9
+        assert_eq!(decoded, 32 * 3 + 8);
+    }
+
+    /// windowBits 8 compresses with a 512-byte window (zlib's 256-byte window bug) and its
+    /// header says 2^9: the stream decodes with 9..15 and 0, and inflate's windowBits 8 refuses
+    /// it. Raw inflate takes -8, and a 512-byte deflate window never reaches more than
+    /// 250 bytes back (`MAX_DIST`), so the raw body decodes through a 256-byte window.
+    #[test]
+    fn window_bits_8_is_9() {
+        let z = deflate_all(CORPUS, 9, 8, 8);
+        assert_eq!(z[0], 0x18);
+        for wbits in [0, 9, 12, 15] {
+            assert_decodes(&z, wbits, CORPUS);
+        }
+        for slow in BOTH {
+            let d = decode_all(&z, 8, slow);
+            assert_eq!((d.ret, d.msg), (Err(ZError::Data), Some("error")));
+            let raw = &z[2..z.len() - 4];
+            let d = decode(raw, -8, slow, usize::MAX, 100, Flush::NoFlush);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
+            assert!(d.out == CORPUS);
+        }
+    }
+
+    /// The windowBits inflate accepts: -15..-8 (raw), 0 (the header's) and 8..15 (zlib). The
+    /// gzip (+16) and automatic (+32) wrappers need GUNZIP, which `NO_GZIP` leaves out, so they
+    /// are refused like any other value, by inflateInit2 and by inflateReset2 (which then
+    /// leaves the stream as it was). A gzip stream given to a zlib or raw stream is a data
+    /// error, and no stream takes a gzip header.
+    #[test]
+    fn window_bits_and_wrappers_inflate_accepts() {
+        let valid = |w: i32| (-15..=-8).contains(&w) || w == 0 || (8..=15).contains(&w);
+        let mut live = ZStream::new();
+        assert_eq!(inflateInit2(&mut live, 15), Ok(()));
+        for wbits in -70..=70 {
+            let mut strm = ZStream::new();
+            let ret = inflateInit2(&mut strm, wbits);
+            assert_eq!(ret.is_ok(), valid(wbits), "{wbits}");
+            if ret.is_ok() {
+                assert_eq!(inflateEnd(&mut strm), Ok(()));
+            } else {
+                assert_eq!(ret, Err(ZError::Stream));
+                assert!(matches!(strm.state, InternalState::None));
+            }
+            let ret = inflateReset2(&mut live, wbits);
+            assert_eq!(ret.is_ok(), valid(wbits), "reset {wbits}");
+            if ret.is_ok() {
+                assert_eq!(inflateReset2(&mut live, 15), Ok(()));
+            }
+            // after a refused reset (or the reset back to 15) the stream is a zlib stream
+            let d = run(
+                &mut live,
+                testdata!("level6.z"),
+                true,
+                usize::MAX,
+                usize::MAX,
+                Flush::NoFlush,
+            );
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "after reset {wbits}");
+            assert!(d.out == SMALL_CORPUS);
+            assert_eq!(inflateReset(&mut live), Ok(()));
+        }
+        assert_eq!(inflateEnd(&mut live), Ok(()));
+
+        // RFC 1952: magic, CM 8, no flags, MTIME 0, XFL 0, OS 3, the deflate data, CRC-32, ISIZE
+        let mut gz = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3];
+        gz.extend_from_slice(&fixed_aaaa());
+        gz.extend_from_slice(&crate::crc32::crc32(0, b"aaaa").to_le_bytes());
+        gz.extend_from_slice(&4u32.to_le_bytes());
+        for wbits in [15, 0, -15] {
+            assert_data_error(&gz, wbits);
+        }
+        for wbits in [15, -15] {
+            let mut strm = ZStream::new();
+            assert_eq!(inflateInit2(&mut strm, wbits), Ok(()));
+            assert_eq!(
+                inflateGetHeader(&mut strm, &mut GzHeader::default()),
+                Err(ZError::Stream)
+            );
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
+        }
+    }
+
+    /// Each of the 32 bits of the Adler-32 trailer is checked: flipping any is a data error
+    /// after all the data came out, and the same stream ends when the check is off. Input after
+    /// the trailer is left unused, and a raw stream stays raw when asked to validate.
+    #[test]
+    fn every_check_value_bit_is_checked() {
+        let good = testdata!("level6.z");
+        let n = good.len();
+        for bit in 0..32 {
+            let mut s = good.to_vec();
+            s[n - 4 + bit / 8] ^= 1 << (bit % 8);
+            for slow in BOTH {
+                let d = decode_all(&s, 15, slow);
+                assert_eq!((d.ret, d.msg), (Err(ZError::Data), Some("error")), "{bit}");
+                assert!(d.out == SMALL_CORPUS);
+                let mut strm = ZStream::new();
+                assert_eq!(inflateInit(&mut strm), Ok(()));
+                assert_eq!(inflateValidate(&mut strm, false), Ok(()));
+                let d = run(&mut strm, &s, slow, 100, 100, Flush::NoFlush);
+                assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "{bit}");
+                assert!(d.out == SMALL_CORPUS);
+                assert_eq!(inflateEnd(&mut strm), Ok(()));
+            }
+        }
+        let mut s = good.to_vec();
+        s.extend_from_slice(b"garbage after the stream");
+        for slow in BOTH {
+            let d = decode_all(&s, 15, slow);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
+            assert_eq!(d.total_in as usize, n);
+            let mut strm = ZStream::new();
+            assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
+            assert_eq!(inflateValidate(&mut strm, true), Ok(()));
+            let d = run(
+                &mut strm,
+                testdata!("raw15.z"),
+                slow,
+                usize::MAX,
+                usize::MAX,
+                Flush::NoFlush,
+            );
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
+            assert!(d.out == CORPUS);
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
+        }
+    }
 }
 /* </TESTS> */
