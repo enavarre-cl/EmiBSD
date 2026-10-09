@@ -54,7 +54,8 @@
 //! `lxtphy* at mii?` and `dcphy* at mii?` (M16c),
 //! `eap* at pci?`, `audio* at eap?` and `midi* at eap?` (M16d), `lpt0 at isa? port 0x378
 //! irq 7` (M16d; `#lpt1` and `#lpt2` are commented out in GENERIC),
-//! `pckbc0 at isa? flags 0x00`, `pckbd* at pckbc?` and `wskbd* at pckbd? mux 1` (M16d),
+//! `pckbc0 at isa? flags 0x00`, `pckbd* at pckbc?`, `pms* at pckbc?`, `wskbd* at pckbd? mux 1`
+//! and `wsmouse* at pms? mux 0` (M16d),
 //! `pcppi0 at isa?` and `spkr0 at pcppi?` (M16d),
 //! `viomb* at virtio?` and `viornd* at virtio?` (M16d), and with the cargo feature `viocon`
 //! the commented-out `#viocon* at virtio?` (M16d; `docs/ARCHITECTURE.md`, "Cargo features"),
@@ -77,7 +78,7 @@
 //! other
 //! `audio*` (at `envy?`, ...), every other `midi*` (at `umidi?`, `envy?`, `mpu?`), `pci*` at
 //! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*`, `viomb*`, `viornd*` and `vioscsi*`; every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*`, `cdce*`, `uftdi*` and `ugen*`, every device
-//! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, `pms* at pckbc?`, every `wskbd*` but the
+//! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*` but the
 //! ones at `ukbd?` and `pckbd?`, every
 //! `wsmouse*` but the ones at `ums?` and `uwacom?`, every `ucom*` but the one at `uftdi?`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
@@ -157,6 +158,7 @@ use crate::dev::pci::vga_pci::VGA_PCI_CA;
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
 use crate::dev::pckbc::pckbd::{PCKBD_CA, PCKBD_CD};
+use crate::dev::pckbc::pms::{PMS_CA, PMS_CD};
 use crate::dev::puc::com_puc::COM_PUC_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
@@ -408,16 +410,19 @@ const PV_PCKBD: &[i16] = &[87];
 /// `loc[]` of `pcppi0 at isa?`: every `isa` locator at its default (M16d).
 const LOC_PCPPI_ISA: &[i64] = &[-1, 0, -1, 0, -1, -1, -1];
 
-/// `pv[]` for children of `pcppi0` (`cfdata[89]`): `spkr0 at pcppi?` (M16d).
-const PV_PCPPI: &[i16] = &[89];
+/// `pv[]` for children of `pcppi0` (`cfdata[91]`): `spkr0 at pcppi?` (M16d).
+const PV_PCPPI: &[i16] = &[91];
+
+/// `pv[]` for children of `pms*` (`cfdata[88]`): the `wsmousedev` attribute.
+const PV_PMS: &[i16] = &[88];
 
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 94 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
+/// `cfdata[]`: 96 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
 /// and one more with `viocon`.
 const NCFDATA: usize =
-    94 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
+    96 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
 /// (`machine::autoconf::ioconf_mut`).
@@ -1400,7 +1405,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCKBCSLOT,
         0,
     ),
-    // 88: wskbd* at pckbd? mux 1 (M16d)
+    // 88: pms* at pckbc? (M16d)
+    Cfdata::new(
+        &PMS_CA,
+        &PMS_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCKBCSLOT_UNK,
+        0,
+        PV_PCKBC,
+        LN_PCKBCSLOT,
+        0,
+    ),
+    // 89: wskbd* at pckbd? mux 1 (M16d)
     Cfdata::new(
         &WSKBD_CA,
         &WSKBD_CD,
@@ -1412,7 +1429,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_WSKBDDEV,
         0,
     ),
-    // 89: pcppi0 at isa? (M16d)
+    // 90: wsmouse* at pms? mux 0 (M16d)
+    Cfdata::new(
+        &WSMOUSE_CA,
+        &WSMOUSE_CD,
+        0,
+        FSTATE_STAR,
+        LOC_WSMOUSEDEV_MUX0,
+        0,
+        PV_PMS,
+        LN_WSMOUSEDEV,
+        0,
+    ),
+    // 91: pcppi0 at isa? (M16d)
     Cfdata::new(
         &PCPPI_CA,
         &PCPPI_CD,
@@ -1424,7 +1453,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_ISA,
         0,
     ),
-    // 90: spkr0 at pcppi? (M16d)
+    // 92: spkr0 at pcppi? (M16d)
     Cfdata::new(
         &SPKR_CA,
         &SPKR_CD,
@@ -1436,7 +1465,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 91: lpt0 at isa? port 0x378 irq 7 (M16d)
+    // 93: lpt0 at isa? port 0x378 irq 7 (M16d)
     Cfdata::new(
         &LPT_ISA_CA,
         &LPT_CD,
@@ -1448,7 +1477,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_ISA,
         0,
     ),
-    // 92: viomb* at virtio? (M16d)
+    // 94: viomb* at virtio? (M16d)
     Cfdata::new(
         &VIOMB_CA,
         &VIOMB_CD,
@@ -1460,7 +1489,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 93: viornd* at virtio? (M16d)
+    // 95: viornd* at virtio? (M16d)
     Cfdata::new(
         &VIORND_CA,
         &VIORND_CD,
@@ -1472,7 +1501,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 94: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
+    // 96: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
     #[cfg(feature = "viocon")]
     Cfdata::new(
         &VIOCON_CA,
@@ -1485,7 +1514,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 95 (94 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 97 (96 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
