@@ -52,6 +52,7 @@
 //! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?` (M16b),
 //! `pcn* at pci?`, `ne* at pci?`, `fxp* at pci?`, `inphy* at mii?`, `dc* at pci?`,
 //! `lxtphy* at mii?` and `dcphy* at mii?` (M16c),
+//! `vmwpvs* at pci?` (M16a),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -65,7 +66,7 @@
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re, vmx, pcn, ne, fxp and dc (`rl* at pci?` among them: QEMU's rtl8139 is
-//! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
+//! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci, siop and vmwpvs, ...), every other
 //! device at `mii?` (the other PHY drivers), every
 //! other
 //! `audio*` (at `eap?`, `envy?`, ...), `pci*` at
@@ -139,6 +140,7 @@ use crate::dev::pci::siop_pci::SIOP_PCI_CA;
 use crate::dev::pci::uhci_pci::UHCI_PCI_CA;
 use crate::dev::pci::vga_pci::VGA_PCI_CA;
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
+use crate::dev::pci::vmwpvs::{VMWPVS_CA, VMWPVS_CD};
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
 use crate::dev::puc::com_puc::COM_PUC_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
@@ -213,8 +215,9 @@ const PV_VIRTIO: &[i16] = &[3];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
 /// `softraid0` (`cfdata[13]`), `umass*` (`cfdata[22]`), `nvme*` (`cfdata[25]`), `vioscsi*`
-/// (`cfdata[26]`), `ahci*` (`cfdata[28]`, through atascsi) and `siop*` (`cfdata[29]`).
-const PV_VIOBLK: &[i16] = &[5, 13, 22, 25, 26, 28, 29];
+/// (`cfdata[26]`), `ahci*` (`cfdata[28]`, through atascsi), `siop*` (`cfdata[29]`) and `vmwpvs*`
+/// (`cfdata[84]`, M16a).
+const PV_VIOBLK: &[i16] = &[5, 13, 22, 25, 26, 28, 29, 84];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[11]`).
 const PV_SCSIBUS: &[i16] = &[11];
@@ -364,11 +367,11 @@ const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 84 entries, 85 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 85 entries, 86 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    85
+    86
 } else {
-    84
+    85
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -496,7 +499,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_ISA,
         0,
     ),
-    // 11: scsibus* at scsi? (vioblk, umass, nvme, vioscsi, ahci, siop), and at softraid? (GENERIC's `scsibus* at
+    // 11: scsibus* at scsi? (vioblk, umass, nvme, vioscsi, ahci, siop, vmwpvs), and at softraid? (GENERIC's `scsibus* at
     // softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,
@@ -1314,7 +1317,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_MII,
         0,
     ),
-    // 84: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 84: vmwpvs* at pci? (M16a)
+    Cfdata::new(
+        &VMWPVS_CA,
+        &VMWPVS_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 85: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

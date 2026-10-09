@@ -32,7 +32,8 @@
 //! `if_vmxreg`) VMware's VMXNET3 NIC (`vmx* at pci?`, M13); `ichiic` (with `ichreg`) and `piixpm` (with
 //! `piixreg`) the ICH and PIIX4 SMBus controllers (`ichiic* at pci?`, `piixpm* at pci?`, M16e); `ehci_pci` the EHCI front-end
 //! (`ehci* at pci?`, M16b); `uhci_pci` the UHCI front-end (`uhci* at pci?`, M16b);
-//! `ohci_pci` the OHCI front-end (`ohci* at pci?`, M16b). The machine side
+//! `ohci_pci` the OHCI front-end (`ohci* at pci?`, M16b); `vmwpvs` VMware's paravirtual SCSI
+//! adapter (`vmwpvs* at pci?`, M16a). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
 pub mod ahci_pci;
@@ -79,5 +80,6 @@ pub mod vga_pci;
 pub mod vga_pcivar;
 pub mod virtio_pci;
 pub mod virtio_pcireg;
+pub mod vmwpvs;
 pub mod xhci_pci;
 /* </CODE> */

@@ -2648,6 +2648,12 @@ lz = ["sys/dev/pci/virtio_pcireg.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/pci/vmwpvs.rs"
+lz = ["sys/dev/pci/vmwpvs.rs"]
+status = "inherited"
+notes = "M16a: vmwpvs(4), whole file, amd64 GENERIC only; QEMU's pvscsi has no VMWPVS_CMD_CONFIG, so attach stops at 'get configuration failed' exactly as OpenBSD 8.0 does on the same QEMU (smoke-vmwpvs); a completion naming no opening panics where the C indexes past sc_ccbs; a CDB over 16 bytes is cut to the request's 16"
+
+[[module]]
 rust = "sys/dev/pci/xhci_pci.rs"
 lz = ["sys/dev/pci/xhci_pci.rs"]
 status = "inherited"

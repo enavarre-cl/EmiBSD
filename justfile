@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-vmwpvs smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
@@ -1489,6 +1489,23 @@ smoke-smmu: (build-arm64 "--features qemu,multiprocessor") build-init-arm64 efib
         --expect "root on sd0a (454649424f4f5430.a) swap on sd0b dump on sd0b" \
         --expect "rc: multi-user" --expect "/dev/sd0a on / type ffs (local)" \
         --expect "m16f-acpi-42" --reject "smmu0"
+
+# M16a: vmwpvs(4) on QEMU's VMware paravirtual SCSI adapter (`--pvscsi`, tools/xtask/src/storage.rs:
+# the adapter after every other device, with a fresh zeroed 64 MiB `scsi-hd` at target 0), amd64
+# only (GENERIC has `vmwpvs* at pci?` on amd64 alone). QEMU's pvscsi does not implement the
+# configuration command (VMWPVS_CMD_CONFIG): the page header keeps the INVPARAM/CHECK status the
+# driver preloads, so attach stops at "get configuration failed" before any ring or scsibus exists,
+# exactly as OpenBSD 8.0 does on the same machine (`cargo xtask diff-openbsd --arch amd64 --pvscsi
+# FILE probe`: 'vmwpvs0 at pci0 dev 4 function 0 "VMware PVSCSI" rev 0x02: msi', 'vmwpvs0: get
+# configuration failed'). The system then comes up multi-user. Part of `smoke`.
+smoke-vmwpvs: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-vmwpvs: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --pvscsi pvscsi-amd64.img \
+        --expect "vmwpvs0 at pci0 dev " --expect "vendor 0x15ad product 0x07c0 rev 0x02: msi" \
+        --expect "vmwpvs0: get configuration failed" --expect "rc: multi-user" \
+        --reject "at vmwpvs0"
 
 # M13: siop(4) on QEMU's LSI 53C895A (`--lsi`, `tools/xtask/src/hwopts.rs`: the adapter
 # after every other device, a fresh zeroed 64 MiB `scsi-hd` at target 0 and, with
