@@ -561,8 +561,11 @@ fn aes_ct_bitslice_encrypt(
     skey: &[[u32; 8]; AES_MAXROUNDS + 1],
     q: &mut [u32; 8],
 ) {
+    // A context with no rounds (unkeyed, or wiped by a finalize) runs the first and last
+    // round keys only, as the C's loops do, instead of slicing out of range.
+    let num_rounds = num_rounds.min(AES_MAXROUNDS);
     add_round_key(q, &skey[0]);
-    for rk in &skey[1..num_rounds] {
+    for rk in skey.get(1..num_rounds).unwrap_or_default() {
         aes_ct_bitslice_Sbox(q);
         shift_rows(q);
         mix_columns(q);
@@ -678,8 +681,10 @@ fn aes_ct_bitslice_decrypt(
     skey: &[[u32; 8]; AES_MAXROUNDS + 1],
     q: &mut [u32; 8],
 ) {
+    // As in `aes_ct_bitslice_encrypt`: no rounds is no inner round, never a bad slice.
+    let num_rounds = num_rounds.min(AES_MAXROUNDS);
     add_round_key(q, &skey[num_rounds]);
-    for rk in skey[1..num_rounds].iter().rev() {
+    for rk in skey.get(1..num_rounds).unwrap_or_default().iter().rev() {
         inv_shift_rows(q);
         aes_ct_bitslice_invSbox(q);
         add_round_key(q, rk);
@@ -1033,6 +1038,19 @@ mod tests {
                 .all(|w| *w == 0)
         );
         assert_eq!(ctx.num_rounds, 0);
+    }
+
+    #[test]
+    fn an_unkeyed_or_wiped_context_does_not_panic() {
+        // Zero rounds: the first and last round keys only (both zero here), no bad slice.
+        let ctx = AesCtx::default();
+        let _ = ctx.encrypt(&[0x5a; 16]);
+        let _ = ctx.decrypt(&[0x5a; 16]);
+        let mut keyed = AesCtx::new(&key(16)).expect("AES key size");
+        keyed.zeroize();
+        let _ = keyed.encrypt(&[1; 16]);
+        let mut blocks = [[7u8; 16]; 3];
+        keyed.decrypt_ecb(&mut blocks);
     }
 }
 /* </TESTS> */

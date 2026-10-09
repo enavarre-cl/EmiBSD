@@ -495,5 +495,17 @@ mod tests {
         assert!(ctx.k.sk.iter().all(|w| *w == 0));
         assert!(ctx.k.sk_exp.iter().flatten().all(|w| *w == 0));
     }
+
+    #[test]
+    fn finalizing_twice_does_not_panic() {
+        // The first finalize wipes the AES key (zero rounds); a second one must still be safe.
+        let mut ctx = AesGmacCtx::default();
+        ctx.init();
+        assert_eq!(ctx.setkey(&[0x33u8; 20]), Ok(()));
+        ctx.update(b"data");
+        let _ = ctx.finalize();
+        let _ = ctx.finalize();
+        let _ = AesGmacCtx::default().finalize();
+    }
 }
 /* </TESTS> */

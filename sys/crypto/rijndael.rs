@@ -384,6 +384,9 @@ pub fn rijndaelKeySetupDec(
 #[allow(non_snake_case)] // the C name
 pub fn rijndaelEncrypt(rk: &[u32], nr: usize, pt: &[u8; 16]) -> [u8; 16] {
     let round_keys = rk.as_chunks::<4>().0;
+    // A schedule with no rounds (an unkeyed or wiped context) runs the first and last round
+    // keys only instead of slicing out of range; a valid one has 10 to 14.
+    let nr = nr.min(round_keys.len().saturating_sub(1));
 
     // map byte array block to cipher state and add initial round key:
     let mut s = [0u32; 4];
@@ -392,7 +395,7 @@ pub fn rijndaelEncrypt(rk: &[u32], nr: usize, pt: &[u8; 16]) -> [u8; 16] {
     }
 
     // Nr - 1 full rounds:
-    for rk in &round_keys[1..nr] {
+    for rk in round_keys.get(1..nr).unwrap_or_default() {
         let mut t = [0u32; 4];
         for j in 0..4 {
             t[j] = TE0[byte(s[j], 0)]
@@ -422,6 +425,8 @@ pub fn rijndaelEncrypt(rk: &[u32], nr: usize, pt: &[u8; 16]) -> [u8; 16] {
 #[allow(non_snake_case)] // the C name
 fn rijndaelDecrypt(rk: &[u32], nr: usize, ct: &[u8; 16]) -> [u8; 16] {
     let round_keys = rk.as_chunks::<4>().0;
+    // As in `rijndaelEncrypt`: never a slice out of range.
+    let nr = nr.min(round_keys.len().saturating_sub(1));
 
     // map byte array block to cipher state and add initial round key:
     let mut s = [0u32; 4];
@@ -430,7 +435,7 @@ fn rijndaelDecrypt(rk: &[u32], nr: usize, ct: &[u8; 16]) -> [u8; 16] {
     }
 
     // Nr - 1 full rounds:
-    for rk in &round_keys[1..nr] {
+    for rk in round_keys.get(1..nr).unwrap_or_default() {
         let mut t = [0u32; 4];
         for j in 0..4 {
             t[j] = TD0[byte(s[j], 0)]
@@ -639,6 +644,17 @@ mod tests {
         for (a, b) in c.iter().zip(RCON) {
             assert_eq!(*a, u64::from(b));
         }
+    }
+
+    #[test]
+    fn an_unkeyed_or_wiped_context_does_not_panic() {
+        let ctx = RijndaelCtx::default();
+        let _ = ctx.encrypt(&[0x5a; 16]);
+        let _ = ctx.decrypt(&[0x5a; 16]);
+        let mut keyed = RijndaelCtx::new(&key()).expect("AES key size");
+        keyed.zeroize();
+        let _ = keyed.encrypt(&[1; 16]);
+        let _ = keyed.decrypt(&[1; 16]);
     }
 }
 /* </TESTS> */
