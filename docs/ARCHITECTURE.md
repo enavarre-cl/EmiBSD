@@ -1483,6 +1483,13 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   that never falls is never delivered; on arm64 `ehci_pci_attach`'s 16-bit
   `EOWRITE2(EHCI_USBINTR, 0)` is refused by QEMU's EHCI (4-byte operational registers) as a
   synchronous external abort.
+  ohci(4) (M16b, `dev/usb/ohci.c`, `dev/pci/ohci_pci.c`) is the third `usb*` parent, built
+  the same way (soft EDs, TDs and ITDs `&'static` in never-freed DMA chunks, `ohci_get`/
+  `ohci_set`; the done queue's bus addresses found through the C's hash). Its interrupt is
+  not `IPL_MPSAFE`, as in C, so it runs with the kernel lock. In QEMU (`pci-ohci`) the stick
+  mounts and reads on both archs; the first write makes QEMU's OHCI raise
+  UnrecoverableError, exactly as OpenBSD 8.0 does on the same setup, and `smoke-ohci`
+  asserts that (the user's rule for QEMU behaviours OpenBSD shares).
 - Audio (M12): audio(4) (`dev/audio.c`) is machine-independent; drivers reach it only
   through `AudioHwIf`, `audio_attach_mi` and `audio_pintr`/`audio_rintr`, called with
   `AUDIO_LOCK` held. azalia(4) attaches QEMU's `intel-hda` on both architectures (through
