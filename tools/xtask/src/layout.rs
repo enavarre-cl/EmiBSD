@@ -14,8 +14,8 @@
 //! /* </TESTS> */
 //! ```
 //!
-//! [`check`] validates one file; `cargo xtask ports check` runs it over the tree with the
-//! licence policy `ports.toml` gives each path. Reading rule:
+//! [`check`] validates one file; `cargo xtask lz check` runs it over the tree with the
+//! licence policy `lineage.toml` gives each path. Reading rule:
 //! `sed -n '/<CODE>/,/<\/CODE>/p' file.rs`.
 //!
 //! Outside the zones there are only blank lines and, before the first zone, block comments (the
@@ -152,7 +152,7 @@ pub(crate) fn check(rel: &str, src: &str, lic: Licenses) -> Vec<String> {
         (Licenses::Required, false) => {
             errs.push(format!(
                 "{rel}: no <LICENSES> zone (a port keeps its notice; `license = \"none\"` in \
-                 ports.toml when the C file has none)"
+                 lineage.toml when the C file has none)"
             ));
         }
         _ => {}

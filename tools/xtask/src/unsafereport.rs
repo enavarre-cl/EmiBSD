@@ -33,6 +33,7 @@ use crate::Result;
 
 const STATUS_DOC: &str = "docs/STATUS.md";
 const STATUS_PREFIX: &str = "Unsafe";
+const BUDGET_FILE: &str = "unsafe-budget.toml";
 
 /// One token of a Rust source file, as far as counting `unsafe` needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,8 +105,35 @@ struct Row {
     test: Counts,
 }
 
-/// `cargo xtask unsafe-report [--write]`.
-pub(crate) fn unsafe_report(root: &Path, write: bool) -> Result<()> {
+/// The per-subsystem budget of `unsafe-budget.toml` (`.claude/rules/unsafe-budget.md`): the
+/// kernel total each subsystem may not exceed.
+#[derive(serde::Deserialize)]
+struct Budget {
+    #[serde(default, rename = "subsystem")]
+    subsystems: Vec<BudgetRow>,
+}
+
+#[derive(serde::Deserialize)]
+struct BudgetRow {
+    name: String,
+    total: usize,
+}
+
+fn load_budget(root: &Path) -> Result<BTreeMap<String, usize>> {
+    let path = root.join(BUDGET_FILE);
+    if !path.is_file() {
+        return Ok(BTreeMap::new());
+    }
+    let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let b: Budget = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(b.subsystems
+        .into_iter()
+        .map(|r| (r.name, r.total))
+        .collect())
+}
+
+/// `cargo xtask unsafe-report [--write] [--check]`.
+pub(crate) fn unsafe_report(root: &Path, write: bool, check: bool) -> Result<()> {
     let mut files = Vec::new();
     for dir in ["sys", "init"] {
         crate::walk_rs(&root.join(dir), &mut files)?;
@@ -214,6 +242,64 @@ pub(crate) fn unsafe_report(root: &Path, write: bool) -> Result<()> {
         let new = replace_status_line(&doc, &line)?;
         fs::write(&path, new).map_err(|e| format!("{}: {e}", path.display()))?;
         println!("wrote {STATUS_DOC}");
+        // The budget only ever goes down here; raising one is a commit of its own.
+        let old = load_budget(root)?;
+        let mut text = String::from(
+            "# Per-subsystem unsafe budget: the kernel total (blocks + fn + impl + trait + other)
+\
+             # each subsystem may not exceed. `cargo xtask unsafe-report --check` (in `just ci`) fails
+\
+             # when one does; `--write` lowers a budget to the current count and never raises it.
+\
+             # Raising a budget is a commit of its own, with the reason in the body
+\
+             # (.claude/rules/unsafe-budget.md). Names are unsafe-report's row names.
+",
+        );
+        for (name, row) in &rows {
+            let now = row.kernel.total();
+            let total = old.get(name).map_or(now, |b| (*b).min(now));
+            text.push_str(&format!(
+                "
+[[subsystem]]
+name = \"{name}\"
+total = {total}
+"
+            ));
+        }
+        let path = root.join(BUDGET_FILE);
+        fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("wrote {BUDGET_FILE}");
+    }
+    if check {
+        let budget = load_budget(root)?;
+        if budget.is_empty() {
+            return Err(format!(
+                "{BUDGET_FILE} missing or empty; run `cargo xtask unsafe-report --write`"
+            )
+            .into());
+        }
+        let mut bad = 0usize;
+        for (name, row) in &rows {
+            let now = row.kernel.total();
+            match budget.get(name) {
+                Some(b) if now > *b => {
+                    println!("error: {name}: {now} unsafe, budget {b} ({BUDGET_FILE})");
+                    bad += 1;
+                }
+                Some(_) => {}
+                None => {
+                    println!(
+                        "error: {name}: no budget in {BUDGET_FILE} (run `cargo xtask unsafe-report --write`)"
+                    );
+                    bad += 1;
+                }
+            }
+        }
+        if bad > 0 {
+            return Err(format!("{bad} subsystem(s) over or without an unsafe budget").into());
+        }
+        println!("unsafe-report --check: every subsystem within its budget");
     }
     Ok(())
 }

@@ -2786,8 +2786,17 @@ clippy:
 fmt:
     cargo fmt --all -- --check
 
-check-ports:
-    cargo xtask ports check
+# the lineage of every module against EmiBSD.LZ (lineage.toml, lz/PINNED.md; .claude/rules/lineage.md)
+check-lineage:
+    cargo xtask lz check
+
+# no EmiBSD.LZ commit after the pin without a record in lz-sync.toml (.claude/rules/lz-sync.md)
+check-drift:
+    cargo xtask lz drift --strict
+
+# no subsystem over its unsafe budget (unsafe-budget.toml; .claude/rules/unsafe-budget.md)
+check-unsafe:
+    cargo xtask unsafe-report --check
 
 # Regenerate the system call tables from reference/.../syscalls.master (sys/sys/syscall.rs,
 # syscallargs.rs, kern/init_sysent.rs, kern/syscalls.rs). Rerun after porting a sys_* function.
@@ -2797,8 +2806,14 @@ gen-syscalls:
 check-syscalls:
     cargo xtask gen-syscalls --check
 
+# the EmiBSD.LZ commits after the pin and the native modules they touch (no fetch)
 drift:
-    cargo xtask ports drift
+    cargo xtask lz drift --security --functions
+
+# docs/SYNC.md step 1: fetch EmiBSD.LZ, then the commits to triage, security first, with the
+# native modules and items each one touches
+lz-sync:
+    cargo xtask lz drift --fetch --security --functions
 
 # --- the install media (M14c) ---------------------------------------------------------
 
@@ -2877,7 +2892,7 @@ smoke-install-arm64-acpi: install-media-arm64
 smoke-install-boot-arm64-acpi:
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install-acpi} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install-boot {{smp}} --arch arm64 --acpi
 
-ci: fmt clippy test build smoke check-ports check-syscalls
+ci: fmt clippy test build smoke check-lineage check-drift check-unsafe check-syscalls
 
 # `ci` with every `{{smp}}` recipe on four processors (`EMIBSD_NCPU=4`), not only the `smp4`
 # group: four CPUs make the MP races likelier. Then the installer end to end on both archs, also
