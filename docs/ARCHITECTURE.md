@@ -1483,6 +1483,12 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   that never falls is never delivered; on arm64 `ehci_pci_attach`'s 16-bit
   `EOWRITE2(EHCI_USBINTR, 0)` is refused by QEMU's EHCI (4-byte operational registers) as a
   synchronous external abort.
+  uhci(4) (M16b, `dev/usb/uhci.c`, `dev/pci/uhci_pci.c`) is the third: its soft TDs and QHs
+  are carved from DMA chunks the same way; a TD's `link` (a C union of a QH and a TD pointer)
+  is an enum, so a walk that meets a QH where it expects a TD stops instead of
+  reinterpreting it. On arm64 `virt` EDK2 leaves its I/O BAR at 0; as in OpenBSD, the PCI
+  bus now carries the host bridge's extents (`pciecam`, arm64 `acpipci`) and
+  `pci_mapreg_assign` places such a BAR from them (amd64's buses have no extents yet).
 - Audio (M12): audio(4) (`dev/audio.c`) is machine-independent; drivers reach it only
   through `AudioHwIf`, `audio_attach_mi` and `audio_pintr`/`audio_rintr`, called with
   `AUDIO_LOCK` held. azalia(4) attaches QEMU's `intel-hda` on both architectures (through

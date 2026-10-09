@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run | powerbtn]
-//! cargo xtask diff-openbsd --arch A [--ipmi] [--usb] [--usb-hc xhci|ehci] [--ukc CMD]...
+//! cargo xtask diff-openbsd --arch A [--ipmi] [--usb] [--usb-hc xhci|ehci|uhci] [--ukc CMD]...
 //!                           [--sh CMD] probe
 //! ```
 //!
@@ -33,7 +33,7 @@
 //!   (`<run dir>/<arch>/openbsd-powerbtn.log`). It is how M16f checked what OpenBSD 8.0
 //!   does with QEMU's power key before porting gpiokeys(4).
 //! - `probe` (M16e): boots the installed OpenBSD alone (`-snapshot`) with the smokes' device
-//!   options (`hwopts.rs`: `--ipmi` so far; `devices.rs`: `--usb` and `--usb-hc xhci|ehci`,
+//!   options (`hwopts.rs`: `--ipmi` so far; `devices.rs`: `--usb` and `--usb-hc xhci|ehci|uhci`,
 //!   the M12 stick on that controller, `openbsd-probe.usb` in the work directory), logs in and runs `dmesg` and the shell command
 //!   `--sh` gives (`<run dir>/<arch>/openbsd-probe.log`). Each `--ukc CMD` makes it boot
 //!   with `boot -c` at efiboot's `boot>` prompt and send CMD at `UKC>`, then `quit`, as an

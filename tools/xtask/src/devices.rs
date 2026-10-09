@@ -12,16 +12,17 @@
 //! - `--usb-mouse`, `--usb-tablet`, `--usb-wacom-tablet` and `--usb-ccid` (M16b; each repeats
 //!   nothing and combines with the others and with `--usb`): QEMU's `usb-mouse` (relative),
 //!   `usb-tablet` (absolute) and `usb-wacom-tablet` (a PenPartner) pointers and its `usb-ccid`
-//!   smart card reader on the [`UsbHc`] bus (full speed devices: `xhci` only) (`ums(4)`, `uwacom(4)`, `ugen(4)`); any of them
+//!   smart card reader on the [`UsbHc`] bus (full speed devices: `xhci` or `uhci`) (`ums(4)`, `uwacom(4)`, `ugen(4)`); any of them
 //!   brings the controller, with the stick and the `usb-kbd` only if `--usb` is also given. The
 //!   pointers register with the guest in this order (`mouse_set N` in the monitor picks the
 //!   one `mouse_move` and `mouse_button` drive; `--monitor-after`, hwopts.rs).
-//! - `--usb-hc xhci|ehci` (implies `--usb`, M16b): the host controller [`UsbHc`] the
+//! - `--usb-hc xhci|ehci|uhci` (implies `--usb`, M16b): the host controller [`UsbHc`] the
 //!   devices sit on, `xhci` by default. `ehci` is QEMU's `usb-ehci` (an ICH4 EHCI function,
 //!   `ehci(4)`) with the stick alone: QEMU refuses a full speed device such as `usb-kbd` on a
 //!   high speed EHCI port with no companion controller ("speed mismatch"), so the keyboard
-//!   stays off that bus. A controller is one arm of [`UsbHc`]'s matches (its QEMU device and
-//!   whether the keyboard fits on it).
+//!   stays off that bus. `uhci` is QEMU's `piix3-usb-uhci` (a PIIX3 UHCI function, `uhci(4)`),
+//!   full speed, so the keyboard sits beside the stick. A controller is one arm of
+//!   [`UsbHc`]'s matches (its QEMU device and whether the keyboard fits on it).
 //! - `--audio hda` or `--audio ac97`: QEMU's `wav` audio backend writes what the guest plays
 //!   to `<image>.wav` (removed first), through `intel-hda` + `hda-output` (`azalia(4)`) or
 //!   `AC97` (`auich(4)`).
@@ -85,6 +86,8 @@ pub(crate) enum UsbHc {
     Xhci,
     /// `usb-ehci`: `ehci(4)` (M16b), the stick only (a full speed keyboard does not fit).
     Ehci,
+    /// `piix3-usb-uhci`: `uhci(4)` (M16b), the stick and the keyboard (full speed).
+    Uhci,
 }
 
 impl UsbHc {
@@ -93,7 +96,8 @@ impl UsbHc {
         match s {
             Some("xhci") => Ok(UsbHc::Xhci),
             Some("ehci") => Ok(UsbHc::Ehci),
-            other => Err(format!("--usb-hc {other:?}: expected `xhci` or `ehci`").into()),
+            Some("uhci") => Ok(UsbHc::Uhci),
+            other => Err(format!("--usb-hc {other:?}: expected `xhci`, `ehci` or `uhci`").into()),
         }
     }
 
@@ -102,6 +106,7 @@ impl UsbHc {
         let dev = match self {
             UsbHc::Xhci => "qemu-xhci",
             UsbHc::Ehci => "usb-ehci",
+            UsbHc::Uhci => "piix3-usb-uhci",
         };
         format!("{dev},id={USB_HC_ID}")
     }
@@ -109,7 +114,7 @@ impl UsbHc {
     /// Whether QEMU's full speed `usb-kbd` can sit on the controller's root hub.
     fn takes_full_speed(self) -> bool {
         match self {
-            UsbHc::Xhci => true,
+            UsbHc::Xhci | UsbHc::Uhci => true,
             UsbHc::Ehci => false,
         }
     }
@@ -491,6 +496,11 @@ mod tests {
         assert_eq!(UsbHc::Ehci.qemu_device(), "usb-ehci,id=usbhc");
         assert!(!UsbHc::Ehci.takes_full_speed());
         assert!(UsbHc::Xhci.takes_full_speed());
+        let d = parse(&["--usb-hc", "uhci"]).unwrap();
+        assert!(d.usb);
+        assert_eq!(d.usb_hc, UsbHc::Uhci);
+        assert_eq!(UsbHc::Uhci.qemu_device(), "piix3-usb-uhci,id=usbhc");
+        assert!(UsbHc::Uhci.takes_full_speed());
         assert!(parse(&["--usb-hc"]).is_err());
         assert!(parse(&["--usb-hc", "fhci"]).is_err());
         assert!(!parse(&[]).unwrap().usb);

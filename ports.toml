@@ -10750,32 +10750,36 @@ notes = "M16b: match, attach (BAR 0, the ATI SB600/SB700 and VIA VT6202 quirks w
 [[file]]
 c = "sys/dev/usb/uhcireg.h"
 rust = "sys/dev/usb/uhcireg.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-notes = "M16b: uhci registers and descriptors; ported, not attached yet"
+upstream_blob = "90499a71a8d3a89490e5e19421215950d93bbbe8"
+notes = "M16b: the whole header: PCI config registers, UHCI registers and bits, URWMASK and the TD field macros as const fns, struct uhci_td/uhci_qh (repr(C) Cell<u32>, volatile LE accessors uhci_get/uhci_set); reference-backed test"
 
 [[file]]
 c = "sys/dev/usb/uhcivar.h"
 rust = "sys/dev/usb/uhcivar.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-notes = "M16b: uhci_softc, soft TD/QH, uhci_xfer, virtual frames; ported, not attached yet"
+upstream_blob = "77801bba836920856ec79f96aadd4c4def3c1c5d"
+notes = "M16b: the whole header: UHCI_VFRAMELIST_COUNT, uhci_soft_td_qh_t as an enum (a QH read as a TD ends a walk), uhci_xfer (LIST_ENTRY inext, is_linked for uhci_active_intr_list), soft TD/QH (48/32 bytes here, chunks of 128), uhci_vframe, uhci_softc; sc_suspend as i8"
 
 [[file]]
 c = "sys/dev/usb/uhci.c"
 rust = "sys/dev/usb/uhci.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "536c4010388805312c9b637ff1d6dff6d8d96b03"
 deps = ["sys/dev/usb/uhcireg.h", "sys/dev/usb/uhcivar.h", "sys/dev/usb/usb.c"]
-notes = "M16b: uhci(4) ported, not attached yet; criterion: QEMU's piix3-usb-uhci / ich9-usb-uhci1 with the usb-storage stick mounted, both archs"
+notes = "M16b: license: BSD-2 (NetBSD). The whole driver: init (frame list, 128 virtual frames with their interrupt QHs, low/full speed control, bulk and last QHs with the PIIX TD), activate, detach, allocx/freex (static pool), poll_hub (root port changes every 255 ms), bandwidth reclamation loop, add/remove of control, bulk and interrupt QHs, hard and soft interrupts, check_intr/idone (isochronous too), timeouts and abort, reset/run, soft TD/QH allocation, TD chains with toggles, control/bulk/interrupt (repeat, bandwidth-balanced QH offset)/isochronous transfers, setup_isoc, portreset, the root hub emulation. Not ported: UHCI_DEBUG (DPRINTF, uhci_dump_*, UREAD4/UHCISTS/UHCI_CURFRAME which only it uses). DIAGNOSTIC under feature diagnostic. Deviations: checked casts, uhci_pipe union split, std chain returns (first, last), find_prev_qh None panics at the caller, a chain walk stops at a NULL link, intr_done panics if the requeue that cannot fail fails. QEMU piix3-usb-uhci (just smoke-uhci, both archs): uhci0, usb0 USB 1.0, umass0 on port 1 and ukbd0 behind QEMU's hub on port 2, the stick mounted, BIG.BIN cksum, copy, remount, cmp; OpenBSD 8.0 does the same (diff-openbsd probe --usb-hc uhci)"
 
 [[file]]
 c = "sys/dev/pci/uhci_pci.c"
 rust = "sys/dev/pci/uhci_pci.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9a41df49ec8d4e59d84d134a7d6abe88da1595e5"
 deps = ["sys/dev/usb/uhci.c"]
-notes = "M16b: uhci at pci ported, not attached yet"
+notes = "M16b: license: BSD-2 (NetBSD). The whole file: match, attach (I/O BAR PCI_CBIO, INTx at IPL_USB, LEGSUP, USB revision, vendor string, config_defer), attach_deferred (uhci_init, usb at uhci), detach, activate (LEGSUP and interrupts off on resume). Deviations: vendor string is the C fallback (no PCIVERBOSE names); the deferred attach failure clears sc_ih (the C would disestablish it twice in detach). arm64 virt: EDK2 leaves the I/O BAR at 0, placed from pciecam's extent (pci_map.c, M16b)"
 
 [[file]]
 c = "sys/dev/usb/ohcireg.h"

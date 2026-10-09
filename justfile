@@ -120,7 +120,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn smoke-mouse smoke-ugen smoke-ehci"
+    "smoke-powerbtn smoke-mouse smoke-ugen smoke-ehci smoke-uhci"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2191,6 +2191,34 @@ smoke-ehci: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect 'ehci0 at pci0 dev 1 function 0 vendor 0x8086 product 0x24cd rev 0x10panic: uvm_fault failed:' \
         --expect 'esr 96000050 far ' --expect 'Starting stack trace...' \
         --expect 'The operating system has halted.'
+
+# M16b: uhci(4). The M12 stick and keyboard on QEMU's `piix3-usb-uhci` (a PIIX3 UHCI function,
+# 8086:7020, `--usb-hc uhci`, devices.rs), INTx on both archs: uhci0 at pci, usb0 (USB 1.0),
+# the stick as umass0 on root port 1, the keyboard behind the hub QEMU adds on port 2 (its two
+# root ports run short), and smoke-usb's session (mount, note, BIG.BIN's cksum, copy, remount,
+# cmp). OpenBSD 8.0 attaches and mounts the same way on both archs (`cargo xtask diff-openbsd
+# --arch A probe --usb-hc uhci`). Part of `smoke`.
+smoke-uhci: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-uhci: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --usb-hc uhci {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{uhci_check}} \
+        --expect 'uhci0 at pci0 dev 4 function 0 vendor 0x8086 product 0x7020 rev 0x01: apic 0 int 23' \
+        --expect 'sd2 at scsibus2 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --usb-hc uhci {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{uhci_check}} \
+        --expect 'uhci0 at pci0 dev 1 function 0 vendor 0x8086 product 0x7020 rev 0x01: irq' \
+        --expect 'sd2 at scsibus2 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>'
+
+# `smoke-uhci`'s expectations, both archs.
+uhci_check := "--expect 'usb0 at uhci0: USB revision 1.0' " + \
+    "--expect 'uhub0 at usb0 configuration 1 interface 0 \"vendor 0x8086 UHCI root hub\" rev 1.00/1.00 addr 1' " + \
+    "--expect 'umass0 at uhub0 port 1 configuration 1 interface 0 \"QEMU QEMU USB HARDDRIVE\"' " + \
+    "--expect 'umass0: using SCSI over Bulk-Only' " + \
+    "--expect 'uhidev0 at uhub1 port 1 configuration 1 interface 0 \"QEMU QEMU USB Keyboard\"' " + \
+    "--expect 'ukbd0 at uhidev0' " + \
+    "--expect 'emibsd m12: hello from a usb stick' --expect '4071711340 1048576 /mnt/BIG.BIN' " + \
+    "--expect 'usb-42'"
 
 # M13: com(4) over puc(4), amd64 only: arm64's GENERIC has no puc(4). QEMU's `pci-serial`
 # (1b36:0002, a 16550 behind PCI, `--pci-serial`, hwopts.rs) is a file chardev: puc*
