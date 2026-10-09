@@ -1175,7 +1175,8 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
 lz = ["sys/crypto/xform_ipcomp.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/lib/libz/zlib.rs", "sys/lib/libz/inflate.rs"]
 
 [[module]]
 rust = "sys/ddb/db_command.rs"
@@ -3177,7 +3178,8 @@ status = "inherited"
 [[module]]
 rust = "sys/lib/libsa/cread.rs"
 lz = ["sys/lib/libsa/cread.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/lib/libz/zlib.rs", "sys/lib/libz/inflate.rs"]
 
 [[module]]
 rust = "sys/lib/libsa/ctime.rs"
@@ -3376,13 +3378,14 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/infback.rs"
 lz = ["sys/lib/libz/infback.rs"]
-status = "inherited"
+status = "redesigned"
 license = "zlib"
 
 [[module]]
 rust = "sys/lib/libz/inffast.rs"
 lz = ["sys/lib/libz/inffast.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/lib/libz/inflate.rs"]
 license = "zlib"
 
 [[module]]
@@ -3394,14 +3397,13 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/inflate.rs"
 lz = ["sys/lib/libz/inflate.rs"]
-status = "adapted"
-adapted_by = ["sys/lib/libz/zopenbsd.rs"]
+status = "redesigned"
 license = "zlib"
 
 [[module]]
 rust = "sys/lib/libz/inftrees.rs"
 lz = ["sys/lib/libz/inftrees.rs"]
-status = "inherited"
+status = "redesigned"
 license = "zlib"
 
 [[module]]
@@ -3419,8 +3421,7 @@ license = "zlib"
 [[module]]
 rust = "sys/lib/libz/zlib.rs"
 lz = ["sys/lib/libz/zlib.rs"]
-status = "adapted"
-adapted_by = ["sys/lib/libz/zopenbsd.rs"]
+status = "redesigned"
 license = "zlib"
 
 [[module]]

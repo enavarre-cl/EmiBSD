@@ -51,6 +51,7 @@
 //! constants every caller passes or tests (`Z_OK`, `Z_FINISH`, `Z_DEFAULT_COMPRESSION`, ...).
 //!
 //! Upstream: sys/lib/libz/zlib.h @ 3ce1f3f79392
+//! LZ: sys/lib/libz/zlib.rs@f5985f1d055a
 //!
 //! **This is an altered source version, not the original zlib `zlib.h`** (zlib licence, clause
 //! 2): a Rust rewrite written for EmiBSD. The original's notice is kept above in full (clause 3).
@@ -78,8 +79,18 @@
 //! - The gz* file functions, `get_crc_table`, the `z_*` prefixed aliases (`Z_PREFIX_SET`) and
 //!   the `*64` large-file variants are not part of the kernel's zlib (`gzguts.h` is excluded
 //!   under `_KERNEL`, the rest are aliases) and have no counterpart.
-//! - The return codes stay `i32` constants (`Z_OK`, `Z_STREAM_END` and `Z_NEED_DICT` are not
-//!   errors), as zlib's callers test them.
+//!
+//! ## Redesign
+//! - The return codes are a `Result`: [`ZStatus`] carries the codes that are not errors
+//!   (`Z_OK`, `Z_STREAM_END`, `Z_NEED_DICT`), [`ZError`] the negative ones. A function whose
+//!   only success is `Z_OK` returns `Result<(), ZError>`; one that can also report the end of
+//!   the stream or a needed dictionary returns `Result<ZStatus, ZError>`. The C values are
+//!   still the `Z_*` constants, and [`ZCode::code`] gives the C value of any result, for
+//!   callers that keep a status integer of their own (libsa's `cread`). LZ returned the `i32`
+//!   codes.
+//! - The flush parameter is a [`Flush`] (the `Z_*` flush constants stay, as the C values), so
+//!   an out-of-range flush cannot be passed. The `inflateInit*` macros return the `Result` of
+//!   the functions they call.
 
 #![allow(non_snake_case)] // zlib's API names are camelCase in C (deflateInit2_, inflateReset2)
 
@@ -164,6 +175,95 @@ pub const Z_UNKNOWN: i32 = 2;
 
 /// `Z_DEFLATED`: the deflate compression method (the only one supported in this version).
 pub const Z_DEFLATED: i32 = 8;
+
+/// The return codes of zlib that are not errors: what the `Ok` of a stream function carries.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ZStatus {
+    /// `Z_OK`: the call made progress, or did what it was asked.
+    Ok,
+    /// `Z_STREAM_END`: the end of the stream was reached (all output produced or consumed).
+    StreamEnd,
+    /// `Z_NEED_DICT`: `inflate()` needs a preset dictionary to go on.
+    NeedDict,
+}
+
+impl ZStatus {
+    /// The C value of the status (`Z_OK`, `Z_STREAM_END`, `Z_NEED_DICT`).
+    pub const fn code(self) -> i32 {
+        match self {
+            Self::Ok => Z_OK,
+            Self::StreamEnd => Z_STREAM_END,
+            Self::NeedDict => Z_NEED_DICT,
+        }
+    }
+}
+
+/// The error codes of zlib (negative in C): what the `Err` of a stream function carries.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ZError {
+    /// `Z_ERRNO`: a file error. Only the gz* file functions return it; the kernel's zlib never
+    /// does, but its message exists (`zError`) and libsa's `cread` reports it.
+    Errno,
+    /// `Z_STREAM_ERROR`: the stream state is inconsistent, or a parameter is invalid.
+    Stream,
+    /// `Z_DATA_ERROR`: the input data was corrupted (or a dictionary is wrong).
+    Data,
+    /// `Z_MEM_ERROR`: not enough memory.
+    Mem,
+    /// `Z_BUF_ERROR`: no progress was possible, or the output space was too short.
+    Buf,
+    /// `Z_VERSION_ERROR`: the library version is incompatible with the caller's.
+    Version,
+}
+
+impl ZError {
+    /// The C value of the error (`Z_ERRNO` .. `Z_VERSION_ERROR`).
+    pub const fn code(self) -> i32 {
+        match self {
+            Self::Errno => Z_ERRNO,
+            Self::Stream => Z_STREAM_ERROR,
+            Self::Data => Z_DATA_ERROR,
+            Self::Mem => Z_MEM_ERROR,
+            Self::Buf => Z_BUF_ERROR,
+            Self::Version => Z_VERSION_ERROR,
+        }
+    }
+}
+
+/// The flush parameter of `deflate()` and `inflate()` (the C's `Z_NO_FLUSH` .. `Z_TREES`).
+/// The order is the C values' order, which the compressor compares.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Flush {
+    /// `Z_NO_FLUSH`: no flush, the library decides how much to buffer.
+    NoFlush,
+    /// `Z_PARTIAL_FLUSH`: flush to a byte boundary with an empty static block (deflate).
+    PartialFlush,
+    /// `Z_SYNC_FLUSH`: flush all output to a byte boundary with an empty stored block.
+    SyncFlush,
+    /// `Z_FULL_FLUSH`: a sync flush that also forgets the history (deflate).
+    FullFlush,
+    /// `Z_FINISH`: process all input and finish the stream.
+    Finish,
+    /// `Z_BLOCK`: stop at the end of the current block.
+    Block,
+    /// `Z_TREES`: like `Z_BLOCK`, and stop after a block header too (inflate only).
+    Trees,
+}
+
+impl Flush {
+    /// The C value of the flush mode (`Z_NO_FLUSH` .. `Z_TREES`).
+    pub const fn code(self) -> i32 {
+        match self {
+            Self::NoFlush => Z_NO_FLUSH,
+            Self::PartialFlush => Z_PARTIAL_FLUSH,
+            Self::SyncFlush => Z_SYNC_FLUSH,
+            Self::FullFlush => Z_FULL_FLUSH,
+            Self::Finish => Z_FINISH,
+            Self::Block => Z_BLOCK,
+            Self::Trees => Z_TREES,
+        }
+    }
+}
 
 /// `struct internal_state`: what `z_stream.state` points at. Each variant is the private state
 /// of one kind of stream; `None` is the C's `Z_NULL` (not initialised, or ended).
@@ -286,6 +386,30 @@ pub struct GzHeader {
     pub done: i32,
 }
 
+/// The C return code of a zlib result: the value the C function would have returned.
+pub trait ZCode {
+    /// The C value: `Z_OK`, `Z_STREAM_END`, `Z_NEED_DICT` or a negative error code.
+    fn code(&self) -> i32;
+}
+
+impl ZCode for Result<ZStatus, ZError> {
+    fn code(&self) -> i32 {
+        match self {
+            Ok(status) => status.code(),
+            Err(err) => err.code(),
+        }
+    }
+}
+
+impl ZCode for Result<(), ZError> {
+    fn code(&self) -> i32 {
+        match self {
+            Ok(()) => Z_OK,
+            Err(err) => err.code(),
+        }
+    }
+}
+
 /// `deflateInit(strm, level)`: the zlib.h macro, [`deflateInit_`](crate::deflate::deflateInit_)
 /// with this library's version and stream size.
 pub fn deflateInit(strm: &mut ZStream<'_>, level: i32) -> i32 {
@@ -317,14 +441,14 @@ pub fn deflateInit2(
 
 /// `inflateInit(strm)`: the zlib.h macro, [`inflateInit_`](crate::inflate::inflateInit_) with
 /// this library's version and stream size.
-pub fn inflateInit(strm: &mut ZStream<'_>) -> i32 {
+pub fn inflateInit(strm: &mut ZStream<'_>) -> Result<(), ZError> {
     crate::inflate::inflateInit_(strm, ZLIB_VERSION, size_of::<ZStream<'_>>() as i32)
 }
 
 /// `inflateInit2(strm, windowBits)`: the zlib.h macro,
 /// [`inflateInit2_`](crate::inflate::inflateInit2_) with this library's version and stream
 /// size.
-pub fn inflateInit2(strm: &mut ZStream<'_>, windowBits: i32) -> i32 {
+pub fn inflateInit2(strm: &mut ZStream<'_>, windowBits: i32) -> Result<(), ZError> {
     crate::inflate::inflateInit2_(
         strm,
         windowBits,
@@ -336,7 +460,11 @@ pub fn inflateInit2(strm: &mut ZStream<'_>, windowBits: i32) -> i32 {
 /// `inflateBackInit(strm, windowBits, window)`: the zlib.h macro,
 /// [`inflateBackInit_`](crate::infback::inflateBackInit_) with this library's version and
 /// stream size.
-pub fn inflateBackInit(strm: &mut ZStream<'_>, windowBits: i32, window: Vec<u8>) -> i32 {
+pub fn inflateBackInit(
+    strm: &mut ZStream<'_>,
+    windowBits: i32,
+    window: Vec<u8>,
+) -> Result<(), ZError> {
     crate::infback::inflateBackInit_(
         strm,
         windowBits,
@@ -346,3 +474,50 @@ pub fn inflateBackInit(strm: &mut ZStream<'_>, windowBits: i32, window: Vec<u8>)
     )
 }
 /* </CODE> */
+
+/* <TESTS> */
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every status, error and flush mode against the value zlib.h gives it.
+    #[test]
+    fn codes_are_zlib_h_values() {
+        for (status, code) in [
+            (ZStatus::Ok, 0),
+            (ZStatus::StreamEnd, 1),
+            (ZStatus::NeedDict, 2),
+        ] {
+            assert_eq!(status.code(), code);
+            assert_eq!(Ok::<ZStatus, ZError>(status).code(), code);
+        }
+        for (err, code) in [
+            (ZError::Errno, -1),
+            (ZError::Stream, -2),
+            (ZError::Data, -3),
+            (ZError::Mem, -4),
+            (ZError::Buf, -5),
+            (ZError::Version, -6),
+        ] {
+            assert_eq!(err.code(), code);
+            assert_eq!(Err::<ZStatus, ZError>(err).code(), code);
+            assert_eq!(Err::<(), ZError>(err).code(), code);
+        }
+        assert_eq!(Ok::<(), ZError>(()).code(), Z_OK);
+        let flushes = [
+            Flush::NoFlush,
+            Flush::PartialFlush,
+            Flush::SyncFlush,
+            Flush::FullFlush,
+            Flush::Finish,
+            Flush::Block,
+            Flush::Trees,
+        ];
+        for (code, flush) in flushes.into_iter().enumerate() {
+            assert_eq!(usize::try_from(flush.code()), Ok(code));
+        }
+        // the order deflate compares is the order of the C values
+        assert!(flushes.windows(2).all(|w| w[0] < w[1]));
+    }
+}
+/* </TESTS> */

@@ -10,6 +10,7 @@ Columns: LZ shape | native shape | why.
 | LZ shape (mirrors the C) | Native shape | Why |
 |---|---|---|
 | _(settled rows start at N1)_ | | |
+| A C status code returned as `i32` (zlib's `Z_OK`, `Z_STREAM_END`, `Z_NEED_DICT`, `Z_BUF_ERROR`, ...) and compared by every caller; a mode passed as an `i32` constant (`Z_FINISH`) | `Result<Status, Error>`: the `Ok` carries the non-error statuses (`Result<(), Error>` when success is only `Z_OK`), the `Err` a typed error enum; each type has `code()` for the C value, and the `Z_*` constants stay as those values; the mode is an enum (`Flush`) with its own `code()` (`sys/lib/libz/zlib.rs`) | `?` and `match` replace the comparisons; an error cannot be mistaken for progress, and an out-of-range mode cannot be built. Callers that keep a status integer of their own (libsa's `cread`) take `.code()` |
 
 ## Candidates (not settled; each becomes a row when first used)
 

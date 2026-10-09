@@ -282,12 +282,15 @@ pub fn add_fixture(name: &'static str, file: &str) {
     let z = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let mut out = vec![0u8; 4 << 20];
     let mut strm = libz::ZStream::new();
-    assert_eq!(libz::inflateInit(&mut strm), libz::Z_OK);
+    assert_eq!(libz::inflateInit(&mut strm), Ok(()));
     strm.next_in = &z;
     strm.next_out = &mut out;
-    assert_eq!(libz::inflate(&mut strm, libz::Z_FINISH), libz::Z_STREAM_END);
+    assert_eq!(
+        libz::inflate(&mut strm, libz::Flush::Finish),
+        Ok(libz::ZStatus::StreamEnd)
+    );
     let n = strm.total_out as usize;
-    libz::inflateEnd(&mut strm);
+    assert_eq!(libz::inflateEnd(&mut strm), Ok(()));
     out.truncate(n);
     add_image(name, Box::leak(out.into_boxed_slice()));
 }

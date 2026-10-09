@@ -61,6 +61,7 @@
 //! functions that set up, reset, prime, synchronise, copy and end an inflate stream.
 //!
 //! Upstream: sys/lib/libz/inflate.c @ 3ce1f3f79392, sys/lib/libz/inflate.h @ 3ce1f3f79392
+//! LZ: sys/lib/libz/inflate.rs@f5985f1d055a
 //!
 //! **This is an altered source version, not the original zlib `inflate.c`/`inflate.h`** (zlib
 //! licence, clause 2): a Rust rewrite written for EmiBSD. The original's notice is kept above
@@ -89,7 +90,7 @@
 //! - `GUNZIP` is not defined (`NO_GZIP`): the gzip modes (`FLAGS` .. `HCRC`, `LENGTH`) exist in
 //!   `InflateMode` but nothing enters them, `windowBits` above 15 are refused as in the C
 //!   build, and the header and trailer checks are the zlib ones only. A comment marks each
-//!   site. `inflateGetHeader` refuses every stream (`Z_STREAM_ERROR`, since `wrap` never has
+//!   site. `inflateGetHeader` refuses every stream (`ZError::Stream`, since `wrap` never has
 //!   bit 1), as it does in the C build; the state has no `head` (it could not keep the
 //!   caller's `&mut GzHeader` anyway).
 //! - The state is `InternalState::Inflate` in the stream; `inflateStateCheck` checks the
@@ -106,16 +107,35 @@
 //!   the same call, which the C reaches backwards from `next_out`; the stream's `next_out` is
 //!   handed back advanced on every return.
 //! - `inflateGetDictionary` takes `Option<&mut [u8]>`; a buffer shorter than the window's
-//!   contents gets `Z_BUF_ERROR` (the C overruns it). `inflateSetDictionary` takes a slice.
+//!   contents gets `ZError::Buf` (the C overruns it). `inflateSetDictionary` takes a slice.
 //! - `inflateCopy` reads `source` through a shared reference and copies its stream fields too,
 //!   but `dest.next_out` is left empty: the output buffer is a `&mut` and cannot be shared by
 //!   two streams. The caller gives `dest` its own.
 //! - Not defined in the kernel build, so only the `#else` side is ported: `INFLATE_STRICT`
 //!   (`dmax` is kept but never checked), `INFLATE_ALLOW_INVALID_DISTANCE_TOOFAR_ARRR`
-//!   (`inflateUndermine` returns `Z_DATA_ERROR` and `sane` stays true), `PKZIP_BUG_WORKAROUND`,
+//!   (`inflateUndermine` returns `ZError::Data` and `sane` stays true), `PKZIP_BUG_WORKAROUND`,
 //!   `Z_SOLO`, `ZLIB_DEBUG` (`Trace*` dropped, `Assert` is `zassert!`). `BUILDFIXED` and
 //!   `MAKEFIXED` concern `inftrees.c` (`inflate_fixed`), which this zlib's `inflate.c` calls
 //!   instead of having `fixedtables()`/`makefixed()` of its own.
+//!
+//! ## Redesign
+//! - Every function returns a `Result` instead of a zlib status code (`zlib.rs`, [`ZStatus`]
+//!   and [`ZError`]): `inflate()` returns `Ok(ZStatus::Ok | StreamEnd | NeedDict)` or the
+//!   error; the functions whose only success is `Z_OK` return `Result<(), ZError>`. A missing
+//!   or foreign state is `Err(ZError::Stream)` everywhere, which `with_state` now returns.
+//! - The values the C returns through out parameters or in-band sentinels are the `Ok` value:
+//!   `inflateGetDictionary` returns the dictionary length (LZ: `dictLength: Option<&mut u32>`),
+//!   `inflateSyncPoint` a `bool` (LZ: 1/0 or `Z_STREAM_ERROR` in one `i32`), `inflateMark`
+//!   and `inflateCodesUsed` their value or `Err(ZError::Stream)` (LZ: the sentinels
+//!   `-(1 << 16)` and `u64::MAX`, which `.unwrap_or` gives back).
+//! - `flush` is a [`Flush`]; `inflateValidate`'s `check` and `inflateUndermine`'s `subvert` are
+//!   `bool` (they were C ints used as flags).
+//! - `updatewindow` returns `Result<(), ZError>` (`Err(ZError::Mem)` when the window cannot be
+//!   allocated; LZ returned the C's `1` as `true`), `syncsearch` returns the new pattern count
+//!   with the bytes read instead of updating a `&mut` count, and `inflate_table` returns the
+//!   tables' end and root bits (`inftrees.rs`).
+//! - `wsize`, `whave` and `wnext` are `usize`: they index the window, and the casts at every
+//!   use are gone.
 
 #![allow(non_snake_case)] // zlib's API names are camelCase in C (inflateInit2_, inflateReset2)
 
@@ -126,9 +146,7 @@ use crate::inffast::inflate_fast;
 use crate::inffixed::{distfix, lenfix};
 use crate::inftrees::{Code, CodeType, ENOUGH, inflate_fixed, inflate_table};
 use crate::zlib::{
-    GzHeader, InternalState, Z_BLOCK, Z_BUF_ERROR, Z_DATA_ERROR, Z_DEFLATED, Z_FINISH, Z_MEM_ERROR,
-    Z_NEED_DICT, Z_OK, Z_STREAM_END, Z_STREAM_ERROR, Z_TREES, Z_VERSION_ERROR, ZLIB_VERSION,
-    ZStream,
+    Flush, GzHeader, InternalState, Z_DEFLATED, ZError, ZLIB_VERSION, ZStatus, ZStream,
 };
 use crate::zopenbsd::{ZBox, zcalloc, zcalloc_box, zcfree};
 use crate::zutil::{DEF_WBITS, SLOW, SMALL};
@@ -251,11 +269,11 @@ pub(crate) struct InflateState {
     /// `wbits`: log base 2 of requested window size.
     pub(crate) wbits: u32,
     /// `wsize`: window size or zero if not using window.
-    pub(crate) wsize: u32,
+    pub(crate) wsize: usize,
     /// `whave`: valid bytes in the window.
-    pub(crate) whave: u32,
+    pub(crate) whave: usize,
     /// `wnext`: window write index.
-    pub(crate) wnext: u32,
+    pub(crate) wnext: usize,
     /// `window`: allocated sliding window, if needed (`1 << wbits` bytes); for
     /// `inflateBack()`, the caller's window, which is also its output buffer.
     pub(crate) window: Option<Vec<u8>>,
@@ -366,8 +384,7 @@ impl InflateState {
         let window = match &self.window {
             Some(src) => {
                 let mut window = zcalloc(src.len())?;
-                let whave = self.whave as usize;
-                window[..whave].copy_from_slice(&src[..whave]);
+                window[..self.whave].copy_from_slice(&src[..self.whave]);
                 Some(window)
             }
             None => None,
@@ -510,32 +527,32 @@ fn inflateStateCheck(strm: &ZStream<'_>) -> bool {
 }
 
 /// Run `f` on the stream and its inflate state, which is taken out of the stream for the
-/// call and put back afterwards. `None` (and `f` not called) when `inflateStateCheck` fails.
+/// call and put back afterwards. `Err(ZError::Stream)` (and `f` not called) when
+/// `inflateStateCheck` fails.
 fn with_state<'a, R>(
     strm: &mut ZStream<'a>,
-    f: impl FnOnce(&mut ZStream<'a>, &mut InflateState) -> R,
-) -> Option<R> {
+    f: impl FnOnce(&mut ZStream<'a>, &mut InflateState) -> Result<R, ZError>,
+) -> Result<R, ZError> {
     match core::mem::take(&mut strm.state) {
         InternalState::Inflate(mut state) => {
             let r = f(strm, &mut state);
             strm.state = InternalState::Inflate(state);
-            Some(r)
+            r
         }
         other => {
             strm.state = other;
-            None
+            Err(ZError::Stream)
         }
     }
 }
 
 /// `inflateResetKeep`: reset the stream for a new stream but keep the window and its
-/// contents (`inflateReset` drops them). Returns `Z_STREAM_ERROR` without an inflate state.
-pub fn inflateResetKeep(strm: &mut ZStream<'_>) -> i32 {
+/// contents (`inflateReset` drops them). `Err(ZError::Stream)` without an inflate state.
+pub fn inflateResetKeep(strm: &mut ZStream<'_>) -> Result<(), ZError> {
     with_state(strm, |strm, state| {
         reset_keep(strm, state);
-        Z_OK
+        Ok(())
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
 /// The body of `inflateResetKeep`, once the state is known to be valid.
@@ -547,7 +564,7 @@ fn reset_keep(strm: &mut ZStream<'_>, state: &mut InflateState) {
     strm.data_type = 0;
     if state.wrap != 0 {
         // to support ill-conceived Java test suite
-        strm.adler = (state.wrap & 1) as u32;
+        strm.adler = u32::from(state.wrap & 1 != 0);
     }
     state.mode = InflateMode::HEAD;
     state.last = false;
@@ -564,14 +581,13 @@ fn reset_keep(strm: &mut ZStream<'_>, state: &mut InflateState) {
 }
 
 /// `inflateReset`: reset the stream for a new stream with the same parameters; the window
-/// contents are dropped (the window memory is kept). Returns `Z_STREAM_ERROR` without an
+/// contents are dropped (the window memory is kept). `Err(ZError::Stream)` without an
 /// inflate state.
-pub fn inflateReset(strm: &mut ZStream<'_>) -> i32 {
+pub fn inflateReset(strm: &mut ZStream<'_>) -> Result<(), ZError> {
     with_state(strm, |strm, state| {
         reset(strm, state);
-        Z_OK
+        Ok(())
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
 /// The body of `inflateReset`, once the state is known to be valid.
@@ -583,19 +599,19 @@ fn reset(strm: &mut ZStream<'_>, state: &mut InflateState) {
 }
 
 /// `inflateReset2`: [`inflateReset`] with a new `windowBits` (as for [`inflateInit2_`]); the
-/// window is freed if its size changes. Returns `Z_STREAM_ERROR` for an invalid `windowBits`
-/// or without an inflate state.
-pub fn inflateReset2(strm: &mut ZStream<'_>, windowBits: i32) -> i32 {
-    with_state(strm, |strm, state| reset2(strm, state, windowBits)).unwrap_or(Z_STREAM_ERROR)
+/// window is freed if its size changes. `Err(ZError::Stream)` for an invalid `windowBits` or
+/// without an inflate state.
+pub fn inflateReset2(strm: &mut ZStream<'_>, windowBits: i32) -> Result<(), ZError> {
+    with_state(strm, |strm, state| reset2(strm, state, windowBits))
 }
 
 /// The body of `inflateReset2`, once the state is known to be valid.
-fn reset2(strm: &mut ZStream<'_>, state: &mut InflateState, windowBits: i32) -> i32 {
+fn reset2(strm: &mut ZStream<'_>, state: &mut InflateState, windowBits: i32) -> Result<(), ZError> {
     // extract wrap request from windowBits parameter
     let mut windowBits = windowBits;
     let wrap = if windowBits < 0 {
         if windowBits < -15 {
-            return Z_STREAM_ERROR;
+            return Err(ZError::Stream);
         }
         windowBits = -windowBits;
         0
@@ -607,42 +623,41 @@ fn reset2(strm: &mut ZStream<'_>, state: &mut InflateState, windowBits: i32) -> 
 
     // set number of window bits, free window if different
     if windowBits != 0 && !(8..=15).contains(&windowBits) {
-        return Z_STREAM_ERROR;
+        return Err(ZError::Stream);
     }
-    if state.window.is_some() && state.wbits != windowBits as u32 {
+    let wbits = windowBits.unsigned_abs(); // 0 or 8..=15
+    if state.window.is_some() && state.wbits != wbits {
         zcfree(state.window.take());
     }
 
     // update state and reset the rest of it
     state.wrap = wrap;
-    state.wbits = windowBits as u32;
+    state.wbits = wbits;
     reset(strm, state);
-    Z_OK
+    Ok(())
 }
 
 /// `inflateInit2_`: initialise `strm` for decompression. `windowBits` is 8..15 for a zlib
 /// stream with a window of up to `1 << windowBits` bytes (0: use the size in the header),
 /// or -8..-15 for raw deflate data. `version` and `stream_size` must match the library
-/// (`inflateInit2` in zlib.rs passes them). Returns `Z_OK`, `Z_MEM_ERROR`,
-/// `Z_VERSION_ERROR`, or `Z_STREAM_ERROR` for an invalid `windowBits`.
+/// (`inflateInit2` in zlib.rs passes them). Fails with `ZError::Mem`, `ZError::Version`, or
+/// `ZError::Stream` for an invalid `windowBits`.
 pub fn inflateInit2_(
     strm: &mut ZStream<'_>,
     windowBits: i32,
     version: &str,
     stream_size: i32,
-) -> i32 {
+) -> Result<(), ZError> {
     if version.as_bytes().first() != ZLIB_VERSION.as_bytes().first()
         || stream_size != size_of::<ZStream<'_>>() as i32
     {
-        return Z_VERSION_ERROR;
+        return Err(ZError::Version);
     }
     strm.msg = None; // in case we return an error
-    let Some(mut state) = InflateState::new() else {
-        return Z_MEM_ERROR;
-    };
+    let mut state = InflateState::new().ok_or(ZError::Mem)?;
     // mode is HEAD, to pass the state test in inflateReset2()
     let ret = reset2(strm, &mut state, windowBits);
-    if ret == Z_OK {
+    if ret.is_ok() {
         strm.state = InternalState::Inflate(state);
     } else {
         zcfree(state);
@@ -653,48 +668,45 @@ pub fn inflateInit2_(
 
 /// `inflateInit_`: [`inflateInit2_`] with the default window, `DEF_WBITS`, and a zlib
 /// wrapper.
-pub fn inflateInit_(strm: &mut ZStream<'_>, version: &str, stream_size: i32) -> i32 {
+pub fn inflateInit_(strm: &mut ZStream<'_>, version: &str, stream_size: i32) -> Result<(), ZError> {
     inflateInit2_(strm, DEF_WBITS, version, stream_size)
 }
 
 /// `inflatePrime`: insert `bits` bits of `value` (at most 16, and at most 32 in the
 /// accumulator) into the input, as if they came before `next_in`. A negative `bits` empties
-/// the accumulator. Returns `Z_STREAM_ERROR` for too many bits or without an inflate state.
-pub fn inflatePrime(strm: &mut ZStream<'_>, bits: i32, value: i32) -> i32 {
+/// the accumulator. `Err(ZError::Stream)` for too many bits or without an inflate state.
+pub fn inflatePrime(strm: &mut ZStream<'_>, bits: i32, value: i32) -> Result<(), ZError> {
     with_state(strm, |_, state| {
         if bits == 0 {
-            return Z_OK;
+            return Ok(());
         }
         if bits < 0 {
             state.hold = 0;
             state.bits = 0;
-            return Z_OK;
+            return Ok(());
         }
-        if bits > 16 || state.bits + bits as u32 > 32 {
-            return Z_STREAM_ERROR;
+        let bits = bits.unsigned_abs();
+        if bits > 16 || state.bits + bits > 32 {
+            return Err(ZError::Stream);
         }
-        let value = i64::from(value) & ((1i64 << bits) - 1);
-        state.hold += (value as u64) << state.bits;
-        state.bits += bits as u32;
-        Z_OK
+        let value = i64::from(value) & ((1i64 << bits) - 1); // 0..=0xffff
+        state.hold += value.unsigned_abs() << state.bits;
+        state.bits += bits;
+        Ok(())
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
 /// `updatewindow`: copy the last `wsize` (normally 32K) bytes of `src`, the output just
 /// written (or a dictionary), into the circular window, allocating the window first if
-/// needed. Returns true (the C's 1) when the window cannot be allocated.
+/// needed. `Err(ZError::Mem)` when the window cannot be allocated.
 ///
 /// It runs only when a window is in use already, or when a call wrote output but did not
 /// reach the end of the stream (or for a dictionary). Output buffers larger than 32K help:
 /// only the last 32K are copied, and later distances fall within the output itself.
-pub(crate) fn updatewindow(state: &mut InflateState, src: &[u8]) -> bool {
+pub(crate) fn updatewindow(state: &mut InflateState, src: &[u8]) -> Result<(), ZError> {
     // if it hasn't been done already, allocate space for the window
     if state.window.is_none() {
-        state.window = zcalloc(1usize << state.wbits);
-        if state.window.is_none() {
-            return true;
-        }
+        state.window = Some(zcalloc(1usize << state.wbits).ok_or(ZError::Mem)?);
     }
 
     // if window not in use yet, initialize
@@ -705,10 +717,9 @@ pub(crate) fn updatewindow(state: &mut InflateState, src: &[u8]) -> bool {
     }
 
     let Some(window) = state.window.as_deref_mut() else {
-        return true;
+        return Err(ZError::Mem);
     };
-    let wsize = state.wsize as usize;
-    let wnext = state.wnext as usize;
+    let (wsize, wnext) = (state.wsize, state.wnext);
 
     // copy state->wsize or less output bytes into the circular window
     let copy = src.len();
@@ -722,42 +733,52 @@ pub(crate) fn updatewindow(state: &mut InflateState, src: &[u8]) -> bool {
         let rest = copy - dist;
         if rest != 0 {
             window[..rest].copy_from_slice(&src[dist..]);
-            state.wnext = rest as u32;
+            state.wnext = rest;
             state.whave = state.wsize;
         } else {
-            state.wnext += dist as u32;
+            state.wnext += dist;
             if state.wnext == state.wsize {
                 state.wnext = 0;
             }
             if state.whave < state.wsize {
-                state.whave += dist as u32;
+                state.whave += dist;
             }
         }
     }
-    false
+    Ok(())
 }
 
 /// `inflate`: decompress as much as possible from `next_in` into `next_out`, advancing both,
-/// and return `Z_OK` (progress made), `Z_STREAM_END` (the end of the stream, check value
-/// verified), `Z_NEED_DICT` (call [`inflateSetDictionary`]; `adler` is the dictionary's id),
-/// `Z_DATA_ERROR` (corrupt input; `msg` says why), `Z_MEM_ERROR`, `Z_STREAM_ERROR` (no inflate
-/// state), or `Z_BUF_ERROR` (no progress was possible, or `flush` is `Z_FINISH` and the end
-/// was not reached). `flush` is `Z_NO_FLUSH`, `Z_SYNC_FLUSH`, `Z_FINISH`, or `Z_BLOCK` /
-/// `Z_TREES` to stop at the next block boundary / after the block header. `data_type` tells
-/// where decoding stopped: the unused bits in the last input byte, plus 64 in the last block,
-/// 128 at the end of a block, 256 after a block header.
-pub fn inflate(strm: &mut ZStream<'_>, flush: i32) -> i32 {
+/// and return `Ok(ZStatus::Ok)` (progress made), `Ok(ZStatus::StreamEnd)` (the end of the
+/// stream, check value verified), `Ok(ZStatus::NeedDict)` (call [`inflateSetDictionary`];
+/// `adler` is the dictionary's id), or fail with `ZError::Data` (corrupt input; `msg` says
+/// why), `ZError::Mem`, `ZError::Stream` (no inflate state), or `ZError::Buf` (no progress
+/// was possible, or `flush` is `Flush::Finish` and the end was not reached). `flush` is
+/// `NoFlush`, `SyncFlush`, `Finish`, or `Block` / `Trees` to stop at the next block boundary
+/// / after the block header. `data_type` tells where decoding stopped: the unused bits in the
+/// last input byte, plus 64 in the last block, 128 at the end of a block, 256 after a block
+/// header.
+pub fn inflate(strm: &mut ZStream<'_>, flush: Flush) -> Result<ZStatus, ZError> {
     inflate_impl(strm, flush, SLOW)
 }
 
 /// `inflate()` with `SLOW` as a parameter: the kernel passes `SLOW` (true), the host tests
 /// both values, so that `inflate_fast()` decodes the same streams too.
-pub(crate) fn inflate_impl(strm: &mut ZStream<'_>, flush: i32, slow: bool) -> i32 {
-    with_state(strm, |strm, state| inflate_run(strm, state, flush, slow)).unwrap_or(Z_STREAM_ERROR)
+pub(crate) fn inflate_impl(
+    strm: &mut ZStream<'_>,
+    flush: Flush,
+    slow: bool,
+) -> Result<ZStatus, ZError> {
+    with_state(strm, |strm, state| inflate_run(strm, state, flush, slow))
 }
 
 /// The state machine of `inflate()`, once the state is known to be valid.
-fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slow: bool) -> i32 {
+fn inflate_run(
+    strm: &mut ZStream<'_>,
+    state: &mut InflateState,
+    flush: Flush,
+    slow: bool,
+) -> Result<ZStatus, ZError> {
     use InflateMode::*;
 
     if state.mode == TYPE {
@@ -766,7 +787,7 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
     let mut r = Regs::load(strm, state);
     let in_ = r.have(); // save starting available input
     let mut out = r.left(); // and output
-    let mut ret = Z_OK;
+    let mut ret = Ok(ZStatus::Ok);
 
     'inf_leave: loop {
         match state.mode {
@@ -785,7 +806,7 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
                     state.mode = BAD;
                     continue;
                 }
-                if r.low_bits(4) != Z_DEFLATED as u32 {
+                if r.low_bits(4) != Z_DEFLATED.unsigned_abs() {
                     strm.msg = Some(small_msg("unknown compression method"));
                     state.mode = BAD;
                     continue;
@@ -819,14 +840,14 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
             DICT => {
                 if !state.havedict {
                     r.restore(strm, state);
-                    return Z_NEED_DICT;
+                    return Ok(ZStatus::NeedDict);
                 }
                 state.check = adler32(0, None);
                 strm.adler = state.check;
                 state.mode = TYPE;
             }
             TYPE | TYPEDO => {
-                if state.mode == TYPE && (flush == Z_BLOCK || flush == Z_TREES) {
+                if state.mode == TYPE && matches!(flush, Flush::Block | Flush::Trees) {
                     break 'inf_leave;
                 }
                 if state.last {
@@ -845,7 +866,7 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
                         // fixed block
                         inflate_fixed(state);
                         state.mode = LEN_; // decode codes
-                        if flush == Z_TREES {
+                        if flush == Flush::Trees {
                             r.drop_bits(2);
                             break 'inf_leave;
                         }
@@ -871,7 +892,7 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
                 state.length = (r.hold & 0xffff) as u32;
                 r.init_bits();
                 state.mode = COPY_;
-                if flush == Z_TREES {
+                if flush == Flush::Trees {
                     break 'inf_leave;
                 }
             }
@@ -927,18 +948,20 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
                 state.lencode = CodeTable::Codes(0);
                 state.distcode = CodeTable::Codes(0);
                 state.lenbits = 7;
-                let rc = inflate_table(
+                match inflate_table(
                     CodeType::CODES,
                     &state.lens[..19],
                     &mut state.codes,
-                    &mut state.next,
-                    &mut state.lenbits,
+                    state.next,
+                    state.lenbits,
                     &mut state.work,
-                );
-                if rc != 0 {
-                    strm.msg = Some(small_msg("invalid code lengths set"));
-                    state.mode = BAD;
-                    continue;
+                ) {
+                    Ok((next, bits)) => (state.next, state.lenbits) = (next, bits),
+                    Err(_) => {
+                        strm.msg = Some(small_msg("invalid code lengths set"));
+                        state.mode = BAD;
+                        continue;
+                    }
                 }
                 state.have = 0;
                 state.mode = CODELENS;
@@ -1020,36 +1043,40 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
                 state.next = 0;
                 state.lencode = CodeTable::Codes(0);
                 state.lenbits = 9;
-                let rc = inflate_table(
+                match inflate_table(
                     CodeType::LENS,
                     &state.lens[..nlen],
                     &mut state.codes,
-                    &mut state.next,
-                    &mut state.lenbits,
+                    state.next,
+                    state.lenbits,
                     &mut state.work,
-                );
-                if rc != 0 {
-                    strm.msg = Some(small_msg("invalid literal/lengths set"));
-                    state.mode = BAD;
-                    continue;
+                ) {
+                    Ok((next, bits)) => (state.next, state.lenbits) = (next, bits),
+                    Err(_) => {
+                        strm.msg = Some(small_msg("invalid literal/lengths set"));
+                        state.mode = BAD;
+                        continue;
+                    }
                 }
                 state.distcode = CodeTable::Codes(state.next);
                 state.distbits = 6;
-                let rc = inflate_table(
+                match inflate_table(
                     CodeType::DISTS,
                     &state.lens[nlen..nlen + ndist],
                     &mut state.codes,
-                    &mut state.next,
-                    &mut state.distbits,
+                    state.next,
+                    state.distbits,
                     &mut state.work,
-                );
-                if rc != 0 {
-                    strm.msg = Some(small_msg("invalid distances set"));
-                    state.mode = BAD;
-                    continue;
+                ) {
+                    Ok((next, bits)) => (state.next, state.distbits) = (next, bits),
+                    Err(_) => {
+                        strm.msg = Some(small_msg("invalid distances set"));
+                        state.mode = BAD;
+                        continue;
+                    }
                 }
                 state.mode = LEN_;
-                if flush == Z_TREES {
+                if flush == Flush::Trees {
                     break 'inf_leave;
                 }
             }
@@ -1178,14 +1205,14 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
                 if state.offset as usize > copy {
                     // copy from window
                     copy = state.offset as usize - copy;
-                    if copy > state.whave as usize && state.sane {
+                    if copy > state.whave && state.sane {
                         strm.msg = Some(small_msg("invalid distance too far back"));
                         state.mode = BAD;
                         continue;
                     }
                     // (INFLATE_ALLOW_INVALID_DISTANCE_TOOFAR_ARRR is not defined, and sane
                     // is always true without it)
-                    let (wsize, wnext) = (state.wsize as usize, state.wnext as usize);
+                    let (wsize, wnext) = (state.wsize, state.wnext);
                     let from = if copy > wnext {
                         copy -= wnext;
                         wsize - copy
@@ -1241,22 +1268,22 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
                 state.mode = DONE;
             }
             DONE => {
-                ret = Z_STREAM_END;
+                ret = Ok(ZStatus::StreamEnd);
                 break 'inf_leave;
             }
             BAD => {
-                ret = Z_DATA_ERROR;
+                ret = Err(ZError::Data);
                 break 'inf_leave;
             }
             MEM => {
                 r.restore(strm, state);
-                return Z_MEM_ERROR;
+                return Err(ZError::Mem);
             }
             // SYNC, and the gzip modes (FLAGS .. HCRC, LENGTH), which have no case of their
             // own when GUNZIP is not defined
             SYNC | FLAGS | TIME | OS | EXLEN | EXTRA | NAME | COMMENT | HCRC | LENGTH => {
                 r.restore(strm, state);
-                return Z_STREAM_ERROR;
+                return Err(ZError::Stream);
             }
         }
     }
@@ -1267,12 +1294,12 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
     // inflate() is non-recoverable.
     let written = out - r.left();
     if (state.wsize != 0
-        || (written != 0 && state.mode < BAD && (state.mode < CHECK || flush != Z_FINISH)))
-        && updatewindow(state, &r.output[r.put - written..r.put])
+        || (written != 0 && state.mode < BAD && (state.mode < CHECK || flush != Flush::Finish)))
+        && updatewindow(state, &r.output[r.put - written..r.put]).is_err()
     {
         state.mode = MEM;
         r.restore(strm, state);
-        return Z_MEM_ERROR;
+        return Err(ZError::Mem);
     }
     let in_ = in_ - r.have();
     let out = out - r.left();
@@ -1292,106 +1319,99 @@ fn inflate_run(strm: &mut ZStream<'_>, state: &mut InflateState, flush: i32, slo
         } else {
             0
         };
-    if ((in_ == 0 && out == 0) || flush == Z_FINISH) && ret == Z_OK {
-        ret = Z_BUF_ERROR;
+    if ((in_ == 0 && out == 0) || flush == Flush::Finish) && ret == Ok(ZStatus::Ok) {
+        ret = Err(ZError::Buf);
     }
     ret
 }
 
-/// `inflateEnd`: free the stream's inflate state (and window). Returns `Z_STREAM_ERROR`
-/// without an inflate state.
-pub fn inflateEnd(strm: &mut ZStream<'_>) -> i32 {
+/// `inflateEnd`: free the stream's inflate state (and window). `Err(ZError::Stream)` without
+/// an inflate state.
+pub fn inflateEnd(strm: &mut ZStream<'_>) -> Result<(), ZError> {
     if inflateStateCheck(strm) {
-        return Z_STREAM_ERROR;
+        return Err(ZError::Stream);
     }
     zcfree(core::mem::take(&mut strm.state));
-    Z_OK
+    Ok(())
 }
 
 /// `inflateGetDictionary`: copy the sliding window's contents, oldest first, to
 /// `dictionary` (which needs room for up to `1 << windowBits` bytes; `None` to only get the
-/// length) and store their length in `dictLength`. Returns `Z_BUF_ERROR` if `dictionary` is
-/// too short, `Z_STREAM_ERROR` without an inflate state.
+/// length) and return their length (the C's `dictLength`). `Err(ZError::Buf)` if
+/// `dictionary` is too short, `Err(ZError::Stream)` without an inflate state.
 pub fn inflateGetDictionary(
     strm: &mut ZStream<'_>,
     dictionary: Option<&mut [u8]>,
-    dictLength: Option<&mut u32>,
-) -> i32 {
+) -> Result<usize, ZError> {
     with_state(strm, |_, state| {
         // copy dictionary
-        let (whave, wnext) = (state.whave as usize, state.wnext as usize);
+        let (whave, wnext) = (state.whave, state.wnext);
         if whave != 0
             && let Some(dictionary) = dictionary
         {
             if dictionary.len() < whave {
-                return Z_BUF_ERROR;
+                return Err(ZError::Buf);
             }
             let window = state.window.as_deref().unwrap_or(&[]);
             dictionary[..whave - wnext].copy_from_slice(&window[wnext..whave]);
             dictionary[whave - wnext..whave].copy_from_slice(&window[..wnext]);
         }
-        if let Some(dictLength) = dictLength {
-            *dictLength = state.whave;
-        }
-        Z_OK
+        Ok(whave)
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
 /// `inflateSetDictionary`: give the decompressor the preset dictionary, after `inflate()`
 /// returned `Z_NEED_DICT` for a zlib stream (the dictionary's Adler-32 must be the id in the
-/// header), or at any time for a raw stream. Returns `Z_DATA_ERROR` for the wrong
-/// dictionary, `Z_STREAM_ERROR` at the wrong moment or without an inflate state,
-/// `Z_MEM_ERROR` if the window cannot be allocated.
-pub fn inflateSetDictionary(strm: &mut ZStream<'_>, dictionary: &[u8]) -> i32 {
+/// header), or at any time for a raw stream. Fails with `ZError::Data` for the wrong
+/// dictionary, `ZError::Stream` at the wrong moment or without an inflate state, `ZError::Mem`
+/// if the window cannot be allocated.
+pub fn inflateSetDictionary(strm: &mut ZStream<'_>, dictionary: &[u8]) -> Result<(), ZError> {
     with_state(strm, |_, state| {
         if state.wrap != 0 && state.mode != InflateMode::DICT {
-            return Z_STREAM_ERROR;
+            return Err(ZError::Stream);
         }
 
         // check for correct dictionary identifier
         if state.mode == InflateMode::DICT {
             let dictid = adler32(adler32(0, None), Some(dictionary));
             if dictid != state.check {
-                return Z_DATA_ERROR;
+                return Err(ZError::Data);
             }
         }
 
         // copy dictionary to window using updatewindow(), which will amend the existing
         // dictionary if appropriate
-        if updatewindow(state, dictionary) {
+        if let Err(err) = updatewindow(state, dictionary) {
             state.mode = InflateMode::MEM;
-            return Z_MEM_ERROR;
+            return Err(err);
         }
         state.havedict = true;
-        Z_OK
+        Ok(())
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
 /// `inflateGetHeader`: ask for the gzip header to be stored in `head`. Only a gzip stream
-/// has one, and this zlib is built without gzip decoding, so it always returns
-/// `Z_STREAM_ERROR`, as the C build does.
-pub fn inflateGetHeader(strm: &mut ZStream<'_>, head: &mut GzHeader) -> i32 {
+/// has one, and this zlib is built without gzip decoding, so it always fails with
+/// `ZError::Stream`, as the C build does.
+pub fn inflateGetHeader(strm: &mut ZStream<'_>, head: &mut GzHeader) -> Result<(), ZError> {
     with_state(strm, |_, state| {
         if state.wrap & 2 == 0 {
-            return Z_STREAM_ERROR;
+            return Err(ZError::Stream);
         }
         // Not reached in this build (wrap never has bit 1 without GUNZIP); the C would keep
         // `head` in the state to fill it while decoding a gzip header.
         head.done = 0;
-        Z_OK
+        Ok(())
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
-/// `syncsearch`: search `buf` for the pattern 0, 0, 0xff, 0xff. `*have` is the number of
-/// pattern bytes found so far (0..3; 0 for the first call) and is updated. If it reaches 4,
-/// the pattern was found and the return value is the number of bytes read, including the
-/// pattern's last byte; otherwise the return value is `buf.len()`, and the search can go on
-/// with more data and the same `*have`.
-fn syncsearch(have: &mut u32, buf: &[u8]) -> usize {
-    let mut got = *have;
+/// `syncsearch`: search `buf` for the pattern 0, 0, 0xff, 0xff. `have` is the number of
+/// pattern bytes found so far (0..3; 0 for the first call). Returns the new count and the
+/// number of bytes read: if the count is 4, the pattern was found and the bytes read include
+/// the pattern's last byte; otherwise all of `buf` was read, and the search can go on with
+/// more data and the returned count.
+fn syncsearch(have: u32, buf: &[u8]) -> (u32, usize) {
+    let mut got = have;
     let mut next = 0;
     while next < buf.len() && got < 4 {
         if u32::from(buf[next]) == if got < 2 { 0 } else { 0xff } {
@@ -1403,19 +1423,18 @@ fn syncsearch(have: &mut u32, buf: &[u8]) -> usize {
         }
         next += 1;
     }
-    *have = got;
-    next
+    (got, next)
 }
 
 /// `inflateSync`: skip input until the 0, 0, 0xff, 0xff marker of a full flush point (an
 /// empty stored block), then get ready to inflate the block after it. Returns `Z_OK` when
-/// found (the check value is not verified from then on), `Z_DATA_ERROR` when the input ran
-/// out first (call again with more), `Z_BUF_ERROR` with no input, `Z_STREAM_ERROR` without an
-/// inflate state. `total_in` counts the skipped bytes.
-pub fn inflateSync(strm: &mut ZStream<'_>) -> i32 {
+/// found (the check value is not verified from then on); fails with `ZError::Data` when the
+/// input ran out first (call again with more), `ZError::Buf` with no input, `ZError::Stream`
+/// without an inflate state. `total_in` counts the skipped bytes.
+pub fn inflateSync(strm: &mut ZStream<'_>) -> Result<(), ZError> {
     with_state(strm, |strm, state| {
         if strm.avail_in() == 0 && state.bits < 8 {
-            return Z_BUF_ERROR;
+            return Err(ZError::Buf);
         }
 
         // if first time, start search in bit buffer
@@ -1431,18 +1450,18 @@ pub fn inflateSync(strm: &mut ZStream<'_>) -> i32 {
                 state.hold >>= 8;
                 state.bits -= 8;
             }
-            state.have = 0;
-            syncsearch(&mut state.have, &buf[..len]);
+            state.have = syncsearch(0, &buf[..len]).0;
         }
 
         // search available input
-        let len = syncsearch(&mut state.have, strm.next_in);
+        let (have, len) = syncsearch(state.have, strm.next_in);
+        state.have = have;
         strm.take_in(len);
         strm.total_in += len as u64;
 
         // return no joy or set up to restart inflate() on a new block
         if state.have != 4 {
-            return Z_DATA_ERROR;
+            return Err(ZError::Data);
         }
         if state.flags == -1 {
             state.wrap = 0; // if no header yet, treat as raw
@@ -1456,37 +1475,33 @@ pub fn inflateSync(strm: &mut ZStream<'_>) -> i32 {
         strm.total_out = out;
         state.flags = flags;
         state.mode = InflateMode::TYPE;
-        Z_OK
+        Ok(())
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
-/// `inflateSyncPoint`: 1 if inflate is at the end of a block made by `Z_SYNC_FLUSH` or
-/// `Z_FULL_FLUSH`, waiting for the length bytes of the empty stored block, else 0. One PPP
-/// implementation uses it: PPP flushes with `Z_SYNC_FLUSH` but drops those length bytes, and
-/// checks at the end of a packet that inflate is waiting for them. `Z_STREAM_ERROR` without
-/// an inflate state.
-pub fn inflateSyncPoint(strm: &mut ZStream<'_>) -> i32 {
+/// `inflateSyncPoint`: true (the C's 1) if inflate is at the end of a block made by
+/// `Z_SYNC_FLUSH` or `Z_FULL_FLUSH`, waiting for the length bytes of the empty stored block.
+/// One PPP implementation uses it: PPP flushes with `Z_SYNC_FLUSH` but drops those length
+/// bytes, and checks at the end of a packet that inflate is waiting for them.
+/// `Err(ZError::Stream)` without an inflate state.
+pub fn inflateSyncPoint(strm: &mut ZStream<'_>) -> Result<bool, ZError> {
     with_state(strm, |_, state| {
-        i32::from(state.mode == InflateMode::STORED && state.bits == 0)
+        Ok(state.mode == InflateMode::STORED && state.bits == 0)
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
 /// `inflateCopy`: make `dest` a copy of `source`, inflate state and window included. `dest`
 /// gets `source`'s input and counters but an empty `next_out` (an output buffer cannot be
-/// shared); its previous state, if any, is dropped. Returns `Z_MEM_ERROR` or
-/// `Z_STREAM_ERROR` (no inflate state in `source`).
-pub fn inflateCopy<'a>(dest: &mut ZStream<'a>, source: &ZStream<'a>) -> i32 {
+/// shared); its previous state, if any, is dropped. Fails with `ZError::Mem` or
+/// `ZError::Stream` (no inflate state in `source`).
+pub fn inflateCopy<'a>(dest: &mut ZStream<'a>, source: &ZStream<'a>) -> Result<(), ZError> {
     // check input
     let InternalState::Inflate(state) = &source.state else {
-        return Z_STREAM_ERROR;
+        return Err(ZError::Stream);
     };
 
     // allocate space and copy state
-    let Some(copy) = state.try_clone() else {
-        return Z_MEM_ERROR;
-    };
+    let copy = state.try_clone().ok_or(ZError::Mem)?;
     dest.next_in = source.next_in;
     dest.total_in = source.total_in;
     dest.next_out = &mut [];
@@ -1495,57 +1510,56 @@ pub fn inflateCopy<'a>(dest: &mut ZStream<'a>, source: &ZStream<'a>) -> i32 {
     dest.data_type = source.data_type;
     dest.adler = source.adler;
     dest.state = InternalState::Inflate(copy);
-    Z_OK
+    Ok(())
 }
 
-/// `inflateUndermine`: allow (`subvert != 0`) distances too far back, filling with zeros.
-/// Only `INFLATE_ALLOW_INVALID_DISTANCE_TOOFAR_ARRR` builds allow it, and the kernel's is not
-/// one: it returns `Z_DATA_ERROR` and keeps the check (`Z_STREAM_ERROR` without an inflate
+/// `inflateUndermine`: allow (`subvert`) distances too far back, filling with zeros. Only
+/// `INFLATE_ALLOW_INVALID_DISTANCE_TOOFAR_ARRR` builds allow it, and the kernel's is not one:
+/// it fails with `ZError::Data` and keeps the check (`ZError::Stream` without an inflate
 /// state).
-pub fn inflateUndermine(strm: &mut ZStream<'_>, subvert: i32) -> i32 {
+pub fn inflateUndermine(strm: &mut ZStream<'_>, subvert: bool) -> Result<(), ZError> {
     with_state(strm, |_, state| {
         let _ = subvert;
         state.sane = true;
-        Z_DATA_ERROR
+        Err(ZError::Data)
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
-/// `inflateValidate`: check (`check != 0`) or ignore the zlib stream's Adler-32 trailer.
-/// Returns `Z_STREAM_ERROR` without an inflate state.
-pub fn inflateValidate(strm: &mut ZStream<'_>, check: i32) -> i32 {
+/// `inflateValidate`: check (`check`) or ignore the zlib stream's Adler-32 trailer.
+/// `Err(ZError::Stream)` without an inflate state.
+pub fn inflateValidate(strm: &mut ZStream<'_>, check: bool) -> Result<(), ZError> {
     with_state(strm, |_, state| {
-        if check != 0 && state.wrap != 0 {
+        if check && state.wrap != 0 {
             state.wrap |= 4;
         } else {
             state.wrap &= !4;
         }
-        Z_OK
+        Ok(())
     })
-    .unwrap_or(Z_STREAM_ERROR)
 }
 
 /// `inflateMark`: where decoding stands, for random access: the upper bits are the number of
 /// bits back from `next_in` where the current code starts (-1 between blocks and codes, so
 /// the value is negative), the low 16 bits the bytes still to copy of a stored block or the
-/// bytes already copied of a match. `-(1 << 16)` without an inflate state.
-pub fn inflateMark(strm: &mut ZStream<'_>) -> i64 {
+/// bytes already copied of a match. `Err(ZError::Stream)` without an inflate state (the C
+/// returns `-(1 << 16)`).
+pub fn inflateMark(strm: &mut ZStream<'_>) -> Result<i64, ZError> {
     with_state(strm, |_, state| {
         let low = match state.mode {
             InflateMode::COPY => state.length,
             InflateMode::MATCH => state.was - state.length,
             _ => 0,
         };
-        ((i64::from(state.back) as u64) << 16) as i64 + i64::from(low)
+        // back is -1 or a small bit count: the shift cannot overflow
+        Ok((i64::from(state.back) << 16) + i64::from(low))
     })
-    .unwrap_or(-(1 << 16))
 }
 
 /// `inflateCodesUsed`: the number of entries of the code space used by the current dynamic
-/// block's tables (to check `ENOUGH`). `u64::MAX` (the C's `(unsigned long)-1`) without an
-/// inflate state.
-pub fn inflateCodesUsed(strm: &mut ZStream<'_>) -> u64 {
-    with_state(strm, |_, state| state.next as u64).unwrap_or(u64::MAX)
+/// block's tables (to check `ENOUGH`). `Err(ZError::Stream)` without an inflate state (the C
+/// returns `(unsigned long)-1`).
+pub fn inflateCodesUsed(strm: &mut ZStream<'_>) -> Result<usize, ZError> {
+    with_state(strm, |_, state| Ok(state.next))
 }
 /* </CODE> */
 
@@ -1563,7 +1577,7 @@ mod tests {
     use super::*;
     use crate::adler32::adler32;
     use crate::zconf::MAX_WBITS;
-    use crate::zlib::{Z_NO_FLUSH, Z_PARTIAL_FLUSH, Z_SYNC_FLUSH, inflateInit, inflateInit2};
+    use crate::zlib::*;
     use std::vec;
     use std::vec::Vec;
 
@@ -1581,7 +1595,7 @@ mod tests {
 
     /// The result of decoding a stream.
     struct Decoded {
-        ret: i32,
+        ret: Result<ZStatus, ZError>,
         out: Vec<u8>,
         total_in: u64,
         adler: u32,
@@ -1590,7 +1604,7 @@ mod tests {
 
     /// Run `inflate_impl` on `strm` over `input`, giving it at most `in_chunk` new input bytes
     /// and `out_chunk` bytes of output space at a time, until it stops making progress or
-    /// returns something other than `Z_OK` (or `Z_BUF_ERROR` while there is more to give).
+    /// returns something other than `Ok(ZStatus::Ok)` (or `Err(ZError::Buf)` while there is more to give).
     /// The buffers live in a temporary stream that lends `strm`'s state.
     fn run(
         strm: &mut ZStream<'_>,
@@ -1598,7 +1612,7 @@ mod tests {
         slow: bool,
         in_chunk: usize,
         out_chunk: usize,
-        flush: i32,
+        flush: Flush,
     ) -> Decoded {
         let mut buf = vec![0u8; 1 << 17];
         let mut s = ZStream::new();
@@ -1626,7 +1640,7 @@ mod tests {
             ret = inflate_impl(&mut s, flush, slow);
             let more = (s.avail_in() == 0 && !input_rest.is_empty())
                 || (s.avail_out() == 0 && !out_rest.is_empty());
-            if !(ret == Z_OK || (ret == Z_BUF_ERROR && more)) {
+            if !(ret == Ok(ZStatus::Ok) || (ret == Err(ZError::Buf) && more)) {
                 break;
             }
         }
@@ -1657,25 +1671,25 @@ mod tests {
         slow: bool,
         in_chunk: usize,
         out_chunk: usize,
-        flush: i32,
+        flush: Flush,
     ) -> Decoded {
         let mut strm = ZStream::new();
-        assert_eq!(inflateInit2(&mut strm, wbits), Z_OK);
+        assert_eq!(inflateInit2(&mut strm, wbits), Ok(()));
         let d = run(&mut strm, input, slow, in_chunk, out_chunk, flush);
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
         d
     }
 
     /// Decode `input` in one call per buffer (all input, 128K of output).
     fn decode_all(input: &[u8], wbits: i32, slow: bool) -> Decoded {
-        decode(input, wbits, slow, usize::MAX, usize::MAX, Z_NO_FLUSH)
+        decode(input, wbits, slow, usize::MAX, usize::MAX, Flush::NoFlush)
     }
 
     /// Check that `input` decodes to `want`, with an Adler-32 check if it is a zlib stream.
     fn assert_decodes(input: &[u8], wbits: i32, want: &[u8]) {
         for slow in BOTH {
             let d = decode_all(input, wbits, slow);
-            assert_eq!(d.ret, Z_STREAM_END, "slow={slow} msg={:?}", d.msg);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "slow={slow} msg={:?}", d.msg);
             assert!(d.out == want, "slow={slow}: output differs");
             assert_eq!(d.total_in as usize, input.len());
             if wbits >= 0 {
@@ -1844,7 +1858,7 @@ mod tests {
             if wbits > 9 {
                 for slow in BOTH {
                     let d = decode_all(s, wbits - 1, slow);
-                    assert_eq!((d.ret, d.msg), (Z_DATA_ERROR, Some("error")));
+                    assert_eq!((d.ret, d.msg), (Err(ZError::Data), Some("error")));
                     assert!(d.out.is_empty());
                 }
             }
@@ -1879,11 +1893,11 @@ mod tests {
             // one call: the match is in the output, whatever the window size
             assert_eq!(decode_all(&s, -12, slow).out, want);
             // two calls: the match must come from the window, and 4K is not enough
-            let d = decode(&s, -15, slow, usize::MAX, 5000, Z_NO_FLUSH);
-            assert_eq!(d.ret, Z_STREAM_END);
+            let d = decode(&s, -15, slow, usize::MAX, 5000, Flush::NoFlush);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
             assert!(d.out == want);
-            let d = decode(&s, -12, slow, usize::MAX, 5000, Z_NO_FLUSH);
-            assert_eq!((d.ret, d.msg), (Z_DATA_ERROR, Some("error")));
+            let d = decode(&s, -12, slow, usize::MAX, 5000, Flush::NoFlush);
+            assert_eq!((d.ret, d.msg), (Err(ZError::Data), Some("error")));
             assert!(d.out == data);
         }
     }
@@ -1897,8 +1911,8 @@ mod tests {
             (&testdata!("raw12.z")[..], -12, CORPUS),
         ] {
             for slow in BOTH {
-                let d = decode(s, wbits, slow, 1, 1, Z_NO_FLUSH);
-                assert_eq!(d.ret, Z_STREAM_END);
+                let d = decode(s, wbits, slow, 1, 1, Flush::NoFlush);
+                assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
                 assert!(d.out == want);
             }
         }
@@ -1916,8 +1930,12 @@ mod tests {
             (40000, 1),
         ] {
             for slow in BOTH {
-                let d = decode(s, 15, slow, in_chunk, out_chunk, Z_SYNC_FLUSH);
-                assert_eq!(d.ret, Z_STREAM_END, "{in_chunk}/{out_chunk} slow={slow}");
+                let d = decode(s, 15, slow, in_chunk, out_chunk, Flush::SyncFlush);
+                assert_eq!(
+                    d.ret,
+                    Ok(ZStatus::StreamEnd),
+                    "{in_chunk}/{out_chunk} slow={slow}"
+                );
                 assert!(d.out == CORPUS, "{in_chunk}/{out_chunk} slow={slow}");
             }
         }
@@ -1927,38 +1945,36 @@ mod tests {
     fn z_finish_without_a_window() {
         for slow in BOTH {
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit(&mut strm), Z_OK);
+            assert_eq!(inflateInit(&mut strm), Ok(()));
             let d = run(
                 &mut strm,
                 testdata!("big6.z"),
                 slow,
                 usize::MAX,
                 usize::MAX,
-                Z_FINISH,
+                Flush::Finish,
             );
-            assert_eq!(d.ret, Z_STREAM_END);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
             assert!(d.out == CORPUS);
-            // one call that reached the end with Z_FINISH never needed a window
+            // one call that reached the end with Flush::Finish never needed a window
             let InternalState::Inflate(state) = &strm.state else {
                 panic!("no inflate state")
             };
             assert!(state.window.is_none());
-            let mut len = 1;
-            assert_eq!(inflateGetDictionary(&mut strm, None, Some(&mut len)), Z_OK);
-            assert_eq!(len, 0);
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
+            assert_eq!(inflateGetDictionary(&mut strm, None), Ok(0));
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
         }
     }
 
-    /// The IPComp path (`xform_ipcomp.c`): raw deflate, `Z_PARTIAL_FLUSH`, fresh output buffers
-    /// whenever one is full (`Z_OK` with `avail_out == 0`), until `Z_STREAM_END`.
+    /// The IPComp path (`xform_ipcomp.c`): raw deflate, `Flush::PartialFlush`, fresh output buffers
+    /// whenever one is full (`Ok(ZStatus::Ok)` with `avail_out == 0`), until `Ok(ZStatus::StreamEnd)`.
     #[test]
     fn ipcomp_raw_partial_flush_with_fresh_buffers() {
         let input = testdata!("raw15.z");
         let mut bufs: Vec<Vec<u8>> = (0..64).map(|_| vec![0u8; 1000]).collect();
         let mut used = Vec::new();
         let mut strm = ZStream::new();
-        assert_eq!(inflateInit2(&mut strm, -MAX_WBITS), Z_OK);
+        assert_eq!(inflateInit2(&mut strm, -MAX_WBITS), Ok(()));
         strm.next_in = input;
         let mut bufs_iter = bufs.iter_mut();
         let mut full = 0;
@@ -1967,21 +1983,21 @@ mod tests {
                 panic!("out of buffers")
             };
             strm.next_out = buf;
-            let ret = inflate(&mut strm, Z_PARTIAL_FLUSH);
+            let ret = inflate(&mut strm, Flush::PartialFlush);
             used.push(1000 - strm.avail_out());
-            if ret == Z_STREAM_END {
+            if ret == Ok(ZStatus::StreamEnd) {
                 break ret;
             }
-            assert_eq!(ret, Z_OK);
+            assert_eq!(ret, Ok(ZStatus::Ok));
             // "give me more space"
             assert_eq!(strm.avail_out(), 0);
             full += 1;
         };
-        assert_eq!(ret, Z_STREAM_END);
+        assert_eq!(ret, Ok(ZStatus::StreamEnd));
         assert_eq!(strm.avail_in(), 0);
         assert_eq!(strm.total_in as usize, input.len());
         assert_eq!(strm.total_out as usize, CORPUS.len());
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
         assert_eq!(full, CORPUS.len() / 1000);
         let out: Vec<u8> = bufs
             .iter()
@@ -1998,32 +2014,44 @@ mod tests {
         for slow in BOTH {
             let mut buf = vec![0u8; 8192];
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit(&mut strm), Z_OK);
+            assert_eq!(inflateInit(&mut strm), Ok(()));
             // not before inflate() asks for it
-            assert_eq!(inflateSetDictionary(&mut strm, dict), Z_STREAM_ERROR);
+            assert_eq!(inflateSetDictionary(&mut strm, dict), Err(ZError::Stream));
             strm.next_in = input;
             strm.next_out = &mut buf;
-            assert_eq!(inflate_impl(&mut strm, Z_NO_FLUSH, slow), Z_NEED_DICT);
+            assert_eq!(
+                inflate_impl(&mut strm, Flush::NoFlush, slow),
+                Ok(ZStatus::NeedDict)
+            );
             assert_eq!(strm.adler, adler32(1, Some(dict)));
             assert_eq!(strm.total_out, 0);
-            assert_eq!(inflateSetDictionary(&mut strm, &dict[1..]), Z_DATA_ERROR);
-            assert_eq!(inflateSetDictionary(&mut strm, dict), Z_OK);
-            assert_eq!(inflate_impl(&mut strm, Z_NO_FLUSH, slow), Z_STREAM_END);
+            assert_eq!(
+                inflateSetDictionary(&mut strm, &dict[1..]),
+                Err(ZError::Data)
+            );
+            assert_eq!(inflateSetDictionary(&mut strm, dict), Ok(()));
+            assert_eq!(
+                inflate_impl(&mut strm, Flush::NoFlush, slow),
+                Ok(ZStatus::StreamEnd)
+            );
             let n = strm.total_out as usize;
             assert_eq!(strm.adler, adler32(1, Some(SMALL_CORPUS)));
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
             assert!(buf[..n] == *SMALL_CORPUS);
 
             // a raw stream takes the dictionary up front
             let mut buf = vec![0u8; 8192];
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit2(&mut strm, -15), Z_OK);
-            assert_eq!(inflateSetDictionary(&mut strm, dict), Z_OK);
+            assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
+            assert_eq!(inflateSetDictionary(&mut strm, dict), Ok(()));
             strm.next_in = testdata!("dict_raw.z");
             strm.next_out = &mut buf;
-            assert_eq!(inflate_impl(&mut strm, Z_NO_FLUSH, slow), Z_STREAM_END);
+            assert_eq!(
+                inflate_impl(&mut strm, Flush::NoFlush, slow),
+                Ok(ZStatus::StreamEnd)
+            );
             let n = strm.total_out as usize;
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
             assert!(buf[..n] == *SMALL_CORPUS);
         }
     }
@@ -2049,24 +2077,27 @@ mod tests {
             let mut buf = vec![0u8; 1 << 16];
             let buf_len = buf.len();
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit(&mut strm), Z_OK);
+            assert_eq!(inflateInit(&mut strm), Ok(()));
             // no input: nothing to search
-            assert_eq!(inflateSync(&mut strm), Z_BUF_ERROR);
+            assert_eq!(inflateSync(&mut strm), Err(ZError::Buf));
             // decode the damaged start; whatever comes out is discarded
             strm.next_in = &corrupt[..flush1 - 100];
             strm.next_out = &mut buf;
-            let _ = inflate_impl(&mut strm, Z_NO_FLUSH, slow);
+            let _ = inflate_impl(&mut strm, Flush::NoFlush, slow);
             // the marker split over two inputs: the search state carries over
             strm.next_in = &corrupt[flush1 - 100..flush1 - 2];
             let before = strm.total_in;
-            assert_eq!(inflateSync(&mut strm), Z_DATA_ERROR);
+            assert_eq!(inflateSync(&mut strm), Err(ZError::Data));
             assert_eq!(strm.total_in - before, 98);
             strm.next_in = &corrupt[flush1 - 2..];
-            assert_eq!(inflateSync(&mut strm), Z_OK);
+            assert_eq!(inflateSync(&mut strm), Ok(()));
             assert_eq!(strm.avail_in(), corrupt.len() - flush1);
             let out_before = strm.total_out as usize;
             let start = buf_len - strm.avail_out();
-            assert_eq!(inflate_impl(&mut strm, Z_FINISH, slow), Z_STREAM_END);
+            assert_eq!(
+                inflate_impl(&mut strm, Flush::Finish, slow),
+                Ok(ZStatus::StreamEnd)
+            );
             let end = start + (strm.total_out as usize - out_before);
             drop(strm);
             assert!(buf[start..end] == CORPUS[piece2..]);
@@ -2081,20 +2112,26 @@ mod tests {
         for slow in BOTH {
             let mut buf = vec![0u8; 8192];
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit(&mut strm), Z_OK);
+            assert_eq!(inflateInit(&mut strm), Ok(()));
             // everything before the empty stored block's length bytes: all of the first piece
             // comes out, and inflate waits for the lengths (what PPP checks)
             strm.next_in = &stream[..marker];
             strm.next_out = &mut buf;
-            assert_eq!(inflate_impl(&mut strm, Z_SYNC_FLUSH, slow), Z_OK);
+            assert_eq!(
+                inflate_impl(&mut strm, Flush::SyncFlush, slow),
+                Ok(ZStatus::Ok)
+            );
             assert_eq!(strm.total_out as usize, piece2);
-            assert_eq!(inflateSyncPoint(&mut strm), 1);
+            assert_eq!(inflateSyncPoint(&mut strm), Ok(true));
             strm.next_in = &stream[marker..];
-            assert_eq!(inflateSyncPoint(&mut strm), 1);
-            assert_eq!(inflate_impl(&mut strm, Z_SYNC_FLUSH, slow), Z_STREAM_END);
-            assert_eq!(inflateSyncPoint(&mut strm), 0);
+            assert_eq!(inflateSyncPoint(&mut strm), Ok(true));
+            assert_eq!(
+                inflate_impl(&mut strm, Flush::SyncFlush, slow),
+                Ok(ZStatus::StreamEnd)
+            );
+            assert_eq!(inflateSyncPoint(&mut strm), Ok(false));
             let n = strm.total_out as usize;
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
             assert!(buf[..n] == *SMALL_CORPUS);
         }
     }
@@ -2140,7 +2177,7 @@ mod tests {
         v.extend_from_slice(&[0; 8]); // trailing bytes, left unused
         for slow in BOTH {
             let d = decode_all(&v, -15, slow);
-            assert_eq!(d.ret, Z_STREAM_END);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
             assert!(d.out == [b'x'; 300]);
             assert_eq!(d.total_in as usize, v.len() - 8);
         }
@@ -2150,7 +2187,7 @@ mod tests {
     fn assert_data_error(input: &[u8], wbits: i32) {
         for slow in BOTH {
             let d = decode_all(input, wbits, slow);
-            assert_eq!(d.ret, Z_DATA_ERROR, "slow={slow}");
+            assert_eq!(d.ret, Err(ZError::Data), "slow={slow}");
             assert_eq!(d.msg, Some("error"));
         }
     }
@@ -2173,13 +2210,13 @@ mod tests {
         assert_data_error(&v, 15);
         for slow in BOTH {
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit(&mut strm), Z_OK);
-            assert_eq!(inflateValidate(&mut strm, 0), Z_OK);
-            let d = run(&mut strm, &v, slow, usize::MAX, usize::MAX, Z_NO_FLUSH);
-            assert_eq!(d.ret, Z_STREAM_END);
+            assert_eq!(inflateInit(&mut strm), Ok(()));
+            assert_eq!(inflateValidate(&mut strm, false), Ok(()));
+            let d = run(&mut strm, &v, slow, usize::MAX, usize::MAX, Flush::NoFlush);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
             assert!(d.out == CORPUS);
-            assert_eq!(inflateValidate(&mut strm, 1), Z_OK);
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
+            assert_eq!(inflateValidate(&mut strm, true), Ok(()));
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
         }
     }
 
@@ -2240,18 +2277,24 @@ mod tests {
         let s = testdata!("level6.z");
         let cut = &s[..s.len() - 5];
         for slow in BOTH {
-            let d = decode(cut, 15, slow, usize::MAX, usize::MAX, Z_FINISH);
-            assert_eq!(d.ret, Z_BUF_ERROR);
+            let d = decode(cut, 15, slow, usize::MAX, usize::MAX, Flush::Finish);
+            assert_eq!(d.ret, Err(ZError::Buf));
             assert!(SMALL_CORPUS.starts_with(&d.out));
-            // without Z_FINISH: Z_OK while it consumes input, Z_BUF_ERROR once stuck
+            // without Flush::Finish: Ok(ZStatus::Ok) while it consumes input, Err(ZError::Buf) once stuck
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit(&mut strm), Z_OK);
+            assert_eq!(inflateInit(&mut strm), Ok(()));
             let mut buf = vec![0u8; 8192];
             strm.next_in = cut;
             strm.next_out = &mut buf;
-            assert_eq!(inflate_impl(&mut strm, Z_NO_FLUSH, slow), Z_OK);
-            assert_eq!(inflate_impl(&mut strm, Z_NO_FLUSH, slow), Z_BUF_ERROR);
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
+            assert_eq!(
+                inflate_impl(&mut strm, Flush::NoFlush, slow),
+                Ok(ZStatus::Ok)
+            );
+            assert_eq!(
+                inflate_impl(&mut strm, Flush::NoFlush, slow),
+                Err(ZError::Buf)
+            );
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
         }
     }
 
@@ -2261,74 +2304,81 @@ mod tests {
         for slow in BOTH {
             // the first byte primed, the rest as input
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit2(&mut strm, -15), Z_OK);
-            assert_eq!(inflatePrime(&mut strm, 8, i32::from(s[0])), Z_OK);
-            let d = run(&mut strm, &s[1..], slow, 512, 512, Z_NO_FLUSH);
-            assert_eq!(d.ret, Z_STREAM_END);
+            assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
+            assert_eq!(inflatePrime(&mut strm, 8, i32::from(s[0])), Ok(()));
+            let d = run(&mut strm, &s[1..], slow, 512, 512, Flush::NoFlush);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
             assert!(d.out == CORPUS);
             // two bytes primed in one call, after clearing a junk prime
-            assert_eq!(inflateReset(&mut strm), Z_OK);
-            assert_eq!(inflatePrime(&mut strm, 5, 0x1f), Z_OK);
-            assert_eq!(inflatePrime(&mut strm, -1, 0), Z_OK);
+            assert_eq!(inflateReset(&mut strm), Ok(()));
+            assert_eq!(inflatePrime(&mut strm, 5, 0x1f), Ok(()));
+            assert_eq!(inflatePrime(&mut strm, -1, 0), Ok(()));
             assert_eq!(
                 inflatePrime(
                     &mut strm,
                     16,
                     i32::from(s[0]) | i32::from(s[1]) << 8 | 0x7fff_0000
                 ),
-                Z_OK
+                Ok(())
             );
-            let d = run(&mut strm, &s[2..], slow, usize::MAX, usize::MAX, Z_NO_FLUSH);
-            assert_eq!(d.ret, Z_STREAM_END);
+            let d = run(
+                &mut strm,
+                &s[2..],
+                slow,
+                usize::MAX,
+                usize::MAX,
+                Flush::NoFlush,
+            );
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
             assert!(d.out == CORPUS);
             // limits: 16 bits a call, 32 in all
-            assert_eq!(inflateReset(&mut strm), Z_OK);
-            assert_eq!(inflatePrime(&mut strm, 17, 0), Z_STREAM_ERROR);
-            assert_eq!(inflatePrime(&mut strm, 0, 0), Z_OK);
-            assert_eq!(inflatePrime(&mut strm, 16, 0), Z_OK);
-            assert_eq!(inflatePrime(&mut strm, 16, 0), Z_OK);
-            assert_eq!(inflatePrime(&mut strm, 1, 0), Z_STREAM_ERROR);
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
+            assert_eq!(inflateReset(&mut strm), Ok(()));
+            assert_eq!(inflatePrime(&mut strm, 17, 0), Err(ZError::Stream));
+            assert_eq!(inflatePrime(&mut strm, 0, 0), Ok(()));
+            assert_eq!(inflatePrime(&mut strm, 16, 0), Ok(()));
+            assert_eq!(inflatePrime(&mut strm, 16, 0), Ok(()));
+            assert_eq!(inflatePrime(&mut strm, 1, 0), Err(ZError::Stream));
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
         }
     }
 
     #[test]
     fn mark_reports_the_position() {
         let mut strm = ZStream::new();
-        assert_eq!(inflateMark(&mut strm), -(1 << 16));
+        assert_eq!(inflateMark(&mut strm), Err(ZError::Stream));
         // in a stored block: the bytes left to copy
         let s = stored(b"hello");
         let mut out = [0u8; 8];
-        assert_eq!(inflateInit2(&mut strm, -15), Z_OK);
-        assert_eq!(inflateMark(&mut strm), -(1 << 16));
+        assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
+        assert_eq!(inflateMark(&mut strm), Ok(-(1 << 16)));
         strm.next_in = &s;
         strm.next_out = &mut out[..2];
-        assert_eq!(inflate(&mut strm, Z_NO_FLUSH), Z_OK);
-        assert_eq!(inflateMark(&mut strm), -(1 << 16) + 3);
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(inflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+        assert_eq!(inflateMark(&mut strm), Ok(-(1 << 16) + 3));
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
 
         // in a match: the bits of the length/distance codes back, and the bytes copied so far
         let s = fixed_aaaa();
         let mut out = [0u8; 4];
         let mut strm = ZStream::new();
-        assert_eq!(inflateInit2(&mut strm, -15), Z_OK);
+        assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
         strm.next_in = &s;
         let (o1, rest) = out.split_at_mut(1);
         let (o2, rest) = rest.split_at_mut(1);
         let (o3, o4) = rest.split_at_mut(1);
         strm.next_out = o1;
-        assert_eq!(inflate(&mut strm, Z_NO_FLUSH), Z_OK);
-        assert_eq!(inflateMark(&mut strm), 12 << 16);
+        assert_eq!(inflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+        assert_eq!(inflateMark(&mut strm), Ok(12 << 16));
         strm.next_out = o2;
-        assert_eq!(inflate(&mut strm, Z_NO_FLUSH), Z_OK);
-        assert_eq!(inflateMark(&mut strm), (12 << 16) + 1);
+        assert_eq!(inflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+        assert_eq!(inflateMark(&mut strm), Ok((12 << 16) + 1));
         strm.next_out = o3;
-        assert_eq!(inflate(&mut strm, Z_NO_FLUSH), Z_OK);
-        assert_eq!(inflateMark(&mut strm), (12 << 16) + 2);
+        assert_eq!(inflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+        assert_eq!(inflateMark(&mut strm), Ok((12 << 16) + 2));
         strm.next_out = o4;
-        assert_eq!(inflate(&mut strm, Z_NO_FLUSH), Z_STREAM_END);
-        assert_eq!(inflateMark(&mut strm), -(1 << 16));
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(inflate(&mut strm, Flush::NoFlush), Ok(ZStatus::StreamEnd));
+        assert_eq!(inflateMark(&mut strm), Ok(-(1 << 16)));
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
         assert_eq!(&out, b"aaaa");
     }
 
@@ -2337,20 +2387,18 @@ mod tests {
         // a zlib stream decoded in one call never fills the window: inflate() resets its output
         // count after the check value, so the end-of-call update sees no output (as in the C)
         let mut strm = ZStream::new();
-        assert_eq!(inflateInit(&mut strm), Z_OK);
+        assert_eq!(inflateInit(&mut strm), Ok(()));
         let d = run(
             &mut strm,
             testdata!("big6.z"),
             true,
             usize::MAX,
             usize::MAX,
-            Z_NO_FLUSH,
+            Flush::NoFlush,
         );
-        assert_eq!(d.ret, Z_STREAM_END);
-        let mut len = 1;
-        assert_eq!(inflateGetDictionary(&mut strm, None, Some(&mut len)), Z_OK);
-        assert_eq!(len, 0);
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
+        assert_eq!(inflateGetDictionary(&mut strm, None), Ok(0));
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
 
         for (s, wbits, out_chunk, slow) in [
             (&testdata!("raw15.z")[..], -15, usize::MAX, true),
@@ -2359,21 +2407,19 @@ mod tests {
             (&testdata!("raw15.z")[..], -15, 777, false),
         ] {
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit2(&mut strm, wbits), Z_OK);
-            let d = run(&mut strm, s, slow, usize::MAX, out_chunk, Z_NO_FLUSH);
-            assert_eq!(d.ret, Z_STREAM_END);
-            let mut len = 0;
-            assert_eq!(inflateGetDictionary(&mut strm, None, Some(&mut len)), Z_OK);
-            assert_eq!(len, 32768);
+            assert_eq!(inflateInit2(&mut strm, wbits), Ok(()));
+            let d = run(&mut strm, s, slow, usize::MAX, out_chunk, Flush::NoFlush);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
+            assert_eq!(inflateGetDictionary(&mut strm, None), Ok(32768));
             let mut dict = vec![0u8; 32768];
-            assert_eq!(inflateGetDictionary(&mut strm, Some(&mut dict), None), Z_OK);
+            assert_eq!(inflateGetDictionary(&mut strm, Some(&mut dict)), Ok(32768));
             assert!(dict == CORPUS[CORPUS.len() - 32768..]);
             let mut short = vec![0u8; 100];
             assert_eq!(
-                inflateGetDictionary(&mut strm, Some(&mut short), None),
-                Z_BUF_ERROR
+                inflateGetDictionary(&mut strm, Some(&mut short)),
+                Err(ZError::Buf)
             );
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
         }
     }
 
@@ -2383,18 +2429,18 @@ mod tests {
         let half = s.len() / 2;
         for slow in BOTH {
             let mut strm = ZStream::new();
-            assert_eq!(inflateInit2(&mut strm, -15), Z_OK);
+            assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
             let first = run(
                 &mut strm,
                 &s[..half],
                 slow,
                 usize::MAX,
                 usize::MAX,
-                Z_NO_FLUSH,
+                Flush::NoFlush,
             );
-            assert_eq!(first.ret, Z_BUF_ERROR); // all input used, then no progress
+            assert_eq!(first.ret, Err(ZError::Buf)); // all input used, then no progress
             let mut dest = ZStream::new();
-            assert_eq!(inflateCopy(&mut dest, &strm), Z_OK);
+            assert_eq!(inflateCopy(&mut dest, &strm), Ok(()));
             assert_eq!(dest.total_in, strm.total_in);
             assert_eq!(dest.total_out, strm.total_out);
             assert_eq!(dest.avail_out(), 0);
@@ -2404,43 +2450,46 @@ mod tests {
                 slow,
                 usize::MAX,
                 usize::MAX,
-                Z_NO_FLUSH,
+                Flush::NoFlush,
             );
-            let b = run(&mut dest, &s[half..], slow, 100, 100, Z_NO_FLUSH);
-            assert_eq!((a.ret, b.ret), (Z_STREAM_END, Z_STREAM_END));
+            let b = run(&mut dest, &s[half..], slow, 100, 100, Flush::NoFlush);
+            assert_eq!(
+                (a.ret, b.ret),
+                (Ok(ZStatus::StreamEnd), Ok(ZStatus::StreamEnd))
+            );
             assert!(a.out == b.out);
             assert!([first.out, a.out].concat() == CORPUS);
-            assert_eq!(inflateEnd(&mut strm), Z_OK);
-            assert_eq!(inflateEnd(&mut dest), Z_OK);
+            assert_eq!(inflateEnd(&mut strm), Ok(()));
+            assert_eq!(inflateEnd(&mut dest), Ok(()));
         }
         let empty = ZStream::new();
         let mut dest = ZStream::new();
-        assert_eq!(inflateCopy(&mut dest, &empty), Z_STREAM_ERROR);
+        assert_eq!(inflateCopy(&mut dest, &empty), Err(ZError::Stream));
     }
 
     #[test]
     fn reset2_changes_the_window() {
         let mut strm = ZStream::new();
-        assert_eq!(inflateInit2(&mut strm, 15), Z_OK);
+        assert_eq!(inflateInit2(&mut strm, 15), Ok(()));
         let d = run(
             &mut strm,
             testdata!("big6.z"),
             true,
             usize::MAX,
             4096,
-            Z_NO_FLUSH,
+            Flush::NoFlush,
         );
-        assert_eq!(d.ret, Z_STREAM_END);
+        assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
         let window_len = |strm: &ZStream<'_>| match &strm.state {
             InternalState::Inflate(state) => state.window.as_ref().map(Vec::len),
             _ => panic!("no inflate state"),
         };
         assert_eq!(window_len(&strm), Some(32768));
         // same size: the window is kept (inflateReset2 -> inflateReset)
-        assert_eq!(inflateReset2(&mut strm, 15), Z_OK);
+        assert_eq!(inflateReset2(&mut strm, 15), Ok(()));
         assert_eq!(window_len(&strm), Some(32768));
         // a smaller window: freed, then allocated at the new size when needed
-        assert_eq!(inflateReset2(&mut strm, 9), Z_OK);
+        assert_eq!(inflateReset2(&mut strm, 9), Ok(()));
         assert_eq!(window_len(&strm), None);
         let d = run(
             &mut strm,
@@ -2448,173 +2497,170 @@ mod tests {
             true,
             usize::MAX,
             4096,
-            Z_NO_FLUSH,
+            Flush::NoFlush,
         );
-        assert_eq!(d.ret, Z_STREAM_END);
+        assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
         assert!(d.out == CORPUS);
         assert_eq!(window_len(&strm), Some(512));
         // raw
-        assert_eq!(inflateReset2(&mut strm, -15), Z_OK);
+        assert_eq!(inflateReset2(&mut strm, -15), Ok(()));
         let d = run(
             &mut strm,
             testdata!("raw15.z"),
             false,
             usize::MAX,
             4096,
-            Z_NO_FLUSH,
+            Flush::NoFlush,
         );
-        assert_eq!(d.ret, Z_STREAM_END);
+        assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
         assert!(d.out == CORPUS);
         // windowBits 0: the header says
-        assert_eq!(inflateReset2(&mut strm, 0), Z_OK);
+        assert_eq!(inflateReset2(&mut strm, 0), Ok(()));
         let d = run(
             &mut strm,
             testdata!("wbits12.z"),
             true,
             3000,
             3000,
-            Z_NO_FLUSH,
+            Flush::NoFlush,
         );
-        assert_eq!(d.ret, Z_STREAM_END);
+        assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
         assert!(d.out == CORPUS);
         assert_eq!(window_len(&strm), Some(4096));
         // refused: too small, too large, gzip (31) and auto-detect (47) without GUNZIP
         for bad in [7, 16, 31, 47, -7, -16, 1] {
-            assert_eq!(inflateReset2(&mut strm, bad), Z_STREAM_ERROR, "{bad}");
+            assert_eq!(inflateReset2(&mut strm, bad), Err(ZError::Stream), "{bad}");
         }
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
     }
 
     #[test]
     fn reset_keep_keeps_the_window() {
         let mut strm = ZStream::new();
-        assert_eq!(inflateInit2(&mut strm, -15), Z_OK);
+        assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
         let d = run(
             &mut strm,
             testdata!("raw15.z"),
             true,
             usize::MAX,
             4096,
-            Z_NO_FLUSH,
+            Flush::NoFlush,
         );
-        assert_eq!(d.ret, Z_STREAM_END);
-        assert_eq!(inflateResetKeep(&mut strm), Z_OK);
+        assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
+        assert_eq!(inflateResetKeep(&mut strm), Ok(()));
         assert_eq!((strm.total_in, strm.total_out, strm.msg), (0, 0, None));
-        let mut len = 0;
-        assert_eq!(inflateGetDictionary(&mut strm, None, Some(&mut len)), Z_OK);
-        assert_eq!(len, 32768);
-        assert_eq!(inflateReset(&mut strm), Z_OK);
-        assert_eq!(inflateGetDictionary(&mut strm, None, Some(&mut len)), Z_OK);
-        assert_eq!(len, 0);
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(inflateGetDictionary(&mut strm, None), Ok(32768));
+        assert_eq!(inflateReset(&mut strm), Ok(()));
+        assert_eq!(inflateGetDictionary(&mut strm, None), Ok(0));
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
     }
 
     #[test]
     fn block_flushes_and_data_type() {
-        // Z_BLOCK stops at each block boundary; data_type says where
+        // Flush::Block stops at each block boundary; data_type says where
         let mut s = stored(b"abc");
         s[0] = 0;
         s.extend_from_slice(&fixed_aaaa());
         let mut buf = [0u8; 16];
         let mut strm = ZStream::new();
-        assert_eq!(inflateInit2(&mut strm, -15), Z_OK);
+        assert_eq!(inflateInit2(&mut strm, -15), Ok(()));
         strm.next_in = &s;
         strm.next_out = &mut buf;
-        assert_eq!(inflate(&mut strm, Z_BLOCK), Z_OK);
+        assert_eq!(inflate(&mut strm, Flush::Block), Ok(ZStatus::Ok));
         assert_eq!(strm.total_out, 3);
         assert_eq!(strm.data_type & 128, 128); // at the end of a block
         assert_eq!(strm.data_type & 64, 0); // not the last
-        assert_eq!(inflate(&mut strm, Z_TREES), Z_OK);
+        assert_eq!(inflate(&mut strm, Flush::Trees), Ok(ZStatus::Ok));
         assert_eq!(strm.total_out, 3);
         assert_eq!(strm.data_type & 256, 256); // after the fixed block's header
         assert_eq!(strm.data_type & 64, 64); // the last block
         // the last block's end is a block boundary too
-        assert_eq!(inflate(&mut strm, Z_BLOCK), Z_OK);
+        assert_eq!(inflate(&mut strm, Flush::Block), Ok(ZStatus::Ok));
         assert_eq!(strm.total_out, 7);
         assert_eq!(strm.data_type & (64 | 128), 64 | 128);
-        assert_eq!(inflate(&mut strm, Z_BLOCK), Z_STREAM_END);
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(inflate(&mut strm, Flush::Block), Ok(ZStatus::StreamEnd));
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
         assert_eq!(&buf[..7], b"abcaaaa");
     }
 
     #[test]
     fn codes_used_counts_the_dynamic_tables() {
         let mut strm = ZStream::new();
-        assert_eq!(inflateCodesUsed(&mut strm), u64::MAX);
-        assert_eq!(inflateInit(&mut strm), Z_OK);
-        assert_eq!(inflateCodesUsed(&mut strm), 0);
+        assert_eq!(inflateCodesUsed(&mut strm), Err(ZError::Stream));
+        assert_eq!(inflateInit(&mut strm), Ok(()));
+        assert_eq!(inflateCodesUsed(&mut strm), Ok(0));
         let d = run(
             &mut strm,
             testdata!("big6.z"),
             true,
             2000,
             usize::MAX,
-            Z_NO_FLUSH,
+            Flush::NoFlush,
         );
-        assert_eq!(d.ret, Z_STREAM_END);
-        let used = inflateCodesUsed(&mut strm);
-        assert!(used > 512 && used <= ENOUGH as u64, "{used}");
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
+        let used = inflateCodesUsed(&mut strm).unwrap();
+        assert!(used > 512 && used <= ENOUGH, "{used}");
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
     }
 
     #[test]
     fn api_misuse() {
         let mut strm = ZStream::new();
         // no state
-        assert_eq!(inflate(&mut strm, Z_NO_FLUSH), Z_STREAM_ERROR);
-        assert_eq!(inflateEnd(&mut strm), Z_STREAM_ERROR);
-        assert_eq!(inflateReset(&mut strm), Z_STREAM_ERROR);
-        assert_eq!(inflateResetKeep(&mut strm), Z_STREAM_ERROR);
-        assert_eq!(inflateReset2(&mut strm, 15), Z_STREAM_ERROR);
-        assert_eq!(inflatePrime(&mut strm, 1, 1), Z_STREAM_ERROR);
-        assert_eq!(inflateSetDictionary(&mut strm, b"x"), Z_STREAM_ERROR);
-        assert_eq!(inflateGetDictionary(&mut strm, None, None), Z_STREAM_ERROR);
-        assert_eq!(inflateSync(&mut strm), Z_STREAM_ERROR);
-        assert_eq!(inflateSyncPoint(&mut strm), Z_STREAM_ERROR);
-        assert_eq!(inflateUndermine(&mut strm, 1), Z_STREAM_ERROR);
-        assert_eq!(inflateValidate(&mut strm, 1), Z_STREAM_ERROR);
+        assert_eq!(inflate(&mut strm, Flush::NoFlush), Err(ZError::Stream));
+        assert_eq!(inflateEnd(&mut strm), Err(ZError::Stream));
+        assert_eq!(inflateReset(&mut strm), Err(ZError::Stream));
+        assert_eq!(inflateResetKeep(&mut strm), Err(ZError::Stream));
+        assert_eq!(inflateReset2(&mut strm, 15), Err(ZError::Stream));
+        assert_eq!(inflatePrime(&mut strm, 1, 1), Err(ZError::Stream));
+        assert_eq!(inflateSetDictionary(&mut strm, b"x"), Err(ZError::Stream));
+        assert_eq!(inflateGetDictionary(&mut strm, None), Err(ZError::Stream));
+        assert_eq!(inflateSync(&mut strm), Err(ZError::Stream));
+        assert_eq!(inflateSyncPoint(&mut strm), Err(ZError::Stream));
+        assert_eq!(inflateUndermine(&mut strm, true), Err(ZError::Stream));
+        assert_eq!(inflateValidate(&mut strm, true), Err(ZError::Stream));
         assert_eq!(
             inflateGetHeader(&mut strm, &mut GzHeader::default()),
-            Z_STREAM_ERROR
+            Err(ZError::Stream)
         );
         // version and size checks
         assert_eq!(
             inflateInit_(&mut strm, "2.0", size_of::<ZStream<'_>>() as i32),
-            Z_VERSION_ERROR
+            Err(ZError::Version)
         );
         assert_eq!(
             inflateInit_(&mut strm, "", size_of::<ZStream<'_>>() as i32),
-            Z_VERSION_ERROR
+            Err(ZError::Version)
         );
-        assert_eq!(inflateInit_(&mut strm, "1.2.12", 8), Z_VERSION_ERROR);
+        assert_eq!(inflateInit_(&mut strm, "1.2.12", 8), Err(ZError::Version));
         assert_eq!(
             inflateInit_(&mut strm, "1.2.12", size_of::<ZStream<'_>>() as i32),
-            Z_OK
+            Ok(())
         );
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
-        assert_eq!(inflateEnd(&mut strm), Z_STREAM_ERROR);
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
+        assert_eq!(inflateEnd(&mut strm), Err(ZError::Stream));
         // gzip is not configured
-        assert_eq!(inflateInit2(&mut strm, 31), Z_STREAM_ERROR);
+        assert_eq!(inflateInit2(&mut strm, 31), Err(ZError::Stream));
         assert!(matches!(strm.state, InternalState::None));
-        assert_eq!(inflateInit2(&mut strm, 15), Z_OK);
+        assert_eq!(inflateInit2(&mut strm, 15), Ok(()));
         assert_eq!(
             inflateGetHeader(&mut strm, &mut GzHeader::default()),
-            Z_STREAM_ERROR
+            Err(ZError::Stream)
         );
         // no ARRR build: undermining is refused
-        assert_eq!(inflateUndermine(&mut strm, 1), Z_DATA_ERROR);
+        assert_eq!(inflateUndermine(&mut strm, true), Err(ZError::Data));
         // a dictionary is refused in the middle of a zlib stream
-        assert_eq!(inflateSetDictionary(&mut strm, b"x"), Z_STREAM_ERROR);
+        assert_eq!(inflateSetDictionary(&mut strm, b"x"), Err(ZError::Stream));
         // after an error, inflate stays in BAD until reset
         let bad = [0x78u8, 0x9d, 3, 0];
         strm.next_in = &bad;
         let mut out = [0u8; 4];
         strm.next_out = &mut out;
-        assert_eq!(inflate(&mut strm, Z_NO_FLUSH), Z_DATA_ERROR);
-        assert_eq!(inflate(&mut strm, Z_NO_FLUSH), Z_DATA_ERROR);
-        assert_eq!(inflateReset(&mut strm), Z_OK);
+        assert_eq!(inflate(&mut strm, Flush::NoFlush), Err(ZError::Data));
+        assert_eq!(inflate(&mut strm, Flush::NoFlush), Err(ZError::Data));
+        assert_eq!(inflateReset(&mut strm), Ok(()));
         assert_eq!(strm.msg, None);
-        assert_eq!(inflateEnd(&mut strm), Z_OK);
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
     }
 
     #[test]
@@ -2630,14 +2676,14 @@ mod tests {
     }
 
     /// Compress `data` with this crate's deflate (`level`, `windowBits`, `strategy`), flushing
-    /// with `flush` after every `chunk` bytes and finishing with `Z_FINISH`.
+    /// with `flush` after every `chunk` bytes and finishing with `Flush::Finish`.
     fn deflate_with(
         data: &[u8],
         level: i32,
         wbits: i32,
         strategy: i32,
         chunk: usize,
-        flush: i32,
+        flush: Flush,
     ) -> Vec<u8> {
         use crate::deflate::{deflate, deflateEnd};
         use crate::zlib::{Z_DEFLATED, deflateInit2};
@@ -2652,7 +2698,7 @@ mod tests {
         for (i, piece) in pieces.iter().enumerate() {
             strm.next_in = piece;
             let last = i + 1 == pieces.len();
-            let ret = deflate(&mut strm, if last { Z_FINISH } else { flush });
+            let ret = deflate(&mut strm, if last { Z_FINISH } else { flush.code() });
             assert_eq!(ret, if last { Z_STREAM_END } else { Z_OK });
             assert_eq!(strm.avail_in(), 0);
         }
@@ -2664,9 +2710,7 @@ mod tests {
 
     #[test]
     fn round_trips_with_this_crates_deflate() {
-        use crate::zlib::{
-            Z_DEFAULT_STRATEGY, Z_FILTERED, Z_FIXED, Z_FULL_FLUSH, Z_HUFFMAN_ONLY, Z_RLE,
-        };
+        use crate::zlib::{Z_DEFAULT_STRATEGY, Z_FILTERED, Z_FIXED, Z_HUFFMAN_ONLY, Z_RLE};
         for level in 0..=9 {
             let z = deflate_with(
                 CORPUS,
@@ -2674,26 +2718,33 @@ mod tests {
                 15,
                 Z_DEFAULT_STRATEGY,
                 usize::MAX,
-                Z_NO_FLUSH,
+                Flush::NoFlush,
             );
             assert_decodes(&z, 15, CORPUS);
         }
         for strategy in [Z_FILTERED, Z_HUFFMAN_ONLY, Z_RLE, Z_FIXED] {
-            let z = deflate_with(CORPUS, 6, -15, strategy, usize::MAX, Z_NO_FLUSH);
+            let z = deflate_with(CORPUS, 6, -15, strategy, usize::MAX, Flush::NoFlush);
             assert_decodes(&z, -15, CORPUS);
         }
         for wbits in [9, 12, 15] {
-            let z = deflate_with(CORPUS, 9, wbits, Z_DEFAULT_STRATEGY, 5000, Z_FULL_FLUSH);
+            let z = deflate_with(CORPUS, 9, wbits, Z_DEFAULT_STRATEGY, 5000, Flush::FullFlush);
             assert_decodes(&z, wbits, CORPUS);
-            let z = deflate_with(CORPUS, 9, -wbits, Z_DEFAULT_STRATEGY, 3000, Z_SYNC_FLUSH);
+            let z = deflate_with(
+                CORPUS,
+                9,
+                -wbits,
+                Z_DEFAULT_STRATEGY,
+                3000,
+                Flush::SyncFlush,
+            );
             assert_decodes(&z, -wbits, CORPUS);
         }
     }
 
     #[test]
     fn round_trips_the_ipcomp_way() {
-        // xform_ipcomp.c: raw deflate of a packet with Z_FINISH, raw inflate with
-        // Z_PARTIAL_FLUSH into fresh buffers
+        // xform_ipcomp.c: raw deflate of a packet with Flush::Finish, raw inflate with
+        // Flush::PartialFlush into fresh buffers
         use crate::zlib::Z_DEFAULT_STRATEGY;
         for packet in [&CORPUS[..1400], &CORPUS[5000..5100], CORPUS] {
             let z = deflate_with(
@@ -2702,21 +2753,21 @@ mod tests {
                 -MAX_WBITS,
                 Z_DEFAULT_STRATEGY,
                 usize::MAX,
-                Z_NO_FLUSH,
+                Flush::NoFlush,
             );
             for slow in BOTH {
-                let d = decode(&z, -MAX_WBITS, slow, usize::MAX, 256, Z_PARTIAL_FLUSH);
-                assert_eq!(d.ret, Z_STREAM_END);
+                let d = decode(&z, -MAX_WBITS, slow, usize::MAX, 256, Flush::PartialFlush);
+                assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
                 assert!(d.out == packet);
             }
         }
     }
 
-    /// Compress `input` with this crate's deflate in one `Z_FINISH` call, with `memLevel`
+    /// Compress `input` with this crate's deflate in one `Flush::Finish` call, with `memLevel`
     /// `mem_level` (an empty input too, which `deflate_with` has no piece for).
     fn deflate_all(input: &[u8], level: i32, wbits: i32, mem_level: i32) -> Vec<u8> {
         use crate::deflate::{deflate, deflateEnd};
-        use crate::zlib::{Z_DEFAULT_STRATEGY, Z_DEFLATED, Z_FINISH, deflateInit2};
+        use crate::zlib::{Z_DEFAULT_STRATEGY, Z_DEFLATED, deflateInit2};
         let mut out = vec![0u8; input.len() + input.len() / 8 + 1024];
         let mut strm = ZStream::new();
         assert_eq!(
@@ -2766,26 +2817,26 @@ mod tests {
         }
     }
 
-    /// One stream written in pieces with every flush mode between them (`Z_PARTIAL_FLUSH` and
-    /// `Z_BLOCK` too) decodes whole, and with one byte of input and output at a time.
+    /// One stream written in pieces with every flush mode between them (`Flush::PartialFlush` and
+    /// `Flush::Block` too) decodes whole, and with one byte of input and output at a time.
     #[test]
     fn round_trips_every_flush_mode() {
         use crate::deflate::{deflate, deflateEnd};
-        use crate::zlib::{Z_BLOCK, Z_FINISH, Z_FULL_FLUSH, deflateInit};
+        use crate::zlib::deflateInit;
         let mut out = vec![0u8; CORPUS.len() * 2];
         let mut strm = ZStream::new();
         assert_eq!(deflateInit(&mut strm, 6), Z_OK);
         strm.next_out = &mut out;
         let flushes = [
-            Z_NO_FLUSH,
-            Z_PARTIAL_FLUSH,
-            Z_SYNC_FLUSH,
-            Z_FULL_FLUSH,
-            Z_BLOCK,
+            Flush::NoFlush,
+            Flush::PartialFlush,
+            Flush::SyncFlush,
+            Flush::FullFlush,
+            Flush::Block,
         ];
         for (i, piece) in CORPUS.chunks(3000).enumerate() {
             strm.next_in = piece;
-            assert_eq!(deflate(&mut strm, flushes[i % flushes.len()]), Z_OK);
+            assert_eq!(deflate(&mut strm, flushes[i % flushes.len()].code()), Z_OK);
             assert_eq!(strm.avail_in(), 0);
         }
         assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
@@ -2794,18 +2845,18 @@ mod tests {
         let z = &out[..n];
         assert_decodes(z, 15, CORPUS);
         for slow in BOTH {
-            let d = decode(z, 15, slow, 1, 1, Z_NO_FLUSH);
-            assert_eq!(d.ret, Z_STREAM_END);
+            let d = decode(z, 15, slow, 1, 1, Flush::NoFlush);
+            assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
             assert!(d.out == CORPUS);
         }
     }
 
-    /// `xform_ipcomp.c`'s compression side: raw deflate with `Z_FINISH` into fresh 512-byte
-    /// buffers whenever one is full, then raw inflate with `Z_PARTIAL_FLUSH` into 333-byte ones.
+    /// `xform_ipcomp.c`'s compression side: raw deflate with `Flush::Finish` into fresh 512-byte
+    /// buffers whenever one is full, then raw inflate with `Flush::PartialFlush` into 333-byte ones.
     #[test]
     fn round_trips_ipcomp_output_buffers() {
         use crate::deflate::{deflate, deflateEnd};
-        use crate::zlib::{Z_DEFAULT_STRATEGY, Z_DEFLATED, Z_FINISH, deflateInit2};
+        use crate::zlib::{Z_DEFAULT_STRATEGY, Z_DEFLATED, deflateInit2};
         for size in [1, 100, 1000, 1400, 9000] {
             let packet = &CORPUS[..size];
             let mut bufs: Vec<Vec<u8>> = (0..40).map(|_| vec![0u8; 512]).collect();
@@ -2832,9 +2883,64 @@ mod tests {
                 .flat_map(|(b, &n)| b[..n].iter().copied())
                 .collect();
             for slow in BOTH {
-                let d = decode(&z, -11, slow, usize::MAX, 333, Z_PARTIAL_FLUSH);
-                assert_eq!(d.ret, Z_STREAM_END);
+                let d = decode(&z, -11, slow, usize::MAX, 333, Flush::PartialFlush);
+                assert_eq!(d.ret, Ok(ZStatus::StreamEnd));
                 assert!(d.out == packet, "size={size} slow={slow}");
+            }
+        }
+    }
+
+    /// A small xorshift PRNG for the property tests (no proptest offline).
+    struct XorShift(u64);
+
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// Corrupted streams: random bytes of a valid zlib stream flipped, the stream cut short,
+    /// or both. Decoding never panics, ends in one of the results a damaged stream can give
+    /// (the end, a dictionary request when the header's FDICT bit was hit, a data error, or no
+    /// progress when the input runs out), and the slow and fast decoders agree on the result,
+    /// the output and the message.
+    #[test]
+    fn corrupted_streams_fail_the_same_way_in_both_decoders() {
+        let good = testdata!("level6.z");
+        let mut rng = XorShift(0x9e37_79b9_7f4a_7c15);
+        for round in 0..300 {
+            let mut s = good.to_vec();
+            for _ in 0..1 + rng.below(4) {
+                let at = rng.below(s.len());
+                s[at] ^= 1 << rng.below(8);
+            }
+            if round % 3 == 0 {
+                s.truncate(rng.below(s.len()));
+            }
+            let slow = decode_all(&s, 15, true);
+            let fast = decode_all(&s, 15, false);
+            assert!(
+                matches!(
+                    slow.ret,
+                    Ok(ZStatus::StreamEnd)
+                        | Ok(ZStatus::NeedDict)
+                        | Err(ZError::Data)
+                        | Err(ZError::Buf)
+                ),
+                "round {round}: {:?}",
+                slow.ret
+            );
+            assert_eq!((slow.ret, slow.msg), (fast.ret, fast.msg), "round {round}");
+            assert!(slow.out == fast.out, "round {round}");
+            if slow.ret == Err(ZError::Data) {
+                assert_eq!(slow.msg, Some("error"));
             }
         }
     }

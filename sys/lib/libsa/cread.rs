@@ -83,7 +83,7 @@ use alloc::vec;
 
 use libkern::staticcell::StaticCell;
 use libz::{
-    Z_DATA_ERROR, Z_DEFLATED, Z_ERRNO, Z_NO_FLUSH, Z_OK, Z_STREAM_END, ZStream, crc32, inflate,
+    Flush, Z_DATA_ERROR, Z_DEFLATED, Z_ERRNO, Z_OK, Z_STREAM_END, ZCode, ZStream, crc32, inflate,
     inflateEnd, inflateInit2, inflateReset,
 };
 
@@ -156,7 +156,7 @@ impl Sd {
             crc: 0,
             transparent: false,
         };
-        if inflateInit2(&mut s.stream, -15) != Z_OK {
+        if inflateInit2(&mut s.stream, -15).is_err() {
             return None;
         }
         Some(s)
@@ -329,7 +329,7 @@ pub fn close(fd: usize) -> Result<(), Errno> {
 
     // SAFETY: entry point; the only reference into SS here.
     if let Some(mut s) = unsafe { ss()[fd].take() } {
-        inflateEnd(&mut s.stream);
+        let _ = inflateEnd(&mut s.stream);
     }
 
     oclose(fd)
@@ -401,7 +401,7 @@ pub fn read(fd: usize, buf: &mut [u8]) -> Result<usize, Errno> {
                 s.stream.next_in = core::mem::transmute::<&[u8], &'static [u8]>(input);
                 s.stream.next_out = core::mem::transmute::<&mut [u8], &'static mut [u8]>(output);
             }
-            s.z_err = inflate(&mut s.stream, Z_NO_FLUSH);
+            s.z_err = inflate(&mut s.stream, Flush::NoFlush).code();
             let left = (s.stream.avail_in(), s.stream.avail_out());
             s.stream.next_in = &[];
             s.stream.next_out = &mut [];
@@ -427,7 +427,7 @@ pub fn read(fd: usize, buf: &mut [u8]) -> Result<usize, Errno> {
                     let total_in = s.stream.total_in;
                     let total_out = s.stream.total_out;
 
-                    inflateReset(&mut s.stream);
+                    let _ = inflateReset(&mut s.stream);
                     s.stream.total_in = total_in;
                     s.stream.total_out = total_out;
                     s.crc = crc32(0, &[]);
@@ -483,7 +483,7 @@ pub fn lseek(fd: usize, offset: Off, whence: i32) -> Result<Off, Errno> {
                 olseek(fd, 0, SEEK_SET)?;
                 // ??? perhaps fallback to close / open
 
-                inflateEnd(&mut s.stream);
+                let _ = inflateEnd(&mut s.stream);
 
                 // don't allocate again; this resets total_out to 0!
                 let inbuf = core::mem::take(&mut s.inbuf);

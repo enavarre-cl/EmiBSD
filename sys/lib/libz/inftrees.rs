@@ -62,6 +62,7 @@
 //! sub-tables for the longer codes; `inflate_fixed` points a state at the fixed-code tables.
 //!
 //! Upstream: sys/lib/libz/inftrees.c @ 3ce1f3f79392, sys/lib/libz/inftrees.h @ 3ce1f3f79392
+//! LZ: sys/lib/libz/inftrees.rs@f5985f1d055a
 //!
 //! **This is an altered source version, not the original zlib `inftrees.c`/`inftrees.h`**
 //! (zlib licence, clause 2): a Rust rewrite written for EmiBSD. The original's notice is kept
@@ -79,7 +80,7 @@
 //!
 //! ## Deviations
 //! - `code FAR * FAR *table` (the next free entry, advanced by the call) is a slice of the
-//!   whole code space plus an offset, `next`, that the call advances; the sub-table pointer
+//!   whole code space plus an offset, `next`, where the tables start; the sub-table pointer
 //!   `next` of the C is an index into that slice. `codes`, the number of lengths, is the
 //!   length of the `lens` slice.
 //! - `inflate_copyright`: this `inftrees.c` does not define the string (the comment asking to
@@ -91,6 +92,14 @@
 //!   check that `inflate_table` rebuilds them exactly, as `makefixed` would.
 //! - `inflate_fixed` takes the state; its `lencode`/`distcode` become [`CodeTable`]
 //!   selectors of the fixed tables instead of pointers to them.
+//!
+//! ## Redesign
+//! - `inflate_table` returns `Result<(usize, u32), TableError>`: on success the offset just
+//!   past the tables built and the root table's index bits, which LZ (as the C) wrote back
+//!   through `&mut next` and `&mut bits` next to an `i32` status (0, -1 for a bad code, 1 when
+//!   `ENOUGH` is not enough); the two failures are the [`TableError`] variants. On failure
+//!   the caller's offset and bit count are untouched, as in the C, which writes them back only
+//!   on success.
 
 #![allow(non_upper_case_globals)] // the C's table names (lbase, lext, dbase, dext)
 
@@ -132,6 +141,16 @@ pub(crate) enum CodeType {
     DISTS,
 }
 
+/// Why `inflate_table` could not build a table (the C's non-zero return values).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum TableError {
+    /// The C's -1: the code lengths make an over-subscribed or an incomplete code.
+    BadCode,
+    /// The C's +1: the tables need more than `ENOUGH_LENS`/`ENOUGH_DISTS` entries (only a
+    /// changed root size can cause it).
+    NotEnough,
+}
+
 /// `lbase`: base lengths of the length codes 257..285.
 static lbase: [u16; 31] = [
     3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
@@ -158,22 +177,21 @@ static dext: [u16; 32] = [
 /// `inflate_table`: build the decoding tables of the canonical Huffman code whose code
 /// lengths are `lens` (one per symbol, each in `0..=MAXBITS`, 0 for an unused symbol).
 ///
-/// The tables are written to `table` starting at `*next`, which is advanced past them. `bits`
-/// is the requested number of root table index bits; on return it holds the actual number,
-/// which differs when the request is longer than the longest code or shorter than the
-/// shortest one. `work` is scratch space of at least `lens.len()` entries.
+/// The tables are written to `table` starting at `next`. `bits` is the requested number of
+/// root table index bits. `work` is scratch space of at least `lens.len()` entries.
 ///
-/// Returns 0 on success, -1 for an over-subscribed or incomplete code, and +1 when
-/// [`ENOUGH_LENS`]/[`ENOUGH_DISTS`] entries are not enough (which only a changed root size can
-/// cause).
+/// Returns the offset just past the tables and the actual number of root bits, which differs
+/// from the request when it is longer than the longest code or shorter than the shortest one;
+/// or [`TableError::BadCode`] for an over-subscribed or incomplete code, and
+/// [`TableError::NotEnough`] when [`ENOUGH_LENS`]/[`ENOUGH_DISTS`] entries are not enough.
 pub(crate) fn inflate_table(
     type_: CodeType,
     lens: &[u16],
     table: &mut [Code],
-    next: &mut usize,
-    bits: &mut u32,
+    next: usize,
+    bits: u32,
     work: &mut [u16],
-) -> i32 {
+) -> Result<(usize, u32), TableError> {
     let mut count = [0u16; MAXBITS + 1]; // number of codes of each length
     let mut offs = [0u16; MAXBITS + 1]; // offsets in table for each length
 
@@ -191,7 +209,7 @@ pub(crate) fn inflate_table(
     }
 
     // bound code lengths, force root to be within code lengths
-    let mut root = *bits;
+    let mut root = bits;
     let mut max = MAXBITS as u32;
     while max >= 1 {
         if count[max as usize] != 0 {
@@ -209,11 +227,9 @@ pub(crate) fn inflate_table(
             bits: 1,
             val: 0,
         }; // invalid code marker
-        table[*next] = here;
-        table[*next + 1] = here;
-        *next += 2;
-        *bits = 1;
-        return 0; // no symbols, but wait for decoding to report error
+        table[next] = here;
+        table[next + 1] = here;
+        return Ok((next + 2, 1)); // no symbols, but wait for decoding to report error
     }
     let mut min = 1u32;
     while min < max {
@@ -232,11 +248,11 @@ pub(crate) fn inflate_table(
         left <<= 1;
         left -= i32::from(n);
         if left < 0 {
-            return -1; // over-subscribed
+            return Err(TableError::BadCode); // over-subscribed
         }
     }
     if left > 0 && (type_ == CodeType::CODES || max != 1) {
-        return -1; // incomplete set
+        return Err(TableError::BadCode); // incomplete set
     }
 
     // generate offsets into symbol table for each length for sorting
@@ -275,7 +291,7 @@ pub(crate) fn inflate_table(
     let mut huff: u32 = 0; // starting code
     let mut sym: usize = 0; // starting code symbol
     let mut len = min; // starting code length
-    let mut next_table = *next; // current table to fill in
+    let mut next_table = next; // current table to fill in
     let mut curr = root; // current table index bits
     let mut drop: u32 = 0; // current bits to drop from code for index
     let mut low = u32::MAX; // trigger new sub-table when len > root
@@ -289,7 +305,7 @@ pub(crate) fn inflate_table(
         CodeType::CODES => false,
     };
     if too_many(used) {
-        return 1;
+        return Err(TableError::NotEnough);
     }
 
     // process all codes and make table entries
@@ -376,15 +392,15 @@ pub(crate) fn inflate_table(
             // check for enough space
             used += 1 << curr;
             if too_many(used) {
-                return 1;
+                return Err(TableError::NotEnough);
             }
 
             // point entry in root table to sub-table
             low = huff & mask;
-            table[*next + low as usize] = Code {
+            table[next + low as usize] = Code {
                 op: curr as u8,
                 bits: root as u8,
-                val: (next_table - *next) as u16,
+                val: (next_table - next) as u16,
             };
         }
     }
@@ -401,9 +417,7 @@ pub(crate) fn inflate_table(
     }
 
     // set return parameters
-    *next += used as usize;
-    *bits = root;
-    0
+    Ok((next + used as usize, root))
 }
 
 /// `inflate_fixed`: set `state` to decode with the fixed codes of RFC 1951 (section 3.2.6):
@@ -479,32 +493,28 @@ mod tests {
         let mut fixed = vec![Code::default(); 544];
         let mut next = 0;
         let mut bits = 9;
-        assert_eq!(
-            inflate_table(
-                CodeType::LENS,
-                &lens[..288],
-                &mut fixed,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            0
-        );
+        (next, bits) = inflate_table(
+            CodeType::LENS,
+            &lens[..288],
+            &mut fixed,
+            next,
+            bits,
+            &mut work,
+        )
+        .unwrap();
         assert_eq!((next, bits), (512, 9));
         let distoff = next;
         lens[..32].fill(5);
         bits = 5;
-        assert_eq!(
-            inflate_table(
-                CodeType::DISTS,
-                &lens[..32],
-                &mut fixed,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            0
-        );
+        (next, bits) = inflate_table(
+            CodeType::DISTS,
+            &lens[..32],
+            &mut fixed,
+            next,
+            bits,
+            &mut work,
+        )
+        .unwrap();
         assert_eq!((next, bits), (544, 5));
 
         // makefixed() prints entries with (low & 127) == 99 (codes 286 and 287) as plain invalid
@@ -560,17 +570,8 @@ mod tests {
         let mut work = [0u16; 16];
         let mut next = 0;
         let mut bits = 6;
-        assert_eq!(
-            inflate_table(
-                CodeType::DISTS,
-                &lens,
-                &mut table,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            0
-        );
+        (next, bits) =
+            inflate_table(CodeType::DISTS, &lens, &mut table, next, bits, &mut work).unwrap();
         assert_eq!(bits, 6);
         assert!(next > 64 && next <= ENOUGH_DISTS);
         for (sym, code) in canonical_codes(&lens).into_iter().enumerate() {
@@ -591,17 +592,8 @@ mod tests {
         let mut work = [0u16; 30];
         let mut next = 1;
         let mut bits = 6;
-        assert_eq!(
-            inflate_table(
-                CodeType::DISTS,
-                &lens,
-                &mut table,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            0
-        );
+        (next, bits) =
+            inflate_table(CodeType::DISTS, &lens, &mut table, next, bits, &mut work).unwrap();
         let bad = Code {
             op: 64,
             bits: 1,
@@ -623,61 +615,31 @@ mod tests {
                 CodeType::CODES,
                 &[1, 1, 1],
                 &mut table,
-                &mut next,
-                &mut bits,
+                next,
+                bits,
                 &mut work
             ),
-            -1
+            Err(TableError::BadCode)
         );
         // codes of lengths 1 and 2: incomplete, refused for CODES and for codes longer than 1 bit
         assert_eq!(
-            inflate_table(
-                CodeType::CODES,
-                &[1, 2],
-                &mut table,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            -1
+            inflate_table(CodeType::CODES, &[1, 2], &mut table, next, bits, &mut work),
+            Err(TableError::BadCode)
         );
         assert_eq!(
-            inflate_table(
-                CodeType::LENS,
-                &[1, 2],
-                &mut table,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            -1
+            inflate_table(CodeType::LENS, &[1, 2], &mut table, next, bits, &mut work),
+            Err(TableError::BadCode)
         );
         // a single one-bit code is incomplete but allowed for LENS and DISTS: the other entry is
         // an invalid code marker
         assert_eq!(
-            inflate_table(
-                CodeType::CODES,
-                &[1],
-                &mut table,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            -1
+            inflate_table(CodeType::CODES, &[1], &mut table, next, bits, &mut work),
+            Err(TableError::BadCode)
         );
         assert_eq!(next, 0);
         bits = 6;
-        assert_eq!(
-            inflate_table(
-                CodeType::DISTS,
-                &[0, 1],
-                &mut table,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            0
-        );
+        (next, bits) =
+            inflate_table(CodeType::DISTS, &[0, 1], &mut table, next, bits, &mut work).unwrap();
         assert_eq!((next, bits), (2, 1));
         assert_eq!(
             table[0],
@@ -706,27 +668,18 @@ mod tests {
         let mut table = vec![Code::default(); 1024];
         let mut work = [0u16; 11];
         for type_ in [CodeType::LENS, CodeType::DISTS] {
-            let mut next = 0;
-            let mut bits = 10;
+            let next = 0;
+            let bits = 10;
             assert_eq!(
-                inflate_table(type_, &lens, &mut table, &mut next, &mut bits, &mut work),
-                1
+                inflate_table(type_, &lens, &mut table, next, bits, &mut work),
+                Err(TableError::NotEnough)
             );
         }
         // CODES has no such limit
         let mut next = 0;
         let mut bits = 10;
-        assert_eq!(
-            inflate_table(
-                CodeType::CODES,
-                &lens,
-                &mut table,
-                &mut next,
-                &mut bits,
-                &mut work
-            ),
-            0
-        );
+        (next, bits) =
+            inflate_table(CodeType::CODES, &lens, &mut table, next, bits, &mut work).unwrap();
         assert_eq!((next, bits), (1024, 10));
     }
 }

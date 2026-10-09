@@ -73,8 +73,8 @@ use alloc::vec::Vec;
 
 use crate::sys::errno::Errno;
 use libz::{
-    MAX_WBITS, Z_DEFAULT_COMPRESSION, Z_DEFAULT_STRATEGY, Z_FINISH, Z_OK, Z_PARTIAL_FLUSH,
-    Z_STREAM_END, ZStream, deflate, deflateEnd, deflateInit2, inflate, inflateEnd, inflateInit2,
+    Flush, MAX_WBITS, Z_DEFAULT_COMPRESSION, Z_DEFAULT_STRATEGY, Z_FINISH, Z_OK, Z_STREAM_END,
+    ZCode, ZStream, deflate, deflateEnd, deflateInit2, inflate, inflateEnd, inflateInit2,
 };
 
 /// `Z_METHOD`: the deflate compression method.
@@ -113,7 +113,7 @@ pub fn deflate_global(data: &[u8], decomp: bool) -> Result<Vec<u8>, Errno> {
     let error = deflate_global_run(&mut zbuf, &mut slots, &mut i, data.len(), decomp);
     let result = zbuf.total_out as usize;
     if decomp {
-        inflateEnd(&mut zbuf);
+        let _ = inflateEnd(&mut zbuf);
     } else {
         deflateEnd(&mut zbuf);
     }
@@ -152,7 +152,7 @@ fn deflate_global_run<'a>(
     deflate_global_next(zbuf, slots, i, size)?;
 
     let error = if decomp {
-        inflateInit2(zbuf, window_inflate)
+        inflateInit2(zbuf, window_inflate).code()
     } else {
         deflateInit2(
             zbuf,
@@ -169,7 +169,7 @@ fn deflate_global_run<'a>(
 
     loop {
         let error = if decomp {
-            inflate(zbuf, Z_PARTIAL_FLUSH)
+            inflate(zbuf, Flush::PartialFlush).code()
         } else {
             deflate(zbuf, Z_FINISH)
         };

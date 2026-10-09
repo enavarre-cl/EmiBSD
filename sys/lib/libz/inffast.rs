@@ -142,9 +142,9 @@ pub(crate) fn inflate_fast(
     let mut out = r.put; // local next_out
     let beg = out - (start - left); // inflate()'s initial next_out
     let end = output.len() - 257; // while out < end, enough space available
-    let wsize = state.wsize as usize; // window size or zero if not using window
-    let whave = state.whave as usize; // valid bytes in the window
-    let wnext = state.wnext as usize; // window write index
+    let wsize = state.wsize; // window size or zero if not using window
+    let whave = state.whave; // valid bytes in the window
+    let wnext = state.wnext; // window write index
     let window: Option<&[u8]> = if window_in_output {
         None
     } else {
