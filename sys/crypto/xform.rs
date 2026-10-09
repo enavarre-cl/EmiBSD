@@ -120,7 +120,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::aes::{AES_Decrypt, AES_Encrypt, AES_Setkey, AesCtx};
-use super::blf::{BlfCtx, blf_ecb_decrypt, blf_ecb_encrypt, blf_key};
+use super::blf::BlfCtx;
 use super::cast::{CastKey, cast_decrypt, cast_encrypt, cast_setkey};
 use super::chachapoly::{
     CHACHA20_KEYSIZE, CHACHA20_SALT, Chacha20_Poly1305_Final, Chacha20_Poly1305_Init,
@@ -416,12 +416,12 @@ fn des3_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
 
 /// `blf_encrypt`.
 fn blf_encrypt(key: &mut Kschedule, blk: &mut [u8]) {
-    blf_ecb_encrypt(key.blf(), &mut blk[..8]);
+    key.blf().ecb_encrypt(&mut blk[..8]);
 }
 
 /// `blf_decrypt`.
 fn blf_decrypt(key: &mut Kschedule, blk: &mut [u8]) {
-    blf_ecb_decrypt(key.blf(), &mut blk[..8]);
+    key.blf().ecb_decrypt(&mut blk[..8]);
 }
 
 /// `blf_setkey`.
@@ -430,7 +430,7 @@ fn blf_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
         return Err(Errno::EINVAL);
     }
     let mut ctx = Box::<BlfCtx>::default();
-    blf_key(&mut ctx, key);
+    ctx.set_key(key);
     *sched = Kschedule::Blf(ctx);
     Ok(())
 }

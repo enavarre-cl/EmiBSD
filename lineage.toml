@@ -1090,7 +1090,67 @@ kind = "merged"
 [[module]]
 rust = "sys/crypto/blf.rs"
 lz = ["sys/crypto/blf.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::Blowfish_encipher"
+native = ["BlfCtx::encipher"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::Blowfish_decipher"
+native = ["BlfCtx::decipher"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::Blowfish_initstate"
+native = ["BlfCtx::initstate"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::Blowfish_expand0state"
+native = ["BlfCtx::expand0state"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::Blowfish_expandstate"
+native = ["BlfCtx::expandstate"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::blf_key"
+native = ["BlfCtx::set_key"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::blf_enc"
+native = ["BlfCtx::enc"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::blf_dec"
+native = ["BlfCtx::dec"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::blf_ecb_encrypt"
+native = ["BlfCtx::ecb_encrypt"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::blf_ecb_decrypt"
+native = ["BlfCtx::ecb_decrypt"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::blf_cbc_encrypt"
+native = ["BlfCtx::cbc_encrypt"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blf.rs::blf_cbc_decrypt"
+native = ["BlfCtx::cbc_decrypt"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/cast.rs"
@@ -1417,7 +1477,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
@@ -2603,7 +2663,8 @@ license = "ISC. M12: XHCI_CMD_TIMEOUT/MAX_CMDS/MAX_EVTS/MAX_XFER"
 [[module]]
 rust = "sys/dev/vnd.rs"
 lz = ["sys/dev/vnd.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/blf.rs"]
 
 [[module]]
 rust = "sys/dev/vndioctl.rs"

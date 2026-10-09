@@ -102,9 +102,7 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use libkern::{explicit_bzero, strlcpy};
 
-use crate::crypto::blf::{
-    BLF_MAXUTILIZED, BlfCtx, blf_cbc_decrypt, blf_cbc_encrypt, blf_ecb_encrypt, blf_key,
-};
+use crate::crypto::blf::{BLF_MAXUTILIZED, BlfCtx};
 use crate::dev::vndioctl::{VNDIOCCLR, VNDIOCGET, VNDIOCSET, VNDNLEN, VndIoctl, VndUser};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::kern_physio::{minphys, physio};
@@ -229,11 +227,11 @@ pub fn vndencrypt(sc: &VndSoftc, addr: &mut [u8], off: Daddr, encrypt: bool) {
     let bsize = dbtob(1);
     for (off, sector) in (off..).zip(addr.chunks_exact_mut(bsize)) {
         let mut iv = off.to_ne_bytes();
-        blf_ecb_encrypt(ctx, &mut iv);
+        ctx.ecb_encrypt(&mut iv);
         if encrypt {
-            blf_cbc_encrypt(ctx, &iv, sector);
+            ctx.cbc_encrypt(&iv, sector);
         } else {
-            blf_cbc_decrypt(ctx, &iv, sector);
+            ctx.cbc_decrypt(&iv, sector);
         }
     }
 }
@@ -808,7 +806,7 @@ fn vndioctl_set(dev: Dev, sc: &'static VndSoftc, addr: &mut [u8], p: &Proc) -> R
                 ctx.as_ptr().write(BlfCtx::default());
                 &mut *ctx.as_ptr()
             };
-            blf_key(c, &key[..keylen]);
+            c.set_key(&key[..keylen]);
             explicit_bzero(&mut key[..keylen]);
             sc.sc_keyctx.set(Some(ctx));
         } else {
@@ -1057,7 +1055,7 @@ mod tests {
         sc.sc_file.set(name);
         if let Some(key) = key {
             let ctx: &'static mut BlfCtx = Box::leak(Box::default());
-            blf_key(ctx, key);
+            ctx.set_key(key);
             sc.sc_keyctx.set(Some(NonNull::from(ctx)));
         }
         sc.sc_vp.set(Some(vp));

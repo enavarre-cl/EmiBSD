@@ -88,19 +88,35 @@
 //! call.
 //!
 //! Upstream: sys/crypto/blf.h @ 3ce1f3f79392, sys/crypto/blf.c @ 3ce1f3f79392
+//! LZ: sys/crypto/blf.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module; `blf_ctx` is [`BlfCtx`], its S-boxes a
 //!   `[[u32; 256]; 4]` (the C indexes the flat 1024 words with `0x100 * k + byte`).
-//! - The data and keys are slices (`databytes`, `keybytes`, `len` are their lengths). A block
-//!   function takes `&mut [u32; 2]`; `blf_enc` and `blf_dec` take a slice of `2 * blocks`
-//!   words. `Blowfish_stream2word` reads `data` cyclically and moves `current` as the C does.
-//! - `blf_ecb_encrypt`, `blf_ecb_decrypt` and `blf_cbc_encrypt` process the whole 8-byte blocks
-//!   of `data` (the C loops `i < len` in steps of 8 and would read and write past `len` when
-//!   it is not a multiple of 8); `blf_cbc_decrypt`, which runs from the last block to the
-//!   first, does nothing for fewer than 8 bytes (the C's `len - 8` underflows).
+//! - The data and keys are slices (`databytes`, `keybytes`, `len` are their lengths).
+//!   `Blowfish_stream2word` reads `data` cyclically and moves `current` as the C does.
+//! - `ecb_encrypt`, `ecb_decrypt` and `cbc_encrypt` process the whole 8-byte blocks of `data`
+//!   (the C loops `i < len` in steps of 8 and would read and write past `len` when it is not a
+//!   multiple of 8); `cbc_decrypt`, which runs from the last block to the first, does nothing
+//!   for fewer than 8 bytes (the C's `len - 8` underflows).
 //! - The rounds are loops over the sixteen steps with the halves swapped, where the C unrolls
 //!   `BLFRND` sixteen times with the roles of `Xl` and `Xr` exchanged by hand.
+//!
+//! ## Redesign
+//! - The functions over a `blf_ctx` are methods of [`BlfCtx`]: `blf_key` is
+//!   [`BlfCtx::set_key`], `Blowfish_initstate`, `_expand0state`, `_expandstate`, `_encipher`
+//!   and `_decipher` drop their prefix, and `blf_enc`, `blf_dec`, `blf_ecb_*` and `blf_cbc_*`
+//!   drop theirs (LZ: free functions with the context first). Keying stays in place
+//!   (`&mut self`): a context is 4 KiB, too big to return by value on a kernel stack.
+//! - `encipher` and `decipher` take the two words by value and return them (LZ: `&mut [u32;
+//!   2]`); `enc` and `dec` take the blocks as `&mut [[u32; 2]]`, which carries the count the C
+//!   (and LZ) passed next to the words; the CBC IVs are `&[u8; 8]` (LZ: a slice of which the
+//!   first 8 bytes were read).
+//! - [`BlfCtx`] is no longer `Copy` or `PartialEq`: it zeroes its words when dropped
+//!   (`docs/IDIOMS.md`), so a context freed by the crypto framework or `vnd(4)` does not leave
+//!   its key schedule behind.
+
+use super::wipe;
 
 /// `BLF_N`: number of subkeys.
 pub const BLF_N: usize = 16;
@@ -109,8 +125,9 @@ pub const BLF_MAXKEYLEN: usize = (BLF_N - 2) * 4;
 /// `BLF_MAXUTILIZED`: 576 bits.
 pub const BLF_MAXUTILIZED: usize = (BLF_N + 2) * 4;
 
-/// `blf_ctx`: the Blowfish context.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `blf_ctx`: the Blowfish context. Keyed in place by [`BlfCtx::set_key`]; zeroed when
+/// dropped.
+#[derive(Clone, Debug)]
 pub struct BlfCtx {
     /// `S`: S-boxes.
     pub s: [[u32; 256]; 4],
@@ -123,6 +140,175 @@ impl Default for BlfCtx {
         Self {
             s: [[0; 256]; 4],
             p: [0; BLF_N + 2],
+        }
+    }
+}
+
+impl Drop for BlfCtx {
+    /// Wipes the S-boxes and subkeys (`docs/IDIOMS.md`: a key schedule is zeroed when
+    /// dropped).
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl BlfCtx {
+    /// Zeroes the S-boxes and subkeys, with stores the compiler keeps (`crate::crypto::wipe`).
+    pub(crate) fn zeroize(&mut self) {
+        self.s.iter_mut().flatten().for_each(wipe);
+        self.p.iter_mut().for_each(wipe);
+    }
+
+    /// `Blowfish_encipher`: the encipherment of the two words `x`.
+    pub fn encipher(&self, x: [u32; 2]) -> [u32; 2] {
+        let [mut xl, mut xr] = x;
+
+        xl ^= self.p[0];
+        // BLFRND(s, p, Xr, Xl, 1); BLFRND(s, p, Xl, Xr, 2); ...
+        for n in 1..=BLF_N {
+            if n % 2 == 1 {
+                xr ^= f(&self.s, xl) ^ self.p[n];
+            } else {
+                xl ^= f(&self.s, xr) ^ self.p[n];
+            }
+        }
+
+        [xr ^ self.p[17], xl]
+    }
+
+    /// `Blowfish_decipher`: the decipherment of the two words `x`.
+    pub fn decipher(&self, x: [u32; 2]) -> [u32; 2] {
+        let [mut xl, mut xr] = x;
+
+        xl ^= self.p[17];
+        for n in (1..=BLF_N).rev() {
+            if n % 2 == 0 {
+                xr ^= f(&self.s, xl) ^ self.p[n];
+            } else {
+                xl ^= f(&self.s, xr) ^ self.p[n];
+            }
+        }
+
+        [xr ^ self.p[0], xl]
+    }
+
+    /// `Blowfish_initstate`: the S-boxes and subkeys from the digits of Pi.
+    pub fn initstate(&mut self) {
+        self.s = INITSTATE.s;
+        self.p = INITSTATE.p;
+    }
+
+    /// `Blowfish_expand0state`: mixes the key into the subkeys and S-boxes.
+    pub fn expand0state(&mut self, key: &[u8]) {
+        let mut j = 0u16;
+
+        for p in self.p.iter_mut() {
+            // Extract 4 int8 to 1 int32 from keystream
+            *p ^= Blowfish_stream2word(key, &mut j);
+        }
+
+        let mut data = [0u32; 2];
+        for i in (0..BLF_N + 2).step_by(2) {
+            data = self.encipher(data);
+            self.p[i..i + 2].copy_from_slice(&data);
+        }
+
+        for i in 0..4 {
+            for k in (0..256).step_by(2) {
+                data = self.encipher(data);
+                self.s[i][k..k + 2].copy_from_slice(&data);
+            }
+        }
+    }
+
+    /// `Blowfish_expandstate`: as [`BlfCtx::expand0state`], with `data` (a salt) mixed in too.
+    pub fn expandstate(&mut self, data: &[u8], key: &[u8]) {
+        let mut j = 0u16;
+
+        for p in self.p.iter_mut() {
+            // Extract 4 int8 to 1 int32 from keystream
+            *p ^= Blowfish_stream2word(key, &mut j);
+        }
+
+        j = 0;
+        let mut d = [0u32; 2];
+        for i in (0..BLF_N + 2).step_by(2) {
+            d[0] ^= Blowfish_stream2word(data, &mut j);
+            d[1] ^= Blowfish_stream2word(data, &mut j);
+            d = self.encipher(d);
+            self.p[i..i + 2].copy_from_slice(&d);
+        }
+
+        for i in 0..4 {
+            for k in (0..256).step_by(2) {
+                d[0] ^= Blowfish_stream2word(data, &mut j);
+                d[1] ^= Blowfish_stream2word(data, &mut j);
+                d = self.encipher(d);
+                self.s[i][k..k + 2].copy_from_slice(&d);
+            }
+        }
+    }
+
+    /// `blf_key`: sets the key (initialize S-boxes and subkeys with Pi, transform them with
+    /// the key).
+    pub fn set_key(&mut self, k: &[u8]) {
+        self.initstate();
+
+        self.expand0state(k);
+    }
+
+    /// `blf_enc`: enciphers the blocks of two words each.
+    pub fn enc(&self, data: &mut [[u32; 2]]) {
+        for d in data {
+            *d = self.encipher(*d);
+        }
+    }
+
+    /// `blf_dec`: deciphers the blocks of two words each.
+    pub fn dec(&self, data: &mut [[u32; 2]]) {
+        for d in data {
+            *d = self.decipher(*d);
+        }
+    }
+
+    /// `blf_ecb_encrypt`: encrypts the whole 8-byte blocks of `data`.
+    pub fn ecb_encrypt(&self, data: &mut [u8]) {
+        for blk in data.as_chunks_mut::<8>().0 {
+            *blk = store_block(self.encipher(load_block(blk)));
+        }
+    }
+
+    /// `blf_ecb_decrypt`: decrypts the whole 8-byte blocks of `data`.
+    pub fn ecb_decrypt(&self, data: &mut [u8]) {
+        for blk in data.as_chunks_mut::<8>().0 {
+            *blk = store_block(self.decipher(load_block(blk)));
+        }
+    }
+
+    /// `blf_cbc_encrypt`: CBC encryption of the whole 8-byte blocks of `data` under `iv`.
+    pub fn cbc_encrypt(&self, iv: &[u8; 8], data: &mut [u8]) {
+        let mut prev = *iv;
+        for blk in data.as_chunks_mut::<8>().0 {
+            blk.iter_mut().zip(prev).for_each(|(b, v)| *b ^= v);
+            *blk = store_block(self.encipher(load_block(blk)));
+            prev = *blk;
+        }
+    }
+
+    /// `blf_cbc_decrypt`: CBC decryption of the whole 8-byte blocks of `data` under `iva`, from
+    /// the last block to the first.
+    pub fn cbc_decrypt(&self, iva: &[u8; 8], data: &mut [u8]) {
+        let blocks = data.as_chunks_mut::<8>().0;
+        // Each block is decrypted, then xored with the ciphertext before it (still intact,
+        // since the walk goes backwards), the first one with the IV.
+        for b in (0..blocks.len()).rev() {
+            let iv = match b.checked_sub(1) {
+                Some(prev) => blocks[prev],
+                None => *iva,
+            };
+            let blk = &mut blocks[b];
+            *blk = store_block(self.decipher(load_block(blk)));
+            blk.iter_mut().zip(iv).for_each(|(x, v)| *x ^= v);
         }
     }
 }
@@ -296,54 +482,9 @@ static INITSTATE: BlfCtx = BlfCtx {
 
 /// `F`: the function for Feistel Networks.
 fn f(s: &[[u32; 256]; 4], x: u32) -> u32 {
-    ((s[0][(x >> 24) as usize].wrapping_add(s[1][((x >> 16) & 0xFF) as usize]))
-        ^ s[2][((x >> 8) & 0xFF) as usize])
-        .wrapping_add(s[3][(x & 0xFF) as usize])
-}
-
-/// `Blowfish_encipher`: enciphers the two words `x` in place.
-#[allow(non_snake_case)] // the C name
-pub fn Blowfish_encipher(c: &BlfCtx, x: &mut [u32; 2]) {
-    let mut xl = x[0];
-    let mut xr = x[1];
-
-    xl ^= c.p[0];
-    // BLFRND(s, p, Xr, Xl, 1); BLFRND(s, p, Xl, Xr, 2); ...
-    for n in 1..=BLF_N {
-        if n % 2 == 1 {
-            xr ^= f(&c.s, xl) ^ c.p[n];
-        } else {
-            xl ^= f(&c.s, xr) ^ c.p[n];
-        }
-    }
-
-    x[0] = xr ^ c.p[17];
-    x[1] = xl;
-}
-
-/// `Blowfish_decipher`: deciphers the two words `x` in place.
-#[allow(non_snake_case)] // the C name
-pub fn Blowfish_decipher(c: &BlfCtx, x: &mut [u32; 2]) {
-    let mut xl = x[0];
-    let mut xr = x[1];
-
-    xl ^= c.p[17];
-    for n in (1..=BLF_N).rev() {
-        if n % 2 == 0 {
-            xr ^= f(&c.s, xl) ^ c.p[n];
-        } else {
-            xl ^= f(&c.s, xr) ^ c.p[n];
-        }
-    }
-
-    x[0] = xr ^ c.p[0];
-    x[1] = xl;
-}
-
-/// `Blowfish_initstate`: the S-boxes and subkeys from the digits of Pi.
-#[allow(non_snake_case)] // the C name
-pub fn Blowfish_initstate(c: &mut BlfCtx) {
-    *c = INITSTATE;
+    let [a, b, c, d] = x.to_be_bytes();
+    ((s[0][usize::from(a)].wrapping_add(s[1][usize::from(b)])) ^ s[2][usize::from(c)])
+        .wrapping_add(s[3][usize::from(d)])
 }
 
 /// `Blowfish_stream2word`: converts bytes to a word, reading `data` cyclically from `current`.
@@ -365,163 +506,20 @@ pub fn Blowfish_stream2word(data: &[u8], current: &mut u16) -> u32 {
     temp
 }
 
-/// `Blowfish_expand0state`: mixes the key into the subkeys and S-boxes.
-#[allow(non_snake_case)] // the C name
-pub fn Blowfish_expand0state(c: &mut BlfCtx, key: &[u8]) {
-    let mut j = 0u16;
-    let mut data = [0u32; 2];
-
-    for i in 0..BLF_N + 2 {
-        // Extract 4 int8 to 1 int32 from keystream
-        let temp = Blowfish_stream2word(key, &mut j);
-        c.p[i] ^= temp;
-    }
-
-    for i in (0..BLF_N + 2).step_by(2) {
-        Blowfish_encipher(c, &mut data);
-
-        c.p[i] = data[0];
-        c.p[i + 1] = data[1];
-    }
-
-    for i in 0..4 {
-        for k in (0..256).step_by(2) {
-            Blowfish_encipher(c, &mut data);
-
-            c.s[i][k] = data[0];
-            c.s[i][k + 1] = data[1];
-        }
-    }
-}
-
-/// `Blowfish_expandstate`: as `Blowfish_expand0state`, with `data` (a salt) mixed in too.
-#[allow(non_snake_case)] // the C name
-pub fn Blowfish_expandstate(c: &mut BlfCtx, data: &[u8], key: &[u8]) {
-    let mut j = 0u16;
-    let mut d = [0u32; 2];
-
-    for i in 0..BLF_N + 2 {
-        // Extract 4 int8 to 1 int32 from keystream
-        let temp = Blowfish_stream2word(key, &mut j);
-        c.p[i] ^= temp;
-    }
-
-    j = 0;
-    for i in (0..BLF_N + 2).step_by(2) {
-        d[0] ^= Blowfish_stream2word(data, &mut j);
-        d[1] ^= Blowfish_stream2word(data, &mut j);
-        Blowfish_encipher(c, &mut d);
-
-        c.p[i] = d[0];
-        c.p[i + 1] = d[1];
-    }
-
-    for i in 0..4 {
-        for k in (0..256).step_by(2) {
-            d[0] ^= Blowfish_stream2word(data, &mut j);
-            d[1] ^= Blowfish_stream2word(data, &mut j);
-            Blowfish_encipher(c, &mut d);
-
-            c.s[i][k] = d[0];
-            c.s[i][k + 1] = d[1];
-        }
-    }
-}
-
-/// `blf_key`: sets the key (initialize S-boxes and subkeys with Pi, transform them with the key).
-pub fn blf_key(c: &mut BlfCtx, k: &[u8]) {
-    Blowfish_initstate(c);
-
-    Blowfish_expand0state(c, k);
-}
-
-/// `blf_enc`: enciphers `blocks` blocks of two words each.
-pub fn blf_enc(c: &BlfCtx, data: &mut [u32], blocks: usize) {
-    for d in data.as_chunks_mut::<2>().0.iter_mut().take(blocks) {
-        Blowfish_encipher(c, d);
-    }
-}
-
-/// `blf_dec`: deciphers `blocks` blocks of two words each.
-pub fn blf_dec(c: &BlfCtx, data: &mut [u32], blocks: usize) {
-    for d in data.as_chunks_mut::<2>().0.iter_mut().take(blocks) {
-        Blowfish_decipher(c, d);
-    }
-}
-
-/// The big-endian halves of the 8 bytes at the start of `data`.
-fn load_block(data: &[u8]) -> [u32; 2] {
+/// The big-endian halves of the block `data`.
+fn load_block(data: &[u8; 8]) -> [u32; 2] {
+    let [a, b, c, d, e, f, g, h] = *data;
     [
-        u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
-        u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
+        u32::from_be_bytes([a, b, c, d]),
+        u32::from_be_bytes([e, f, g, h]),
     ]
 }
 
-/// Stores the halves `d` as 8 big-endian bytes at the start of `data`.
-fn store_block(data: &mut [u8], d: [u32; 2]) {
-    data[..4].copy_from_slice(&d[0].to_be_bytes());
-    data[4..8].copy_from_slice(&d[1].to_be_bytes());
-}
-
-/// `blf_ecb_encrypt`: encrypts the whole 8-byte blocks of `data`.
-pub fn blf_ecb_encrypt(c: &BlfCtx, data: &mut [u8]) {
-    for blk in data.as_chunks_mut::<8>().0.iter_mut() {
-        let mut d = load_block(blk);
-        Blowfish_encipher(c, &mut d);
-        store_block(blk, d);
-    }
-}
-
-/// `blf_ecb_decrypt`: decrypts the whole 8-byte blocks of `data`.
-pub fn blf_ecb_decrypt(c: &BlfCtx, data: &mut [u8]) {
-    for blk in data.as_chunks_mut::<8>().0.iter_mut() {
-        let mut d = load_block(blk);
-        Blowfish_decipher(c, &mut d);
-        store_block(blk, d);
-    }
-}
-
-/// `blf_cbc_encrypt`: CBC encryption of the whole 8-byte blocks of `data` under the 8-byte
-/// `iv`.
-pub fn blf_cbc_encrypt(c: &BlfCtx, iv: &[u8], data: &mut [u8]) {
-    let mut prev = [0u8; 8];
-    prev.copy_from_slice(&iv[..8]);
-    for blk in data.as_chunks_mut::<8>().0.iter_mut() {
-        for j in 0..8 {
-            blk[j] ^= prev[j];
-        }
-        let mut d = load_block(blk);
-        Blowfish_encipher(c, &mut d);
-        store_block(blk, d);
-        prev = *blk;
-    }
-}
-
-/// `blf_cbc_decrypt`: CBC decryption of the whole 8-byte blocks of `data` under the 8-byte
-/// `iva`, from the last block to the first.
-pub fn blf_cbc_decrypt(c: &BlfCtx, iva: &[u8], data: &mut [u8]) {
-    let blocks = data.len() / 8;
-    if blocks == 0 {
-        return;
-    }
-    for b in (1..blocks).rev() {
-        let mut iv = [0u8; 8];
-        iv.copy_from_slice(&data[8 * (b - 1)..8 * b]);
-        let blk = &mut data[8 * b..8 * b + 8];
-        let mut d = load_block(blk);
-        Blowfish_decipher(c, &mut d);
-        store_block(blk, d);
-        for j in 0..8 {
-            blk[j] ^= iv[j];
-        }
-    }
-    let blk = &mut data[..8];
-    let mut d = load_block(blk);
-    Blowfish_decipher(c, &mut d);
-    store_block(blk, d);
-    for j in 0..8 {
-        blk[j] ^= iva[j];
-    }
+/// The block whose big-endian halves are `d`.
+fn store_block(d: [u32; 2]) -> [u8; 8] {
+    let [a, b, c, e] = d[0].to_be_bytes();
+    let [f, g, h, i] = d[1].to_be_bytes();
+    [a, b, c, e, f, g, h, i]
 }
 /* </CODE> */
 
@@ -541,9 +539,9 @@ mod tests {
 
     fn ecb_block(key: &[u8], pt: &str) -> Vec<u8> {
         let mut c = BlfCtx::default();
-        blf_key(&mut c, key);
+        c.set_key(key);
         let mut blk: [u8; 8] = hexn(pt);
-        blf_ecb_encrypt(&c, &mut blk);
+        c.ecb_encrypt(&mut blk);
         blk.to_vec()
     }
 
@@ -579,37 +577,35 @@ mod tests {
     #[test]
     fn word_functions_round_trip() {
         let mut c = BlfCtx::default();
-        blf_key(&mut c, b"a secret key");
-        let orig = [0x0123_4567u32, 0x89ab_cdef, 0xfedc_ba98, 0x7654_3210];
+        c.set_key(b"a secret key");
+        let orig = [[0x0123_4567u32, 0x89ab_cdef], [0xfedc_ba98, 0x7654_3210]];
         let mut d = orig;
-        blf_enc(&c, &mut d, 2);
+        c.enc(&mut d);
         assert_ne!(d, orig);
-        let mut one = [orig[0], orig[1]];
-        Blowfish_encipher(&c, &mut one);
-        assert_eq!(&d[..2], &one);
-        blf_dec(&c, &mut d, 2);
+        let one = c.encipher(orig[0]);
+        assert_eq!(d[0], one);
+        c.dec(&mut d);
         assert_eq!(d, orig);
-        Blowfish_decipher(&c, &mut one);
-        assert_eq!(one, [orig[0], orig[1]]);
+        assert_eq!(c.decipher(one), orig[0]);
     }
 
     #[test]
     fn ecb_runs() {
         let mut c = BlfCtx::default();
-        blf_key(&mut c, b"another key");
+        c.set_key(b"another key");
         let data: Vec<u8> = (0..64).collect();
         let mut enc = data.clone();
-        blf_ecb_encrypt(&c, &mut enc);
+        c.ecb_encrypt(&mut enc);
         assert_ne!(enc, data);
         // Blocks are independent in ECB; a trailing partial block is left alone.
         let mut first = data[..8].to_vec();
-        blf_ecb_encrypt(&c, &mut first);
+        c.ecb_encrypt(&mut first);
         assert_eq!(enc[..8], first[..]);
         let mut partial = data[..21].to_vec();
-        blf_ecb_encrypt(&c, &mut partial);
+        c.ecb_encrypt(&mut partial);
         assert_eq!(partial[..16], enc[..16]);
         assert_eq!(partial[16..], data[16..21]);
-        blf_ecb_decrypt(&c, &mut enc);
+        c.ecb_decrypt(&mut enc);
         assert_eq!(enc, data);
     }
 
@@ -619,25 +615,25 @@ mod tests {
             .map(|i| ((i * 3 + 1) % 256) as u8)
             .collect();
         let mut c = BlfCtx::default();
-        blf_key(&mut c, &k56);
+        c.set_key(&k56);
         let iv: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
         let data: Vec<u8> = (0..40).collect();
         let mut buf = data.clone();
-        blf_cbc_encrypt(&c, &iv, &mut buf);
+        c.cbc_encrypt(&iv, &mut buf);
         assert_eq!(
             buf,
             hex("4bbbe6564c602d32aa3102b9bbe480d5d9ea3c1e29a4b2bb6018deb002905180c15eae033eba97fb")
         );
-        blf_cbc_decrypt(&c, &iv, &mut buf);
+        c.cbc_decrypt(&iv, &mut buf);
         assert_eq!(buf, data);
 
         // One block, and nothing.
         let mut one = data[..8].to_vec();
-        blf_cbc_encrypt(&c, &iv, &mut one);
-        blf_cbc_decrypt(&c, &iv, &mut one);
+        c.cbc_encrypt(&iv, &mut one);
+        c.cbc_decrypt(&iv, &mut one);
         assert_eq!(one, data[..8]);
         let mut none: [u8; 0] = [];
-        blf_cbc_decrypt(&c, &iv, &mut none);
+        c.cbc_decrypt(&iv, &mut none);
     }
 
     #[test]
@@ -655,21 +651,78 @@ mod tests {
         // The salt words are xored into the chained block: all zero, they change nothing.
         let mut a = BlfCtx::default();
         let mut b = BlfCtx::default();
-        Blowfish_initstate(&mut a);
-        Blowfish_initstate(&mut b);
-        Blowfish_expand0state(&mut a, b"key");
-        Blowfish_expandstate(&mut b, &[0u8; 16], b"key");
-        assert_eq!(a, b);
+        a.initstate();
+        b.initstate();
+        a.expand0state(b"key");
+        b.expandstate(&[0u8; 16], b"key");
+        assert_eq!((a.s, a.p), (b.s, b.p));
     }
 
     #[test]
     fn initial_state_is_the_digits_of_pi() {
         let mut c = BlfCtx::default();
-        Blowfish_initstate(&mut c);
+        c.initstate();
         assert_eq!(c.p[0], 0x243f6a88);
         assert_eq!(c.p[17], 0x8979fb1b);
         assert_eq!(c.s[0][0], 0xd1310ba6);
         assert_eq!(c.s[3][255], 0x3ac372e6);
+    }
+
+    /// xorshift64: the property tests' generator.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    fn bytes(st: &mut u64, n: usize) -> Vec<u8> {
+        (0..n).map(|_| next(st) as u8).collect()
+    }
+
+    #[test]
+    fn round_trips_over_random_keys_ivs_and_lengths() {
+        let mut st = 0x2545_f491_4f6c_dd1du64;
+        let mut c = BlfCtx::default();
+        for _ in 0..40 {
+            let klen = 1 + (next(&mut st) % BLF_MAXUTILIZED as u64) as usize;
+            c.set_key(&bytes(&mut st, klen));
+            let len = (next(&mut st) % 100) as usize;
+            let data = bytes(&mut st, len);
+            let iv: [u8; 8] = next(&mut st).to_le_bytes();
+
+            let mut buf = data.clone();
+            c.ecb_encrypt(&mut buf);
+            c.ecb_decrypt(&mut buf);
+            assert_eq!(buf, data);
+
+            let mut buf = data.clone();
+            c.cbc_encrypt(&iv, &mut buf);
+            let whole = len / 8 * 8;
+            // CBC: each ciphertext block is the encipherment of the plaintext xor the previous
+            // ciphertext block (the IV first); a trailing partial block is untouched.
+            let mut prev = iv;
+            for (cb, pb) in buf[..whole].chunks(8).zip(data.chunks(8)) {
+                let mut x = [0u8; 8];
+                for i in 0..8 {
+                    x[i] = pb[i] ^ prev[i];
+                }
+                assert_eq!(store_block(c.encipher(load_block(&x))), cb);
+                prev.copy_from_slice(cb);
+            }
+            assert_eq!(buf[whole..], data[whole..]);
+            c.cbc_decrypt(&iv, &mut buf);
+            assert_eq!(buf, data);
+        }
+    }
+
+    #[test]
+    fn zeroize_clears_the_context() {
+        // What `Drop` runs.
+        let mut c = BlfCtx::default();
+        c.set_key(b"key");
+        c.zeroize();
+        assert!(c.s.iter().flatten().chain(c.p.iter()).all(|w| *w == 0));
     }
 
     #[test]
