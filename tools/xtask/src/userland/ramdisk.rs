@@ -146,6 +146,9 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     // M12: audio(4) (`MAKEDEV`'s `audio*`) and the first USB bus (`usb*`).
     ("audio0", 'c', 42, 0, 0o660, "_sndiop"),
     ("audioctl0", 'c', 42, 192, 0o660, "_sndiop"),
+    // M16d: lpt(4)'s first port (`MAKEDEV`'s `lpt*`: `M lpt$U c 16 $U 600`; amd64's cdevsw 16,
+    // which arm64's leaves unconfigured).
+    ("lpt0", 'c', 16, 0, 0o600, "wheel"),
     ("usb0", 'c', 61, 0, 0o640, "wheel"),
     // M16b: `uhid` 62 (`MAKEDEV`'s `_mcdev(uhid, uhid*, uhid, {-major_uhid_c-}, 600)`, whose
     // target lists units 0 to 7). `ugen` 63 is made by `devices()`.

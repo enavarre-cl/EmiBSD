@@ -2116,6 +2116,24 @@ status = "inherited"
 notes = "M16c: CSR/BCR numbers and bits, init block mode, chip ids; function-like macros are const fns; LE_*ADDR(sc) macros (lance softc members) not ported"
 
 [[module]]
+rust = "sys/dev/ic/lpt.rs"
+lz = ["sys/dev/ic/lpt.rs"]
+status = "inherited"
+notes = "M16d: the whole file: lpt_port_test (bool), lpt_attach_common, lptopen (prime, wait for ready, the C's return of tsleep's 0 kept), lpt_not_ready (log), lptwakeup, lptclose, lptpushbytes (polled with the adaptive spin, or interrupt-driven), lptwrite, lptintr, lpt_activate; lptclose/lptwrite return ENXIO for a unit with no device where the C dereferences cd_devs; LPRINTF (DEBUG && notdef) not carried; cdevsw 16 with NLPT 1 on amd64, 0 on arm64; smoke-lpt: bytes reach QEMU's parallel chardev"
+
+[[module]]
+rust = "sys/dev/ic/lptreg.rs"
+lz = ["sys/dev/ic/lptreg.rs"]
+status = "inherited"
+notes = "M16d: every define (the register offsets keep their lower-case C names); both notices kept (the second is William Jolitz's 1990 copyright line); reference-backed test"
+
+[[module]]
+rust = "sys/dev/ic/lptvar.rs"
+lz = ["sys/dev/ic/lptvar.rs"]
+status = "inherited"
+notes = "M16d: struct lpt_softc (Cells, valid as zero) and the LPT_* state and flag bits; the functions it declares live in lpt.rs; reference-backed test"
+
+[[module]]
 rust = "sys/dev/ic/mc146818reg.rs"
 lz = ["sys/dev/ic/mc146818reg.rs"]
 status = "inherited"
@@ -2296,6 +2314,12 @@ notes = "M2: IO_TIMER1, IO_RTC, IO_NMI; M4: IO_ICU1, IO_ICU2, IO_ICUSIZE; M7b: I
 rust = "sys/dev/isa/isavar.rs"
 lz = ["sys/dev/isa/isavar.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/isa/lpt_isa.rs"
+lz = ["sys/dev/isa/lpt_isa.rs"]
+status = "inherited"
+notes = "M16d: lpt_isa_probe (data port walking tests, isa_intr_check through the parent isa_softc's chipset tag, polled when the IRQ is refused), lpt_isa_attach; lpt0 at isa? port 0x378 irq 7 in amd64's ioconf (lpt1, lpt2 are commented out in GENERIC; lpt* at puc? waits for lpt_puc.c)"
 
 [[module]]
 rust = "sys/dev/isa/vga_isa.rs"

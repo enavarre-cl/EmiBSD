@@ -82,6 +82,7 @@ use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnw
 use crate::dev::diskmap::{diskmapclose, diskmapioctl, diskmapopen, diskmapread, diskmapwrite};
 use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
+use crate::dev::ic::lpt::{lptclose, lptopen, lptwrite};
 use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
 use crate::dev::midi::{NMIDI, midiclose, midiioctl, midikqfilter, midiopen, midiread, midiwrite};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
@@ -131,14 +132,18 @@ use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
     cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_gpio_init, cdev_ipmi_init,
-    cdev_midi_init, cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init, cdev_ptc_init,
-    cdev_ptm_init, cdev_tty_init, cdev_usb_init, cdev_usbdev_init, cdev_wsdisplay_init,
+    cdev_lpt_init, cdev_midi_init, cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init,
+    cdev_ptc_init, cdev_ptm_init, cdev_tty_init, cdev_usb_init, cdev_usbdev_init,
+    cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
 
 /// `NCOM`: `com0` to `com3` at `isa?` in GENERIC.
 pub const NCOM: i32 = 4;
+
+/// `NLPT`: `lpt0 at isa?` in GENERIC (M16d; `lpt* at puc?` waits for `lpt_puc.c`).
+pub const NLPT: i32 = 1;
 
 /// `NWSDISPLAY`: `wsdisplay0 at efifb?` in GENERIC (M13; its other lines wait for vga, inteldrm, radeondrm, amdgpu and udl).
 pub const NWSDISPLAY: i32 = 1;
@@ -261,7 +266,8 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     Cell::new(cdev_disk_init(
         NCD, cdopen, cdclose, cdread, cdwrite, cdioctl,
     )),
-    cnotdef(), // 16: parallel printer (lpt: not ported)
+    // 16: parallel printer
+    Cell::new(cdev_lpt_init(NLPT, lptopen, lptclose, lptwrite)),
     cnotdef(), // 17: SCSI autochanger (ch: not ported)
     cnotdef(), // 18: kexec (not ported)
     cnotdef(), // 19: kcov (not ported)

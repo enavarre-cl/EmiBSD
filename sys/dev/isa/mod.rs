@@ -25,5 +25,6 @@ pub mod com_isa;
 pub mod isa;
 pub mod isareg;
 pub mod isavar;
+pub mod lpt_isa;
 pub mod vga_isa;
 /* </CODE> */

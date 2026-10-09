@@ -52,7 +52,8 @@
 //! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?` (M16b),
 //! `pcn* at pci?`, `ne* at pci?`, `fxp* at pci?`, `inphy* at mii?`, `dc* at pci?`,
 //! `lxtphy* at mii?` and `dcphy* at mii?` (M16c),
-//! `eap* at pci?`, `audio* at eap?` and `midi* at eap?` (M16d),
+//! `eap* at pci?`, `audio* at eap?` and `midi* at eap?` (M16d), `lpt0 at isa? port 0x378
+//! irq 7` (M16d; `#lpt1` and `#lpt2` are commented out in GENERIC),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -64,7 +65,7 @@
 //! `lm*`, ... are not ported: the scan prints what it finds as not configured), the other
 //! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
-//! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
+//! `pcppi0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re, vmx, pcn, ne, fxp and dc (`rl* at pci?` among them: QEMU's rtl8139 is
 //! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
 //! device at `mii?` (the other PHY drivers), every
@@ -103,6 +104,7 @@ use crate::dev::ic::ahci::AHCI_CD;
 use crate::dev::ic::com::COM_CD;
 use crate::dev::ic::dc::DC_CD;
 use crate::dev::ic::fxp::FXP_CD;
+use crate::dev::ic::lpt::LPT_CD;
 use crate::dev::ic::ne2000::NE_CD;
 use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::ic::re::RE_CD;
@@ -111,6 +113,7 @@ use crate::dev::ic::vga::VGA_CD;
 use crate::dev::ipmi::{IPMI_CA, IPMI_CD};
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
+use crate::dev::isa::lpt_isa::LPT_ISA_CA;
 use crate::dev::isa::vga_isa::VGA_ISA_CA;
 use crate::dev::midi::{MIDI_CA, MIDI_CD};
 use crate::dev::mii::dcphy::{DCPHY_CA, DCPHY_CD};
@@ -238,6 +241,8 @@ const LOC_COM1: &[i64] = &[0x2f8, 0, -1, 0, 3, -1, -1];
 const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 /// `loc[]` of `com3 at isa? disable port 0x2e8 irq 9`.
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
+/// `loc[]` of `lpt0 at isa? port 0x378 irq 7` (M16d).
+const LOC_LPT0: &[i64] = &[0x378, 0, -1, 0, 7, -1, -1];
 
 /// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[14]`), `ehci*`
 /// (`cfdata[71]`), `uhci*` (`cfdata[72]`) and `ohci*` (`cfdata[73]`): `usb* at xhci?`, `usb* at ehci?`, `usb* at
@@ -371,11 +376,11 @@ const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 86 entries, 87 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 87 entries, 88 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    87
+    88
 } else {
-    86
+    87
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -1335,7 +1340,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
     ),
     // 85: midi* at eap? (M16d)
     Cfdata::new(&MIDI_CA, &MIDI_CD, 0, FSTATE_STAR, &[], 0, PV_EAP, 0, 0),
-    // 86: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 86: lpt0 at isa? port 0x378 irq 7 (M16d)
+    Cfdata::new(
+        &LPT_ISA_CA,
+        &LPT_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_LPT0,
+        0,
+        PV_ISA,
+        LN_ISA,
+        0,
+    ),
+    // 87: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
