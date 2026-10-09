@@ -123,10 +123,8 @@ use super::aes::AesCtx;
 use super::blf::BlfCtx;
 use super::cast::CastKey;
 use super::chachapoly::{
-    CHACHA20_KEYSIZE, CHACHA20_SALT, Chacha20_Poly1305_Final, Chacha20_Poly1305_Init,
-    Chacha20_Poly1305_Reinit, Chacha20_Poly1305_Setkey, Chacha20_Poly1305_Update, Chacha20Ctx,
-    Chacha20Poly1305Ctx, POLY1305_BLOCK_LEN, POLY1305_TAGLEN, chacha20_crypt, chacha20_reinit,
-    chacha20_setkey,
+    CHACHA20_KEYSIZE, CHACHA20_SALT, Chacha20Ctx, Chacha20Poly1305Ctx, POLY1305_BLOCK_LEN,
+    POLY1305_TAGLEN,
 };
 use super::cryptodev::{
     CHACHA20_BLOCK_LEN, CRYPTO_3DES_CBC, CRYPTO_AES_128_GMAC, CRYPTO_AES_192_GMAC,
@@ -622,20 +620,24 @@ fn aes_xts_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
 
 /// `chacha20_poly1305`'s cipher side: `chacha20_setkey` over the schedule enum.
 fn chacha20_setkey_ks(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
-    let mut ctx = Chacha20Ctx::default();
-    chacha20_setkey(&mut ctx, key, key.len() as i32)?;
-    *sched = Kschedule::Chacha20(ctx);
+    *sched = Kschedule::Chacha20(Chacha20Ctx::new(key)?);
     Ok(())
 }
 
 /// `chacha20_reinit` over the schedule enum.
 fn chacha20_reinit_ks(key: &mut Kschedule, iv: &[u8]) {
-    chacha20_reinit(key.chacha20(), iv);
+    match iv.first_chunk() {
+        Some(iv) => key.chacha20().reinit(iv),
+        None => panic(format_args!("xform: chacha20: IV shorter than 8 bytes")),
+    }
 }
 
 /// `chacha20_crypt` over the schedule enum.
 fn chacha20_crypt_ks(key: &mut Kschedule, data: &mut [u8]) {
-    chacha20_crypt(key.chacha20(), data);
+    match data.first_chunk_mut() {
+        Some(blk) => key.chacha20().crypt(blk),
+        None => panic(format_args!("xform: chacha20: block shorter than 64 bytes")),
+    }
 }
 
 // And now for auth.
@@ -792,18 +794,18 @@ fn gmac_final(digest: &mut [u8], c: &mut AuthCtx) {
 /// `Chacha20_Poly1305_Init` over the context enum.
 fn chachapoly_init(c: &mut AuthCtx) {
     let mut x = Chacha20Poly1305Ctx::default();
-    Chacha20_Poly1305_Init(&mut x);
+    x.init();
     *c = AuthCtx::Chacha20Poly1305(x);
 }
 
 /// `Chacha20_Poly1305_Setkey` over the context enum.
 fn chachapoly_setkey(c: &mut AuthCtx, key: &[u8]) -> Result<(), Errno> {
-    if key.len() < CHACHA20_KEYSIZE + CHACHA20_SALT {
+    let Some(key) = key.first_chunk() else {
         return Err(Errno::EINVAL);
-    }
+    };
     match c {
         AuthCtx::Chacha20Poly1305(x) => {
-            Chacha20_Poly1305_Setkey(x, key);
+            x.setkey(key);
             Ok(())
         }
         _ => bad_ctx("chacha20-poly1305"),
@@ -813,7 +815,12 @@ fn chachapoly_setkey(c: &mut AuthCtx, key: &[u8]) -> Result<(), Errno> {
 /// `Chacha20_Poly1305_Reinit` over the context enum.
 fn chachapoly_reinit(c: &mut AuthCtx, iv: &[u8]) {
     match c {
-        AuthCtx::Chacha20Poly1305(x) => Chacha20_Poly1305_Reinit(x, iv),
+        AuthCtx::Chacha20Poly1305(x) => match iv.first_chunk() {
+            Some(iv) => x.reinit(iv),
+            None => panic(format_args!(
+                "xform: chacha20-poly1305: IV shorter than 8 bytes"
+            )),
+        },
         _ => bad_ctx("chacha20-poly1305"),
     }
 }
@@ -821,7 +828,10 @@ fn chachapoly_reinit(c: &mut AuthCtx, iv: &[u8]) {
 /// `Chacha20_Poly1305_Update` over the context enum.
 fn chachapoly_update(c: &mut AuthCtx, data: &[u8]) -> Result<(), Errno> {
     match c {
-        AuthCtx::Chacha20Poly1305(x) => Chacha20_Poly1305_Update(x, data),
+        AuthCtx::Chacha20Poly1305(x) => {
+            x.update(data);
+            Ok(())
+        }
         _ => bad_ctx("chacha20-poly1305"),
     }
 }
@@ -830,7 +840,7 @@ fn chachapoly_update(c: &mut AuthCtx, data: &[u8]) -> Result<(), Errno> {
 fn chachapoly_final(digest: &mut [u8], c: &mut AuthCtx) {
     match c {
         AuthCtx::Chacha20Poly1305(x) => {
-            Chacha20_Poly1305_Final(digest_out::<POLY1305_TAGLEN>(digest), x)
+            *digest_out::<POLY1305_TAGLEN>(digest) = core::mem::take(x).finalize();
         }
         _ => bad_ctx("chacha20-poly1305"),
     }

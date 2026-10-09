@@ -1235,8 +1235,47 @@ kind = "renamed"
 [[module]]
 rust = "sys/crypto/chachapoly.rs"
 lz = ["sys/crypto/chachapoly.rs"]
-status = "adapted"
-adapted_by = ["sys/crypto/chacha_private.rs", "sys/crypto/poly1305.rs"]
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/chachapoly.rs::chacha20_setkey"
+native = ["Chacha20Ctx::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chachapoly.rs::chacha20_reinit"
+native = ["Chacha20Ctx::reinit"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chachapoly.rs::chacha20_crypt"
+native = ["Chacha20Ctx::crypt"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chachapoly.rs::Chacha20_Poly1305_Init"
+native = ["Chacha20Poly1305Ctx::init"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chachapoly.rs::Chacha20_Poly1305_Setkey"
+native = ["Chacha20Poly1305Ctx::setkey"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chachapoly.rs::Chacha20_Poly1305_Reinit"
+native = ["Chacha20Poly1305Ctx::reinit"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chachapoly.rs::Chacha20_Poly1305_Update"
+native = ["Chacha20Poly1305Ctx::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chachapoly.rs::Chacha20_Poly1305_Final"
+native = ["Chacha20Poly1305Ctx::finalize"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/criov.rs"
@@ -1629,7 +1668,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs", "sys/crypto/rijndael.rs", "sys/crypto/aes.rs", "sys/crypto/gmac.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs", "sys/crypto/rijndael.rs", "sys/crypto/aes.rs", "sys/crypto/gmac.rs", "sys/crypto/chachapoly.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
