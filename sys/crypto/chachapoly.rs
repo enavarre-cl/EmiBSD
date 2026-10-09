@@ -61,9 +61,7 @@
 
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
-use super::chacha_private::{
-    ChachaCtx, chacha_encrypt_bytes_inplace, chacha_ivsetup, chacha_keysetup, hchacha20,
-};
+use super::chacha_private::{ChachaCtx, hchacha20};
 use super::poly1305::{
     Poly1305State, poly1305_block_size, poly1305_finish, poly1305_init, poly1305_update,
 };
@@ -100,7 +98,7 @@ const PAD0: [u8; 16] = [0; 16];
 
 /// `struct chacha20_ctx`: the cipher's key schedule for the `enc_xform` (`block`) and the
 /// counter and salt words (`nonce`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct Chacha20Ctx {
     /// `block`: the ChaCha state.
     pub block: ChachaCtx,
@@ -120,22 +118,28 @@ pub fn chacha20_setkey(ctx: &mut Chacha20Ctx, key: &[u8], len: i32) -> Result<()
     ctx.nonce[0] = 1;
     ctx.nonce[CHACHA20_CTR..CHACHA20_CTR + CHACHA20_SALT]
         .copy_from_slice(&key[CHACHA20_KEYSIZE..CHACHA20_KEYSIZE + CHACHA20_SALT]);
-    chacha_keysetup(&mut ctx.block, key, (CHACHA20_KEYSIZE * 8) as u32);
+    let mut k = [0u8; CHACHA20_KEYSIZE];
+    k.copy_from_slice(&key[..CHACHA20_KEYSIZE]);
+    ctx.block = ChachaCtx::new(&k);
+    explicit_bzero(&mut k);
     Ok(())
 }
 
 /// `chacha20_reinit`: sets the 8-byte IV (and the counter and salt) for the next message.
 pub fn chacha20_reinit(ctx: &mut Chacha20Ctx, iv: &[u8]) {
-    chacha_ivsetup(&mut ctx.block, iv, Some(&ctx.nonce));
+    let mut v = [0u8; 8];
+    v.copy_from_slice(&iv[..8]);
+    ctx.block.ivsetup(&v, Some(&ctx.nonce));
 }
 
 /// `chacha20_crypt`: XORs the next keystream block into `data` (`CHACHA20_BLOCK_LEN` bytes).
 pub fn chacha20_crypt(ctx: &mut Chacha20Ctx, data: &mut [u8]) {
-    chacha_encrypt_bytes_inplace(&mut ctx.block, &mut data[..CHACHA20_BLOCK_LEN]);
+    ctx.block
+        .encrypt_bytes_inplace(&mut data[..CHACHA20_BLOCK_LEN]);
 }
 
 /// `CHACHA20_POLY1305_CTX`: an IPsec AEAD in progress (RFC 7634).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct Chacha20Poly1305Ctx {
     /// `key`: the one-time Poly1305 key, the first keystream bytes of the message.
     pub key: [u8; POLY1305_KEYLEN],
@@ -159,7 +163,10 @@ pub fn Chacha20_Poly1305_Setkey(ctx: &mut Chacha20Poly1305Ctx, key: &[u8]) {
     // salt is provided with the key material
     ctx.nonce[CHACHA20_CTR..CHACHA20_CTR + CHACHA20_SALT]
         .copy_from_slice(&key[CHACHA20_KEYSIZE..CHACHA20_KEYSIZE + CHACHA20_SALT]);
-    chacha_keysetup(&mut ctx.chacha.block, key, (CHACHA20_KEYSIZE * 8) as u32);
+    let mut k = [0u8; CHACHA20_KEYSIZE];
+    k.copy_from_slice(&key[..CHACHA20_KEYSIZE]);
+    ctx.chacha.block = ChachaCtx::new(&k);
+    explicit_bzero(&mut k);
 }
 
 /// `Chacha20_Poly1305_Reinit`: starts a message under the 8-byte IV; the first keystream
@@ -167,8 +174,10 @@ pub fn Chacha20_Poly1305_Setkey(ctx: &mut Chacha20Poly1305Ctx, key: &[u8]) {
 #[allow(non_snake_case)] // the C name
 pub fn Chacha20_Poly1305_Reinit(ctx: &mut Chacha20Poly1305Ctx, iv: &[u8]) {
     // initial counter is 0
-    chacha_ivsetup(&mut ctx.chacha.block, iv, Some(&ctx.nonce));
-    chacha_encrypt_bytes_inplace(&mut ctx.chacha.block, &mut ctx.key);
+    let mut v = [0u8; 8];
+    v.copy_from_slice(&iv[..8]);
+    ctx.chacha.block.ivsetup(&v, Some(&ctx.nonce));
+    ctx.chacha.block.encrypt_bytes_inplace(&mut ctx.key);
     poly1305_init(&mut ctx.poly, &ctx.key);
 }
 
@@ -205,14 +214,13 @@ fn chacha20poly1305_setup(
     nonce: u64,
     key: &[u8; CHACHA20POLY1305_KEY_SIZE],
 ) -> (ChachaCtx, Poly1305State) {
-    let mut chacha_ctx = ChachaCtx::default();
     let mut poly1305_ctx = Poly1305State::default();
     let mut b0 = [0u8; CHACHA20POLY1305_KEY_SIZE];
     let le_nonce = nonce.to_le_bytes();
 
-    chacha_keysetup(&mut chacha_ctx, key, (CHACHA20POLY1305_KEY_SIZE * 8) as u32);
-    chacha_ivsetup(&mut chacha_ctx, &le_nonce, None);
-    chacha_encrypt_bytes_inplace(&mut chacha_ctx, &mut b0);
+    let mut chacha_ctx = ChachaCtx::new(key);
+    chacha_ctx.ivsetup(&le_nonce, None);
+    chacha_ctx.encrypt_bytes_inplace(&mut b0);
     poly1305_init(&mut poly1305_ctx, &b0);
     explicit_bzero(&mut b0);
     (chacha_ctx, poly1305_ctx)
@@ -266,7 +274,7 @@ pub fn chacha20poly1305_encrypt_inplace(
     let (mut chacha_ctx, mut poly1305_ctx) = chacha20poly1305_setup(nonce, key);
 
     let (data, tag) = buf[..src_len + CHACHA20POLY1305_AUTHTAG_SIZE].split_at_mut(src_len);
-    chacha_encrypt_bytes_inplace(&mut chacha_ctx, data);
+    chacha_ctx.encrypt_bytes_inplace(data);
     tag.copy_from_slice(&chacha20poly1305_mac(&mut poly1305_ctx, ad, data));
 
     wipe(&mut chacha_ctx);
@@ -294,7 +302,7 @@ pub fn chacha20poly1305_decrypt(
     let ret = timingsafe_bcmp(&mac, &src[dst_len..]);
     if !ret {
         dst[..dst_len].copy_from_slice(&src[..dst_len]);
-        chacha_encrypt_bytes_inplace(&mut chacha_ctx, &mut dst[..dst_len]);
+        chacha_ctx.encrypt_bytes_inplace(&mut dst[..dst_len]);
     }
 
     wipe(&mut chacha_ctx);
@@ -322,7 +330,7 @@ pub fn chacha20poly1305_decrypt_inplace(
 
     let ret = timingsafe_bcmp(&mac, &buf[dst_len..]);
     if !ret {
-        chacha_encrypt_bytes_inplace(&mut chacha_ctx, &mut buf[..dst_len]);
+        chacha_ctx.encrypt_bytes_inplace(&mut buf[..dst_len]);
     }
 
     wipe(&mut chacha_ctx);
@@ -338,7 +346,6 @@ fn xchacha20_derive(
     nonce: &[u8; XCHACHA20POLY1305_NONCE_SIZE],
     key: &[u8; CHACHA20POLY1305_KEY_SIZE],
 ) -> (u64, [u8; CHACHA20POLY1305_KEY_SIZE]) {
-    let mut derived_key = [0u32; CHACHA20POLY1305_KEY_SIZE / 4];
     let mut derived = [0u8; CHACHA20POLY1305_KEY_SIZE];
     let mut n16 = [0u8; 16];
     let mut n8 = [0u8; 8];
@@ -346,7 +353,7 @@ fn xchacha20_derive(
     n16.copy_from_slice(&nonce[..16]);
     n8.copy_from_slice(&nonce[16..]);
     let h_nonce = u64::from_le_bytes(n8);
-    hchacha20(&mut derived_key, &n16, key);
+    let mut derived_key = hchacha20(&n16, key);
 
     for (i, w) in derived_key.iter().enumerate() {
         derived[4 * i..4 * i + 4].copy_from_slice(&w.to_le_bytes());
@@ -483,7 +490,11 @@ mod tests {
         Chacha20_Poly1305_Final(&mut tag, &mut auth);
         assert_eq!(tag.to_vec(), hex("1ae10b594f09e26a7e902ecbd0600691"));
         // Final wipes the context.
-        assert_eq!(auth, Chacha20Poly1305Ctx::default());
+        assert_eq!(auth.key, [0; POLY1305_KEYLEN]);
+        assert_eq!(auth.nonce, [0; CHACHA20_NONCE]);
+        assert_eq!(auth.chacha.block.input, [0; 16]);
+        assert_eq!(auth.chacha.nonce, [0; CHACHA20_NONCE]);
+        assert_eq!(auth.poly, Poly1305State::default());
     }
 
     #[test]

@@ -28,34 +28,128 @@ Public domain.
 //! is built on). `chachapoly.c` and `dev/rnd.c` both include the header.
 //!
 //! Upstream: sys/crypto/chacha_private.h @ 3ce1f3f79392
+//! LZ: sys/crypto/chacha_private.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header's functions are `static` and included by each user; here they are `pub` in one
 //!   module. `dev/rnd.c` defines `KEYSTREAM_ONLY` before the include, which drops the XOR with
-//!   the message: that variant is [`chacha_keystream_bytes`], the XORing one is
-//!   [`chacha_encrypt_bytes`].
-//! - `chacha_encrypt_bytes` takes the message and the output as two slices of one length (the C
-//!   takes two pointers and a count, and allows them to be the same buffer);
-//!   [`chacha_encrypt_bytes_inplace`] is the `m == c` call.
-//! - The key, IV and counter are slices of exactly the bytes the C reads; a short slice is a
-//!   caller bug and indexes out of range.
-//! - `hchacha20` returns its eight words by `&mut [u32; 8]` as the C does; the callers store
-//!   them little-endian.
+//!   the message: that variant is [`ChachaCtx::keystream_bytes`], the XORing one is
+//!   [`ChachaCtx::encrypt_bytes`].
+//! - `encrypt_bytes` takes the message and the output as two slices of one length (the C takes
+//!   two pointers and a count, and allows them to be the same buffer);
+//!   [`ChachaCtx::encrypt_bytes_inplace`] is the `m == c` call.
+//!
+//! ## Redesign
+//! - The functions over a `chacha_ctx` are methods of [`ChachaCtx`] (LZ: free functions with
+//!   the context first). `chacha_keysetup` is split by its `kbits` argument into the
+//!   constructors [`ChachaCtx::new`] (256-bit key, `sigma`) and [`ChachaCtx::new_128`]
+//!   (128-bit key used twice, `tau`), which take the key as an array of exactly the bytes the
+//!   C reads (LZ: a slice and `kbits`, any value other than 256 meaning 128). A fresh context
+//!   has a zero counter and IV, which is what every C caller's context holds when it is keyed.
+//! - `chacha_ivsetup` is [`ChachaCtx::ivsetup`], with the IV and counter as `&[u8; 8]`;
+//!   `hchacha20` returns its eight words (LZ: an `&mut [u32; 8]` out parameter).
+//! - [`ChachaCtx`] zeroes its state (key words included) when dropped (`docs/IDIOMS.md`), so it
+//!   is no longer `Copy` or `PartialEq`; `chachapoly.c`'s `explicit_bzero` of its contexts
+//!   happens as they drop.
+//! - Constant time: the rounds are additions, xors and fixed rotations on the state words; the
+//!   loops run over the round count and the message length (public), as in the C.
 
-/// `chacha_ctx`: the sixteen-word state (constants, key, counter, IV).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+use super::wipe;
+
+/// `chacha_ctx`: the sixteen-word state (constants, key, counter, IV). Zeroed when dropped.
+#[derive(Clone, Debug, Default)]
 pub struct ChachaCtx {
     /// `input`: the state words.
     pub input: [u32; 16],
 }
 
+impl Drop for ChachaCtx {
+    /// Wipes the state (`docs/IDIOMS.md`: a key schedule is zeroed when dropped).
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 const SIGMA: &[u8; 16] = b"expand 32-byte k";
 const TAU: &[u8; 16] = b"expand 16-byte k";
 
-/// `U8TO32_LITTLE`: the little-endian word at the start of `p`.
-#[inline]
-fn u8to32_little(p: &[u8]) -> u32 {
-    u32::from_le_bytes([p[0], p[1], p[2], p[3]])
+impl ChachaCtx {
+    /// Zeroes the state, with stores the compiler keeps (`crate::crypto::wipe`).
+    pub(crate) fn zeroize(&mut self) {
+        self.input.iter_mut().for_each(wipe);
+    }
+
+    /// `chacha_keysetup(x, k, 256)`: a context with the constants and the 32-byte key, the
+    /// counter and IV zero.
+    pub fn new(k: &[u8; 32]) -> Self {
+        let mut x = Self::default();
+        load_words(&mut x.input[..4], SIGMA);
+        load_words(&mut x.input[4..12], k);
+        x
+    }
+
+    /// `chacha_keysetup(x, k, 128)`: a context with the constants and the 16-byte key, used
+    /// for both halves of the key words, the counter and IV zero.
+    pub fn new_128(k: &[u8; 16]) -> Self {
+        let mut x = Self::default();
+        load_words(&mut x.input[..4], TAU);
+        load_words(&mut x.input[4..8], k);
+        load_words(&mut x.input[8..12], k);
+        x
+    }
+
+    /// `chacha_ivsetup`: the 8-byte IV and the 8-byte block counter (`None` is counter zero).
+    pub fn ivsetup(&mut self, iv: &[u8; 8], counter: Option<&[u8; 8]>) {
+        load_words(&mut self.input[12..14], counter.unwrap_or(&[0; 8]));
+        load_words(&mut self.input[14..16], iv);
+    }
+
+    /// `chacha_encrypt_bytes`: XORs the keystream into `m`, writing `c`, and advances the
+    /// counter by one per 64 bytes started. `m` and `c` must be the same length.
+    pub fn encrypt_bytes(&mut self, m: &[u8], c: &mut [u8]) {
+        let mut j = self.input;
+        for (mc, cc) in m.chunks(64).zip(c.chunks_mut(64)) {
+            let ks = chacha_block(&mut j);
+            for ((c, m), k) in cc.iter_mut().zip(mc).zip(ks) {
+                *c = m ^ k;
+            }
+        }
+        self.input[12] = j[12];
+        self.input[13] = j[13];
+    }
+
+    /// `chacha_encrypt_bytes` with `m` and `c` the same buffer, which the C permits.
+    pub fn encrypt_bytes_inplace(&mut self, data: &mut [u8]) {
+        let mut j = self.input;
+        for chunk in data.chunks_mut(64) {
+            let ks = chacha_block(&mut j);
+            for (d, k) in chunk.iter_mut().zip(ks) {
+                *d ^= k;
+            }
+        }
+        self.input[12] = j[12];
+        self.input[13] = j[13];
+    }
+
+    /// `chacha_encrypt_bytes` as `KEYSTREAM_ONLY` compiles it (`dev/rnd.c`): the keystream
+    /// itself is written to `c`, whatever it held.
+    pub fn keystream_bytes(&mut self, c: &mut [u8]) {
+        let mut j = self.input;
+        for chunk in c.chunks_mut(64) {
+            let ks = chacha_block(&mut j);
+            chunk.copy_from_slice(&ks[..chunk.len()]);
+        }
+        self.input[12] = j[12];
+        self.input[13] = j[13];
+    }
+}
+
+/// `U8TO32_LITTLE` over a run of words: `words[i]` is the little-endian word at `4 * i` of
+/// `bytes`.
+fn load_words(words: &mut [u32], bytes: &[u8]) {
+    for (w, b) in words.iter_mut().zip(bytes.as_chunks::<4>().0) {
+        *w = u32::from_le_bytes(*b);
+    }
 }
 
 /// `QUARTERROUND`.
@@ -87,52 +181,19 @@ fn chacha_rounds(x: &mut [u32; 16]) {
 
 /// `hchacha20`: the first and last rows of the state after twenty rounds, keyed by `key` with
 /// the 16-byte `nonce` in the counter and IV words, with no final addition of the input.
-pub fn hchacha20(derived_key: &mut [u32; 8], nonce: &[u8; 16], key: &[u8; 32]) {
+pub fn hchacha20(nonce: &[u8; 16], key: &[u8; 32]) -> [u32; 8] {
     let mut x = [0u32; 16];
 
-    for i in 0..4 {
-        x[i] = u8to32_little(&SIGMA[4 * i..]);
-        x[12 + i] = u8to32_little(&nonce[4 * i..]);
-    }
-    for i in 0..8 {
-        x[4 + i] = u8to32_little(&key[4 * i..]);
-    }
+    load_words(&mut x[..4], SIGMA);
+    load_words(&mut x[4..12], key);
+    load_words(&mut x[12..], nonce);
 
     chacha_rounds(&mut x);
 
+    let mut derived_key = [0u32; 8];
     derived_key[..4].copy_from_slice(&x[..4]);
     derived_key[4..].copy_from_slice(&x[12..]);
-}
-
-/// `chacha_keysetup`: the constants and the key; `kbits` is 256 (recommended) or 128, which
-/// reads 16 bytes of `k` and uses it for both halves of the key.
-pub fn chacha_keysetup(x: &mut ChachaCtx, k: &[u8], kbits: u32) {
-    x.input[4] = u8to32_little(&k[0..]);
-    x.input[5] = u8to32_little(&k[4..]);
-    x.input[6] = u8to32_little(&k[8..]);
-    x.input[7] = u8to32_little(&k[12..]);
-    let (k, constants) = if kbits == 256 {
-        (&k[16..], SIGMA)
-    } else {
-        // kbits == 128
-        (k, TAU)
-    };
-    x.input[8] = u8to32_little(&k[0..]);
-    x.input[9] = u8to32_little(&k[4..]);
-    x.input[10] = u8to32_little(&k[8..]);
-    x.input[11] = u8to32_little(&k[12..]);
-    x.input[0] = u8to32_little(&constants[0..]);
-    x.input[1] = u8to32_little(&constants[4..]);
-    x.input[2] = u8to32_little(&constants[8..]);
-    x.input[3] = u8to32_little(&constants[12..]);
-}
-
-/// `chacha_ivsetup`: the 8-byte IV and the 8-byte block counter (`None` is counter zero).
-pub fn chacha_ivsetup(x: &mut ChachaCtx, iv: &[u8], counter: Option<&[u8]>) {
-    x.input[12] = counter.map_or(0, |c| u8to32_little(&c[0..]));
-    x.input[13] = counter.map_or(0, |c| u8to32_little(&c[4..]));
-    x.input[14] = u8to32_little(&iv[0..]);
-    x.input[15] = u8to32_little(&iv[4..]);
+    derived_key
 }
 
 /// One block of keystream for the state in `j`, advancing its 64-bit counter (words 12, 13).
@@ -141,8 +202,8 @@ fn chacha_block(j: &mut [u32; 16]) -> [u8; 64] {
     chacha_rounds(&mut x);
 
     let mut out = [0u8; 64];
-    for i in 0..16 {
-        out[4 * i..4 * i + 4].copy_from_slice(&x[i].wrapping_add(j[i]).to_le_bytes());
+    for ((o, x), j) in out.as_chunks_mut::<4>().0.iter_mut().zip(&x).zip(j.iter()) {
+        *o = x.wrapping_add(*j).to_le_bytes();
     }
 
     j[12] = j[12].wrapping_add(1);
@@ -151,45 +212,6 @@ fn chacha_block(j: &mut [u32; 16]) -> [u8; 64] {
         // stopping at 2^70 bytes per nonce is user's responsibility
     }
     out
-}
-
-/// `chacha_encrypt_bytes`: XORs the keystream into `m`, writing `c`, and advances the counter
-/// by one per 64 bytes started. `m` and `c` must be the same length.
-pub fn chacha_encrypt_bytes(x: &mut ChachaCtx, m: &[u8], c: &mut [u8]) {
-    let mut j = x.input;
-    for (mc, cc) in m.chunks(64).zip(c.chunks_mut(64)) {
-        let ks = chacha_block(&mut j);
-        for i in 0..mc.len() {
-            cc[i] = mc[i] ^ ks[i];
-        }
-    }
-    x.input[12] = j[12];
-    x.input[13] = j[13];
-}
-
-/// `chacha_encrypt_bytes` with `m` and `c` the same buffer, which the C permits.
-pub fn chacha_encrypt_bytes_inplace(x: &mut ChachaCtx, data: &mut [u8]) {
-    let mut j = x.input;
-    for chunk in data.chunks_mut(64) {
-        let ks = chacha_block(&mut j);
-        for i in 0..chunk.len() {
-            chunk[i] ^= ks[i];
-        }
-    }
-    x.input[12] = j[12];
-    x.input[13] = j[13];
-}
-
-/// `chacha_encrypt_bytes` as `KEYSTREAM_ONLY` compiles it (`dev/rnd.c`): the keystream itself
-/// is written to `c`, whatever it held.
-pub fn chacha_keystream_bytes(x: &mut ChachaCtx, c: &mut [u8]) {
-    let mut j = x.input;
-    for chunk in c.chunks_mut(64) {
-        let ks = chacha_block(&mut j);
-        chunk.copy_from_slice(&ks[..chunk.len()]);
-    }
-    x.input[12] = j[12];
-    x.input[13] = j[13];
 }
 /* </CODE> */
 
@@ -216,17 +238,15 @@ mod tests {
 
     #[test]
     fn rfc8439_2_3_2_block_function() {
-        let mut x = ChachaCtx::default();
         // RFC: counter 1, nonce 00:00:00:09:00:00:00:4a:00:00:00:00, that is, in this layout, an
         // 8-byte counter 01 00 00 00 | 00 00 00 09 and an 8-byte IV 00 00 00 4a | 00 00 00 00.
-        chacha_keysetup(&mut x, &key32(), 256);
-        chacha_ivsetup(
-            &mut x,
+        let mut x = ChachaCtx::new(&key32());
+        x.ivsetup(
             &[0, 0, 0, 0x4a, 0, 0, 0, 0],
             Some(&[1, 0, 0, 0, 0, 0, 0, 9]),
         );
         let mut ks = [0u8; 64];
-        chacha_keystream_bytes(&mut x, &mut ks);
+        x.keystream_bytes(&mut ks);
         assert_eq!(
             ks.to_vec(),
             hex(
@@ -240,11 +260,9 @@ mod tests {
     }
 
     fn rfc8439_2_4_2_ctx() -> ChachaCtx {
-        let mut x = ChachaCtx::default();
-        chacha_keysetup(&mut x, &key32(), 256);
+        let mut x = ChachaCtx::new(&key32());
         // counter 1, nonce 00:00:00:00:00:00:00:4a:00:00:00:00
-        chacha_ivsetup(
-            &mut x,
+        x.ivsetup(
             &[0, 0, 0, 0x4a, 0, 0, 0, 0],
             Some(&[1, 0, 0, 0, 0, 0, 0, 0]),
         );
@@ -260,7 +278,7 @@ mod tests {
     fn rfc8439_2_4_2_encryption() {
         let mut x = rfc8439_2_4_2_ctx();
         let mut ct = [0u8; 114];
-        chacha_encrypt_bytes(&mut x, SUNSCREEN, &mut ct);
+        x.encrypt_bytes(SUNSCREEN, &mut ct);
         assert_eq!(ct.to_vec(), hex(SUNSCREEN_CT));
         // 114 bytes started two blocks.
         assert_eq!(x.input[12], 3);
@@ -269,10 +287,10 @@ mod tests {
         let mut x = rfc8439_2_4_2_ctx();
         let mut buf = [0u8; 114];
         buf.copy_from_slice(SUNSCREEN);
-        chacha_encrypt_bytes_inplace(&mut x, &mut buf);
+        x.encrypt_bytes_inplace(&mut buf);
         assert_eq!(buf.to_vec(), hex(SUNSCREEN_CT));
         let mut x = rfc8439_2_4_2_ctx();
-        chacha_encrypt_bytes_inplace(&mut x, &mut buf);
+        x.encrypt_bytes_inplace(&mut buf);
         assert_eq!(buf.as_slice(), SUNSCREEN);
     }
 
@@ -280,30 +298,29 @@ mod tests {
     fn keystream_is_encryption_of_zeros_in_any_split() {
         let mut a = rfc8439_2_4_2_ctx();
         let mut whole = [0u8; 150];
-        chacha_keystream_bytes(&mut a, &mut whole);
+        a.keystream_bytes(&mut whole);
 
         let mut b = rfc8439_2_4_2_ctx();
         let mut zeros = [0u8; 150];
-        chacha_encrypt_bytes_inplace(&mut b, &mut zeros);
+        b.encrypt_bytes_inplace(&mut zeros);
         assert_eq!(whole, zeros);
-        assert_eq!(a, b);
+        assert_eq!(a.input, b.input);
 
         // A call per block is the same stream; a partial block spends the whole block's counter.
         let mut c = rfc8439_2_4_2_ctx();
         let mut parts = [0u8; 128];
-        chacha_keystream_bytes(&mut c, &mut parts[..64]);
-        chacha_keystream_bytes(&mut c, &mut parts[64..]);
+        c.keystream_bytes(&mut parts[..64]);
+        c.keystream_bytes(&mut parts[64..]);
         assert_eq!(parts[..], whole[..128]);
         assert_eq!(c.input[12], 3);
-        chacha_keystream_bytes(&mut c, &mut []);
+        c.keystream_bytes(&mut []);
         assert_eq!(c.input[12], 3);
     }
 
     #[test]
     fn hchacha20_draft_irtf_cfrg_xchacha_2_2_1() {
         let nonce: [u8; 16] = hexn("000000090000004a0000000031415927");
-        let mut out = [0u32; 8];
-        hchacha20(&mut out, &nonce, &key32());
+        let out = hchacha20(&nonce, &key32());
         assert_eq!(
             out,
             [
@@ -323,21 +340,21 @@ mod tests {
 
     #[test]
     fn key_128_uses_tau_and_repeats_the_key() {
-        let mut x = ChachaCtx::default();
-        chacha_keysetup(&mut x, &key32()[..16], 128);
+        let mut k16 = [0u8; 16];
+        k16.copy_from_slice(&key32()[..16]);
+        let mut x = ChachaCtx::new_128(&k16);
         assert_eq!(
             &x.input[..4],
             &[0x6170_7865, 0x3120_646e, 0x7962_2d36, 0x6b20_6574]
         );
         assert_eq!(x.input[4..8], x.input[8..12]);
         // counter 5, IV 11 11 11 11 22 22 22 22
-        chacha_ivsetup(
-            &mut x,
+        x.ivsetup(
             &hexn::<8>("1111111122222222"),
             Some(&[5, 0, 0, 0, 0, 0, 0, 0]),
         );
         let mut ks = [0u8; 64];
-        chacha_keystream_bytes(&mut x, &mut ks);
+        x.keystream_bytes(&mut ks);
         assert_eq!(
             ks.to_vec(),
             hex(
@@ -349,15 +366,13 @@ mod tests {
 
     #[test]
     fn counter_carries_into_the_high_word() {
-        let mut x = ChachaCtx::default();
-        chacha_keysetup(&mut x, &key32(), 256);
-        chacha_ivsetup(
-            &mut x,
+        let mut x = ChachaCtx::new(&key32());
+        x.ivsetup(
             &[1, 2, 3, 4, 5, 6, 7, 8],
             Some(&[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0]),
         );
         let mut ks = [0u8; 128];
-        chacha_keystream_bytes(&mut x, &mut ks);
+        x.keystream_bytes(&mut ks);
         assert_eq!(
             ks.to_vec(),
             hex(
@@ -368,6 +383,54 @@ mod tests {
             )
         );
         assert_eq!((x.input[12], x.input[13]), (1, 1));
+    }
+
+    /// xorshift64: the property tests' generator.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    #[test]
+    fn any_split_encrypts_like_one_call_and_decrypts_back() {
+        // A message cut at block boundaries into several calls is the one-call ciphertext, and
+        // the same context set up again decrypts it.
+        let mut st = 0x1357_9bdf_0246_8aceu64;
+        for _ in 0..50 {
+            let mut key = [0u8; 32];
+            key.iter_mut().for_each(|b| *b = next(&mut st) as u8);
+            let iv = next(&mut st).to_le_bytes();
+            let len = (next(&mut st) % 300) as usize;
+            let msg: std::vec::Vec<u8> = (0..len).map(|_| next(&mut st) as u8).collect();
+            let fresh = || {
+                let mut x = ChachaCtx::new(&key);
+                x.ivsetup(&iv, None);
+                x
+            };
+
+            let mut whole = std::vec![0u8; len];
+            fresh().encrypt_bytes(&msg, &mut whole);
+
+            let cut = 64 * (next(&mut st) as usize % (len / 64 + 1));
+            let mut x = fresh();
+            let mut parts = msg.clone();
+            x.encrypt_bytes_inplace(&mut parts[..cut]);
+            x.encrypt_bytes_inplace(&mut parts[cut..]);
+            assert_eq!(parts, whole, "cut at {cut} of {len}");
+
+            fresh().encrypt_bytes_inplace(&mut parts);
+            assert_eq!(parts, msg);
+        }
+    }
+
+    #[test]
+    fn zeroize_clears_the_state() {
+        // What `Drop` runs.
+        let mut x = ChachaCtx::new(&key32());
+        x.zeroize();
+        assert_eq!(x.input, [0; 16]);
     }
 }
 /* </TESTS> */

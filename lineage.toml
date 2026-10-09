@@ -1200,12 +1200,43 @@ kind = "renamed"
 [[module]]
 rust = "sys/crypto/chacha_private.rs"
 lz = ["sys/crypto/chacha_private.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/chacha_private.rs::chacha_keysetup"
+native = ["ChachaCtx::new", "ChachaCtx::new_128"]
+kind = "split"
+
+[[module.fn]]
+lz = "sys/crypto/chacha_private.rs::chacha_ivsetup"
+native = ["ChachaCtx::ivsetup"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chacha_private.rs::chacha_encrypt_bytes"
+native = ["ChachaCtx::encrypt_bytes"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chacha_private.rs::chacha_encrypt_bytes_inplace"
+native = ["ChachaCtx::encrypt_bytes_inplace"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chacha_private.rs::chacha_keystream_bytes"
+native = ["ChachaCtx::keystream_bytes"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/chacha_private.rs::u8to32_little"
+native = ["load_words"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/chachapoly.rs"
 lz = ["sys/crypto/chachapoly.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/chacha_private.rs"]
 
 [[module]]
 rust = "sys/crypto/criov.rs"
