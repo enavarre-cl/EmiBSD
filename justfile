@@ -121,7 +121,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
-    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci"
+    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2226,6 +2226,44 @@ uhci_check := "--expect 'usb0 at uhci0: USB revision 1.0' " + \
     "--expect 'ukbd0 at uhidev0' " + \
     "--expect 'emibsd m12: hello from a usb stick' --expect '4071711340 1048576 /mnt/BIG.BIN' " + \
     "--expect 'usb-42'"
+
+# M16b: ohci(4). The M12 stick and keyboard on QEMU's `pci-ohci` (an Apple Intrepid/KeyLargo
+# OHCI function, 106b:003f, three full speed ports; `--usb-hc ohci`, devices.rs) instead of
+# `qemu-xhci`: ohci_pci attaches with INTx (amd64: acpiprt's routing; the root hub's change
+# interrupt comes after cold, so ehci's lost cold INTx does not happen), defers ohci_init
+# (config_defer), usb0 and uhub0 come up at USB 1.0, umass(4) and ukbd(4) attach below the
+# root hub, the stick is sd2 on both archs. The session mounts the stick, reads the note and
+# checks the 1 MiB file's cksum(1) (`smoke-usb`'s first half). Writing to it fails, on both
+# archs, exactly as OpenBSD 8.0 does on the same QEMU setup (`cargo xtask diff-openbsd --arch A
+# probe --usb-hc ohci`, the user's rule: faithful, assert OpenBSD 8.0's behaviour; M16b): the
+# first bulk OUT data of cp(1) makes QEMU's OHCI raise UnrecoverableError ("ohci0:
+# unrecoverable error, controller halted", "ohci0: blocking intrs 0x10"), sd2 and umass0
+# detach and cp fails with EIO. Part of `smoke`.
+smoke-ohci: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ohci: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --usb-hc ohci {{disk_login}} {{ohci_session}} {{ohci_check}} \
+        --expect 'ohci0 at pci0 dev 4 function 0 vendor 0x106b product 0x003f rev 0x00: apic 0 int 20, version 1.0'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --usb-hc ohci {{disk_login}} {{ohci_session}} {{ohci_check}} \
+        --expect 'ohci0 at pci0 dev 1 function 0 vendor 0x106b product 0x003f rev 0x00: irq, version 1.0'
+
+# `smoke-ohci`'s session: `usb_session`'s mount, read and cksum, then the copy that fails.
+ohci_session := "--send-after '# ' --send 'mount_msdos /dev/sd2i /mnt && cat /mnt/M12USB.TXT && " + \
+    "cksum /mnt/BIG.BIN && { cp /mnt/BIG.BIN /mnt/COPY.BIN || echo no-copy-$((40+2)); }\\n'"
+
+# `smoke-ohci`'s expectations, both archs.
+ohci_check := "--expect 'usb0 at ohci0: USB revision 1.0' " + \
+    "--expect 'uhub0 at usb0 configuration 1 interface 0 \"vendor 0x106b OHCI root hub\" rev 1.00/1.00 addr 1' " + \
+    "--expect 'umass0 at uhub0 port 1 configuration 1 interface 0 \"QEMU QEMU USB HARDDRIVE\" rev 2.00/0.00 addr 2' " + \
+    "--expect 'umass0: using SCSI over Bulk-Only' " + \
+    "--expect 'sd2 at scsibus2 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>' " + \
+    "--expect 'uhidev0 at uhub0 port 2 configuration 1 interface 0 \"QEMU QEMU USB Keyboard\" rev 2.00/0.00 addr 3' " + \
+    "--expect 'ukbd0 at uhidev0' " + \
+    "--expect 'emibsd m12: hello from a usb stick' --expect '4071711340 1048576 /mnt/BIG.BIN' " + \
+    "--expect 'ohci0: unrecoverable error, controller halted' --expect 'ohci0: blocking intrs 0x10' " + \
+    "--expect 'no-copy-42'"
 
 # M13: com(4) over puc(4), amd64 only: arm64's GENERIC has no puc(4). QEMU's `pci-serial`
 # (1b36:0002, a 16550 behind PCI, `--pci-serial`, hwopts.rs) is a file chardev: puc*

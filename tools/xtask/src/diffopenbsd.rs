@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run | powerbtn]
-//! cargo xtask diff-openbsd --arch A [--ipmi] [--usb] [--usb-hc xhci|ehci|uhci] [--ukc CMD]...
+//! cargo xtask diff-openbsd --arch A [--ipmi] [--usb] [--usb-hc xhci|ehci|uhci|ohci] [--ukc CMD]...
 //!                           [--sh CMD] probe
 //! ```
 //!

@@ -13,7 +13,8 @@
 //! and `pucdata`) the "universal" communication card driver (`puc* at pci?`, M13); `if_vmx` (with
 //! `if_vmxreg`) VMware's VMXNET3 NIC (`vmx* at pci?`, M13); `ichiic` (with `ichreg`) and `piixpm` (with
 //! `piixreg`) the ICH and PIIX4 SMBus controllers (`ichiic* at pci?`, `piixpm* at pci?`, M16e); `ehci_pci` the EHCI front-end
-//! (`ehci* at pci?`, M16b); `uhci_pci` the UHCI front-end (`uhci* at pci?`, M16b). The machine side
+//! (`ehci* at pci?`, M16b); `uhci_pci` the UHCI front-end (`uhci* at pci?`, M16b);
+//! `ohci_pci` the OHCI front-end (`ohci* at pci?`, M16b). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
 pub mod ahci_pci;
@@ -33,6 +34,7 @@ pub mod if_re_pci;
 pub mod if_vmx;
 pub mod if_vmxreg;
 pub mod nvme_pci;
+pub mod ohci_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
 pub mod pci;
 pub mod pci_map;

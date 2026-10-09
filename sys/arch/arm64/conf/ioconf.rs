@@ -27,7 +27,7 @@
 //! `ppb* at pci?` and `pci* at ppb?` (M16e); `ipmi* at acpi?` and `ipmi* at fdt?` (M16e;
 //! QEMU's `virt` has no IPMI device; `ipmi* at iic?` waits for `ipmi_i2c.c`, SSIF, and the
 //! iic(4) stack);
-//! M16b: `ehci* at pci?` and `usb* at ehci?`, `uhci* at pci?` and `usb* at uhci?`;
+//! M16b: `ehci* at pci?` and `usb* at ehci?`, `uhci* at pci?` and `usb* at uhci?`, `ohci* at pci?` and `usb* at ohci?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -36,7 +36,7 @@
 //! attach below it) and `agintc` (`device agintc: fdt`, whose ITS `agintcmsi` attaches
 //! below it). Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
-//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `ehci*`, `uhci*`, `azalia*`, `ahci*`, `nvme*`, `ppb*`,
+//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `ehci*`, `uhci*`, `ohci*`, `azalia*`, `ahci*`, `nvme*`, `ppb*`,
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
 //! ...), `ahci*` at `fdt?`, `ehci*` at `acpi?` and `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
@@ -91,6 +91,7 @@ use crate::dev::pci::if_em::{EM_CA, EM_CD};
 use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
+use crate::dev::pci::ohci_pci::OHCI_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::ppb::{PPB_CA, PPB_CD};
 use crate::dev::pci::uhci_pci::UHCI_PCI_CA;
@@ -103,6 +104,7 @@ use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::usb::ehci::EHCI_CD;
+use crate::dev::usb::ohci::OHCI_CD;
 use crate::dev::usb::uaudio::{UAUDIO_CA, UAUDIO_CD};
 use crate::dev::usb::ugen::{UGEN_CA, UGEN_CD};
 use crate::dev::usb::uhci::UHCI_CD;
@@ -180,9 +182,9 @@ const PV_ACPIIORT: &[i16] = &[43];
 const LOC_PCI_UNK: &[i64] = &[-1, -1];
 
 /// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[20]`), `ehci*`
-/// (`cfdata[64]`) and `uhci*` (`cfdata[65]`): `usb* at xhci?`, `usb* at ehci?` and `usb* at
-/// uhci?` are one entry, as config(8) merges them.
-const PV_USBUS: &[i16] = &[20, 64, 65];
+/// (`cfdata[64]`), `uhci*` (`cfdata[65]`) and `ohci*` (`cfdata[66]`): `usb* at xhci?`, `usb* at ehci?`, `usb* at
+/// uhci?` and `usb* at ohci?` are one entry, as config(8) merges them.
+const PV_USBUS: &[i16] = &[20, 64, 65, 66];
 
 /// `pv[]` for children of `usb*` (`cfdata[21]`).
 const PV_USB: &[i16] = &[21];
@@ -280,9 +282,9 @@ const NFREE: usize = 8;
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    67
+    68
 } else {
-    66
+    67
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -531,7 +533,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 21: usb* at xhci?, usb* at ehci?, usb* at uhci?
+    // 21: usb* at xhci?, usb* at ehci?, usb* at uhci?, usb* at ohci?
     Cfdata::new(&USB_CA, &USB_CD, 0, FSTATE_STAR, &[], 0, PV_USBUS, 0, 0),
     // 22: uhub* at usb?
     Cfdata::new(&UHUB_CA, &UHUB_CD, 0, FSTATE_STAR, &[], 0, PV_USB, 0, 0),
@@ -1051,7 +1053,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 66: cpu* at mainbus? (GENERIC.MP)
+    // 66: ohci* at pci?
+    Cfdata::new(
+        &OHCI_PCI_CA,
+        &OHCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 67: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
     // The free slots.

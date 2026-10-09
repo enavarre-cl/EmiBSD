@@ -1545,6 +1545,13 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   reinterpreting it. On arm64 `virt` EDK2 leaves its I/O BAR at 0; as in OpenBSD, the PCI
   bus now carries the host bridge's extents (`pciecam`, arm64 `acpipci`) and
   `pci_mapreg_assign` places such a BAR from them (amd64's buses have no extents yet).
+  ohci(4) (M16b, `dev/usb/ohci.c`, `dev/pci/ohci_pci.c`) is the fourth `usb*` parent, built
+  the same way (soft EDs, TDs and ITDs `&'static` in never-freed DMA chunks, `ohci_get`/
+  `ohci_set`; the done queue's bus addresses found through the C's hash). Its interrupt is
+  not `IPL_MPSAFE`, as in C, so it runs with the kernel lock. In QEMU (`pci-ohci`) the stick
+  mounts and reads on both archs; the first write makes QEMU's OHCI raise
+  UnrecoverableError, exactly as OpenBSD 8.0 does on the same setup, and `smoke-ohci`
+  asserts that (the user's rule for QEMU behaviours OpenBSD shares).
 - Audio (M12): audio(4) (`dev/audio.c`) is machine-independent; drivers reach it only
   through `AudioHwIf`, `audio_attach_mi` and `audio_pintr`/`audio_rintr`, called with
   `AUDIO_LOCK` held. azalia(4) attaches QEMU's `intel-hda` on both architectures (through

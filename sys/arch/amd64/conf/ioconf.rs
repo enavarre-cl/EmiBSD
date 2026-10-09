@@ -30,6 +30,7 @@
 //! turns them on),
 //! `tpm* at acpi?` (M16e), `acpicpu* at acpi?` (M16e),
 //! `ehci* at pci?` and `usb* at ehci?` (M16b), `uhci* at pci?` and `usb* at uhci?` (M16b),
+//! `ohci* at pci?` and `usb* at ohci?` (M16b),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -47,7 +48,7 @@
 //! device at `mii?` (the other PHY drivers), every
 //! other
 //! `audio*` (at `eap?`, `envy?`, ...), `pci*` at
-//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; `usb*` at `ohci?`, every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*` and `ugen*`, every device
+//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*` and `ugen*`, every device
 //! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*` but the one at `ukbd?`, every
 //! `wsmouse*` but the ones at `ums?` and `uwacom?`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
@@ -98,6 +99,7 @@ use crate::dev::pci::if_em::{EM_CA, EM_CD};
 use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
+use crate::dev::pci::ohci_pci::OHCI_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::piixpm::{PIIXPM_CA, PIIXPM_CD};
 use crate::dev::pci::ppb::{PPB_CA, PPB_CD};
@@ -115,6 +117,7 @@ use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::usb::ehci::EHCI_CD;
+use crate::dev::usb::ohci::OHCI_CD;
 use crate::dev::usb::uaudio::{UAUDIO_CA, UAUDIO_CD};
 use crate::dev::usb::ugen::{UGEN_CA, UGEN_CD};
 use crate::dev::usb::uhci::UHCI_CD;
@@ -200,9 +203,9 @@ const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
 
 /// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[14]`), `ehci*`
-/// (`cfdata[71]`) and `uhci*` (`cfdata[72]`): `usb* at xhci?`, `usb* at ehci?` and `usb* at
-/// uhci?` are one entry, as config(8) merges them.
-const PV_USBUS: &[i16] = &[14, 71, 72];
+/// (`cfdata[71]`), `uhci*` (`cfdata[72]`) and `ohci*` (`cfdata[73]`): `usb* at xhci?`, `usb* at ehci?`, `usb* at
+/// uhci?` and `usb* at ohci?` are one entry, as config(8) merges them.
+const PV_USBUS: &[i16] = &[14, 71, 72, 73];
 
 /// `pv[]` for children of `usb*` (`cfdata[15]`).
 const PV_USB: &[i16] = &[15];
@@ -316,11 +319,11 @@ const LN_WSMOUSEDEV: i32 = 37;
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 73 entries, 74 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 74 entries, 75 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    74
+    75
 } else {
-    73
+    74
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -497,7 +500,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 15: usb* at xhci?, usb* at ehci?, usb* at uhci?
+    // 15: usb* at xhci?, usb* at ehci?, usb* at uhci?, usb* at ohci?
     Cfdata::new(&USB_CA, &USB_CD, 0, FSTATE_STAR, &[], 0, PV_USBUS, 0, 0),
     // 16: uhub* at usb?
     Cfdata::new(&UHUB_CA, &UHUB_CD, 0, FSTATE_STAR, &[], 0, PV_USB, 0, 0),
@@ -1134,7 +1137,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 73: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 73: ohci* at pci?
+    Cfdata::new(
+        &OHCI_PCI_CA,
+        &OHCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 74: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
