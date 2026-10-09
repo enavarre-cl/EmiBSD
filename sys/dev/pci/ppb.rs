@@ -47,16 +47,13 @@
 //! configuration registers.
 //!
 //! ## Deviations
-//! - The parent bus's extents (`pa_busex`, `pa_ioex`, `pa_memex`, `pa_pmemex`) are NULL in
-//!   this kernel (`pcivar.rs`: `pci_init_extents` is not ported, the attach arguments have no
-//!   extent members). So `ppb_alloc_busrange` is never called (a bridge the firmware left
-//!   without bus numbers prints `not configured by system firmware`, as the C does without a
-//!   bus extent), `ppb_alloc_resources` returns at its `pa_memex == NULL` test, and a
-//!   subtractive bridge inherits no windows. Both functions are ported over the extents they
-//!   are given ([`ParentExtents`]), all `None` here.
-//! - The bridge's own extents (`sc_busex`, `sc_ioex`, `sc_memex`, `sc_pmemex`) are made as in
-//!   C, but cannot be handed to the bus behind it (`pba_*ex` do not exist): its devices find
-//!   no extents either. Their names live in the softc (the C `malloc`s `PPB_EXNAMLEN` bytes).
+//! - The extents come down from the host bridge as in C (`pa_*ex`, `pba_*ex`, M16b): on
+//!   amd64 mainbus and acpipci still hand down none (`pci_init_extents` is not ported), so
+//!   there `ppb_alloc_busrange` is never called (a bridge the firmware left without bus
+//!   numbers prints `not configured by system firmware`, as the C does without a bus extent)
+//!   and `ppb_alloc_resources` returns at its `pa_memex == NULL` test; arm64's acpipci and
+//!   pciecam give theirs. The bridge's softc holds the names of its extents (the C `malloc`s
+//!   `PPB_EXNAMLEN` bytes).
 //! - `sc_ih` holds `Option`s: `None` is a pin `pci_intr_map` could not map, which the C marks
 //!   inside the handle (`pcivar.rs`).
 //! - `ppbattach` writes the interrupt pins into its own copy of the attach arguments; the C
@@ -267,7 +264,7 @@ impl PpbSoftc {
 unsafe impl Softc for PpbSoftc {}
 
 /// The parent bus's extents, which the C reads from the attach arguments (`pa_busex`,
-/// `pa_ioex`, `pa_memex`); this kernel's are all `None` (see the deviations).
+/// `pa_ioex`, `pa_memex`).
 #[derive(Clone, Copy, Default)]
 pub struct ParentExtents {
     /// `pa_busex`.
@@ -337,8 +334,11 @@ pub fn ppbattach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
     let mut pa: PciAttachArgs = unsafe { *aux.cast::<PciAttachArgs>() };
     let pc = pa.pa_pc;
     let xname = sc.sc_dev.xname();
-    // pa_busex, pa_ioex, pa_memex: NULL in this kernel (pcivar.rs).
-    let parent_ex = ParentExtents::default();
+    let parent_ex = ParentExtents {
+        busex: pa.pa_busex,
+        ioex: pa.pa_ioex,
+        memex: pa.pa_memex,
+    };
 
     sc.sc_pc.set(Some(pc));
     // SAFETY: the attach's first write; nothing has borrowed the tag yet.
@@ -449,8 +449,10 @@ pub fn ppbattach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
         pba_dmat: pa.pa_dmat,
         pba_pc: pc,
         pba_flags: pa.pa_flags & !PCI_FLAGS_MRM_OKAY,
-        // pba_busex, pba_ioex, pba_memex, pba_pmemex: sc_busex, sc_ioex, sc_memex and
-        // sc_pmemex, which the attach arguments cannot carry (pcivar.rs).
+        pba_busex: sc.sc_busex.get(),
+        pba_ioex: sc.sc_ioex.get(),
+        pba_memex: sc.sc_memex.get(),
+        pba_pmemex: sc.sc_pmemex.get(),
         pba_domain: pa.pa_domain as i32,
         pba_bus: ppb_businfo_secondary(busdata) as i32,
         // SAFETY: both were written above, once, and are only read from now on.
@@ -531,8 +533,12 @@ fn ppb_windows(sc: &'static PpbSoftc, pa: &PciAttachArgs, interface: u32) {
     }
 
     if interface == PPB_INTERFACE_SUBTRACTIVE {
-        // if (sc->sc_ioex == NULL) sc->sc_ioex = pa->pa_ioex; likewise sc_memex: the
-        // parent's extents are NULL in this kernel, so nothing is inherited.
+        if sc.sc_ioex.get().is_none() {
+            sc.sc_ioex.set(pa.pa_ioex);
+        }
+        if sc.sc_memex.get().is_none() {
+            sc.sc_memex.set(pa.pa_memex);
+        }
     }
 }
 
@@ -1036,6 +1042,10 @@ mod tests {
             pa_dmat: Default::default(),
             pa_pc: Default::default(),
             pa_flags: 0,
+            pa_ioex: None,
+            pa_memex: None,
+            pa_pmemex: None,
+            pa_busex: None,
             pa_domain: 0,
             pa_bus: 0,
             pa_device: 4,

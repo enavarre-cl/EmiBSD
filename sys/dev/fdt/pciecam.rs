@@ -32,10 +32,10 @@
 //! those items through `machine::pci_chipset`.
 //!
 //! ## Deviations
-//! - `struct extent` is not ported (`sys/extent.h`), so `sc_ioex`/`sc_memex` and their names
-//!   are left out and `pba_ioex`, `pba_memex`, `pba_pmemex` stay NULL (C_TO_RUST,
-//!   "a member pointing into a subsystem that is not ported"): a BAR the firmware left
-//!   unassigned cannot be placed, as on amd64.
+//! - The extents (`sc_ioex`, `sc_memex`; M16b) are made and filled from `ranges` as in C and
+//!   handed to the bus (`pba_ioex`, `pba_memex`, `pba_pmemex`), so `pci_mapreg_assign`
+//!   places a BAR the firmware left at 0. A failed `extent_create` (`EX_NOWAIT`) leaves the
+//!   member `None` and skips its ranges, where the C would pass NULL to `extent_free`.
 //! - The softc's `sc_bus` and `sc_pc` are `MaybeUninit` behind an `UnsafeCell` (the softc is
 //!   zeroed memory, which is no valid table of functions), written once by the attach before
 //!   the bus attaches; the softc lives as long as the kernel (no detach), so the tags handed
@@ -66,7 +66,8 @@ use crate::dev::pci::pcivar::{PCI_FLAGS_MSI_ENABLED, PciAttachArgs, PcibusAttach
 use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::subr_autoconf::config_found;
-use crate::kern::subr_prf::{panic, printf};
+use crate::kern::subr_extent::{extent_create, extent_free};
+use crate::kern::subr_prf::{panic, printf, snprintf};
 use crate::machine::bus::{
     BUS_DMA_WAITOK, BusAddr, BusDmaSegment, BusDmaTag, BusDmamap, BusSize, BusSpaceHandle,
     BusSpaceTag, bus_dmamap_create, bus_dmamap_destroy, bus_dmamap_load_raw, bus_dmamap_unload,
@@ -85,6 +86,7 @@ use crate::machine::pci_chipset::{
 use crate::machine::pci_machdep::{PciIntrFn, PciIntrStr, Pcitag};
 use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
 use crate::sys::errno::Errno;
+use crate::sys::extent::{EX_FILLED, EX_NOWAIT, Extent};
 use crate::sys::malloc::{M_DEVBUF, M_TEMP, M_WAITOK};
 use crate::sys::queue::ListEntry;
 use crate::sys::types::{Off, Paddr};
@@ -164,7 +166,14 @@ pub struct PciecamSoftc {
     pub sc_pciranges: Cell<*mut PciecamRange>,
     /// `sc_pcirangeslen`.
     pub sc_pcirangeslen: Cell<i32>,
-    // sc_ioex, sc_memex, sc_ioex_name, sc_memex_name: sys/extent.h (see the deviations).
+    /// `sc_ioex`: the bus's I/O space, from the I/O `ranges` (M16b).
+    pub sc_ioex: Cell<Option<&'static Extent>>,
+    /// `sc_memex`: the bus's memory space, from the memory `ranges`.
+    pub sc_memex: Cell<Option<&'static Extent>>,
+    /// `sc_ioex_name[32]`, written once by the attach.
+    pub sc_ioex_name: UnsafeCell<[u8; 32]>,
+    /// `sc_memex_name[32]`.
+    pub sc_memex_name: UnsafeCell<[u8; 32]>,
     /// `sc_pc`: the chipset the PCI bus dispatches through.
     pub sc_pc: UnsafeCell<MaybeUninit<MachinePciChipset>>,
 }
@@ -296,8 +305,20 @@ pub fn pciecam_match(_parent: Option<&Device>, _match: &CfMatch, aux: *mut c_voi
     )
 }
 
+/// `snprintf(sc->sc_*ex_name, sizeof(...), ...)`: an extent's name in its softc buffer.
+fn pciecam_exname(
+    cell: &'static UnsafeCell<[u8; 32]>,
+    args: core::fmt::Arguments<'_>,
+) -> &'static [u8] {
+    // SAFETY: the attach formats each name once, before the extent that keeps it exists;
+    // nothing writes it afterwards.
+    let buf = unsafe { &mut *cell.get() };
+    let n = snprintf(buf, args).min(buf.len() - 1);
+    &buf[..n]
+}
+
 /// `pciecam_attach`: reads the `ranges`, maps the ECAM region, fills the bus space and the
-/// chipset, and attaches the PCI bus.
+/// chipset, makes the I/O and memory extents, and attaches the PCI bus.
 pub fn pciecam_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
     // SAFETY: `pciecam_ca` made the device, as a `PciecamSoftc`; it is never detached, so
     // the softc lives as long as the kernel.
@@ -394,9 +415,43 @@ pub fn pciecam_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void
 
     printf(format_args!("\n"));
 
-    // Map PCIe address space: extent_create of "<dv_xname> pciio" and "<dv_xname> pcimem",
-    // then extent_free of each I/O (space code 1) and memory range of `ranges` into them.
-    // sys/extent.h is not ported (see the deviations): the bus gets no extents.
+    // Map PCIe address space.
+    let xname = sc.sc_dev.xname();
+    let ioex_name = pciecam_exname(&sc.sc_ioex_name, format_args!("{xname} pciio"));
+    sc.sc_ioex.set(extent_create(
+        ioex_name,
+        0,
+        u64::MAX,
+        M_DEVBUF,
+        None,
+        EX_NOWAIT | EX_FILLED,
+    ));
+
+    let memex_name = pciecam_exname(&sc.sc_memex_name, format_args!("{xname} pcimem"));
+    sc.sc_memex.set(extent_create(
+        memex_name,
+        0,
+        u64::MAX,
+        M_DEVBUF,
+        None,
+        EX_NOWAIT | EX_FILLED,
+    ));
+
+    for r in sc.pciranges() {
+        if r.flags >> 24 == 0 {
+            continue;
+        }
+        // The C ignores extent_free's result (and passes a NULL extent on when
+        // extent_create failed, which EX_NOWAIT allows).
+        let ex = if r.flags >> 24 == 1 {
+            sc.sc_ioex.get()
+        } else {
+            sc.sc_memex.get()
+        };
+        if let Some(ex) = ex {
+            let _ = extent_free(ex, r.pci_base, r.size, EX_NOWAIT);
+        }
+    }
 
     // SAFETY: attach time, before the bus exists: nothing reads `sc_bus` yet; written once.
     unsafe {
@@ -440,7 +495,10 @@ pub fn pciecam_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void
         pba_dmat: faa.fa_dmat,
         pba_pc: sc.pc(),
         pba_flags: 0,
-        // pba_ioex = sc_ioex, pba_memex = pba_pmemex = sc_memex: NULL (sys/extent.h).
+        pba_ioex: sc.sc_ioex.get(),
+        pba_memex: sc.sc_memex.get(),
+        pba_pmemex: sc.sc_memex.get(),
+        pba_busex: None,
         pba_domain: PCI_NDOMAINS.fetch_add(1, Ordering::Relaxed),
         pba_bus: 0,
         pba_bridgetag: None,

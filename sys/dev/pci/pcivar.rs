@@ -46,9 +46,9 @@
 //!
 //! ## Deviations
 //! - The extent members (`pba_ioex`, `pba_memex`, `pba_pmemex`, `pba_busex`, the `pa_*ex`
-//!   and `sc_*ex` ones) are absent: `sys/extent.h` and `subr_extent.c` are not ported, so
-//!   they are always NULL, and every C test of them takes the NULL branch (commented where
-//!   it happens).
+//!   and `sc_*ex` ones) are `Option<&'static Extent>` (M16b): the host bridges that make
+//!   extents (arm64's `pciecam` and `acpipci`) hand them down; amd64's are `None` until
+//!   its `pci_init_extents` is ported, and every C test of them then takes the NULL branch.
 //! - `pba_bridgetag`/`pa_bridgetag` are `Option<&'static Pcitag>` and the bridge's
 //!   interrupt handles (`pba_bridgeih`, an array of four) an `Option` of a slice of
 //!   `Option`s: `None` is a pin `pci_intr_map` could not map, which the C marks inside the
@@ -65,6 +65,7 @@ use crate::dev::pci::pcireg::{PciIntrLine, PciIntrPin, PciProductId, PciVendorId
 use crate::machine::bus::{BusDmaTag, BusSpaceTag};
 use crate::machine::pci_machdep::{PciChipsetTag, PciIntrHandle, Pcitag};
 use crate::sys::device::{Cfdata, Device, Softc};
+use crate::sys::extent::Extent;
 use crate::sys::queue::ListHead;
 
 /// `pcireg_t`: configuration space register XXX.
@@ -105,7 +106,14 @@ pub struct PcibusAttachArgs {
     pub pba_pc: PciChipsetTag,
     /// `pba_flags`: flags; see below.
     pub pba_flags: i32,
-    // pba_ioex, pba_memex, pba_pmemex, pba_busex: sys/extent.h (see the deviations).
+    /// `pba_ioex`: the bus's I/O space extent, if any.
+    pub pba_ioex: Option<&'static Extent>,
+    /// `pba_memex`: the bus's memory space extent.
+    pub pba_memex: Option<&'static Extent>,
+    /// `pba_pmemex`: the bus's prefetchable memory space extent.
+    pub pba_pmemex: Option<&'static Extent>,
+    /// `pba_busex`: the bus numbers' extent.
+    pub pba_busex: Option<&'static Extent>,
     /// `pba_domain`: PCI domain.
     pub pba_domain: i32,
     /// `pba_bus`: PCI bus number.
@@ -134,7 +142,14 @@ pub struct PciAttachArgs {
     pub pa_pc: PciChipsetTag,
     /// `pa_flags`: flags; see below.
     pub pa_flags: i32,
-    // pa_ioex, pa_memex, pa_pmemex, pa_busex: sys/extent.h (see the deviations).
+    /// `pa_ioex`: the bus's I/O space extent, if any.
+    pub pa_ioex: Option<&'static Extent>,
+    /// `pa_memex`.
+    pub pa_memex: Option<&'static Extent>,
+    /// `pa_pmemex`.
+    pub pa_pmemex: Option<&'static Extent>,
+    /// `pa_busex`.
+    pub pa_busex: Option<&'static Extent>,
     /// `pa_domain`.
     pub pa_domain: u32,
     /// `pa_bus`.
@@ -213,7 +228,14 @@ pub struct PciSoftc {
     pub sc_pc: Cell<Option<PciChipsetTag>>,
     /// `sc_flags`.
     pub sc_flags: Cell<i32>,
-    // sc_ioex, sc_memex, sc_pmemex, sc_busex: sys/extent.h (see the deviations).
+    /// `sc_ioex`.
+    pub sc_ioex: Cell<Option<&'static Extent>>,
+    /// `sc_memex`.
+    pub sc_memex: Cell<Option<&'static Extent>>,
+    /// `sc_pmemex`.
+    pub sc_pmemex: Cell<Option<&'static Extent>>,
+    /// `sc_busex`.
+    pub sc_busex: Cell<Option<&'static Extent>>,
     /// `sc_devs`: the functions found on the bus (`LIST_HEAD(, pci_dev)`).
     pub sc_devs: ListHead<PciDevList>,
     /// `sc_domain`.

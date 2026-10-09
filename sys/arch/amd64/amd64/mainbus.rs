@@ -250,7 +250,11 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
                 pba_pc: None,
                 pba_flags: 0,
                 // pba_ioex = pciio_ex, pba_memex = pcimem_ex, pba_busex = pcibus_ex: NULL
-                // (sys/extent.h).
+                // (pci_init_extents makes none).
+                pba_ioex: None,
+                pba_memex: None,
+                pba_pmemex: None,
+                pba_busex: None,
                 pba_domain: PCI_NDOMAINS.fetch_add(1, Ordering::Relaxed),
                 pba_bus: 0,
                 pba_bridgetag: None,
