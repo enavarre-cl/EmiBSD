@@ -867,7 +867,7 @@ lstat_device(const char *path, struct stat *sb)
  * paths makefs gives lstat are $EMIBSD_STAGING/./dir/name; both sides are reduced to their
  * components, without the "." ones.
  */
-#define MAXATTR 1024
+#define MAXATTR 8192
 #define MAXPATHLEN_ATTR 256
 
 static struct attr {
@@ -917,9 +917,14 @@ load_attrs(void)
 	normalise(root, staging, sizeof(staging));
 	if ((f = fopen(file, "r")) == NULL)
 		return;
-	while (fgets(line, sizeof(line), f) != NULL && nattrs < MAXATTR) {
+	while (fgets(line, sizeof(line), f) != NULL) {
 		if (sscanf(line, "%o %u %u %255s", &mode, &uid, &gid, path) != 4)
 			continue;
+		if (nattrs == MAXATTR) {
+			/* A table cut short would silently leave paths root:wheel 0755/0644. */
+			fprintf(stderr, "makefs: %s: more than %d entries\n", file, MAXATTR);
+			exit(1);
+		}
 		normalise(path, attrs[nattrs].path, MAXPATHLEN_ATTR);
 		attrs[nattrs].mode = mode;
 		attrs[nattrs].uid = uid;
