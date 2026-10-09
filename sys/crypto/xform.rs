@@ -154,6 +154,7 @@ use super::sha2::{
     SHA256_DIGEST_LENGTH, SHA384_DIGEST_LENGTH, SHA512_DIGEST_LENGTH, Sha256Ctx, Sha384Ctx,
     Sha512Ctx,
 };
+use super::wipe;
 use super::xform_ipcomp::deflate_global;
 use crate::kern::subr_prf::panic;
 use crate::sys::errno::Errno;
@@ -196,6 +197,33 @@ pub enum AuthCtx {
     AesGmac(AesGmacCtx),
     /// `CHACHA20_POLY1305_CTX`.
     Chacha20Poly1305(Chacha20Poly1305Ctx),
+}
+
+impl Drop for AuthCtx {
+    /// Wipes a hash context in place: `swcr_newsession` keys `sw_ictx`/`sw_octx` with an
+    /// HMAC's ipad and opad, so their chaining state is key material, which the C's
+    /// `swcr_freesession` `explicit_bzero`s. The hash context types stay `Copy` (pf and TCP
+    /// keep SHA-512 contexts in cells), so the wipe is here, by assignment through
+    /// `crate::crypto::wipe`; the GMAC and ChaCha20-Poly1305 contexts wipe themselves.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl AuthCtx {
+    /// Zeroes a hash context in place (the variant is kept); the GMAC and ChaCha20-Poly1305
+    /// contexts are left to their own drops.
+    pub(crate) fn zeroize(&mut self) {
+        match self {
+            AuthCtx::Md5(c) => wipe(c),
+            AuthCtx::Sha1(c) => wipe(c),
+            AuthCtx::Rmd160(c) => wipe(c),
+            AuthCtx::Sha256(c) => wipe(c),
+            AuthCtx::Sha384(c) => wipe(c),
+            AuthCtx::Sha512(c) => wipe(c),
+            AuthCtx::None | AuthCtx::AesGmac(_) | AuthCtx::Chacha20Poly1305(_) => {}
+        }
+    }
 }
 
 /// `struct aes_ctr_ctx`: the key schedule of AES-CTR and AES-GCM.
@@ -1510,6 +1538,23 @@ mod tests {
                 .chain(xts.key2.ek.iter())
                 .all(|w| *w == 0)
         );
+    }
+
+    #[test]
+    fn auth_contexts_zero_their_hash_state() {
+        // What `AuthCtx`'s `Drop` runs when `swcr_freesession` drops `sw_ictx`/`sw_octx`.
+        let mut c = AuthCtx::Sha1(Sha1Ctx::new());
+        if let AuthCtx::Sha1(x) = &mut c {
+            x.update(&[0x36; 64]);
+        }
+        c.zeroize();
+        assert!(matches!(&c, AuthCtx::Sha1(x) if *x == Sha1Ctx::default()));
+        let mut c = AuthCtx::Sha512(Sha512Ctx::new());
+        if let AuthCtx::Sha512(x) = &mut c {
+            x.update(&[0x5c; 128]);
+        }
+        c.zeroize();
+        assert!(matches!(&c, AuthCtx::Sha512(x) if *x == Sha512Ctx::default()));
     }
 }
 /* </TESTS> */

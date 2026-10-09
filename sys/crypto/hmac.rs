@@ -59,6 +59,9 @@
 //!   `finalize` wipes the inner digest, the hashed long key, and the whole context (the key
 //!   the C leaves in it after `HMAC_*_Final`): more than the C wipes, never less, and no
 //!   output changes.
+//! - A context zeroes its key and inner hash when dropped (`docs/IDIOMS.md`, a key schedule
+//!   wiped on drop), so one that is freed without a `finalize` leaves no key either; the
+//!   contexts are therefore not `Copy`.
 
 use libkern::explicit_bzero;
 
@@ -74,7 +77,7 @@ macro_rules! hmac_family {
         #[doc = concat!("`", $name, "`: an HMAC in progress, from `new(key)` to `finalize`.")]
         ///
         /// `Default` is the wiped, all-zero context, not an HMAC under any key.
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[derive(Clone, Debug, PartialEq, Eq)]
         pub struct $ctx_ty {
             /// `ctx`: the inner hash.
             ctx: $hash_ctx,
@@ -91,6 +94,23 @@ macro_rules! hmac_family {
                     key: [0; $block],
                     key_len: 0,
                 }
+            }
+        }
+
+        impl Drop for $ctx_ty {
+            /// Wipes the key (the inner hash wipes itself): an HMAC context freed with its
+            /// session leaves no key material, as the C's `explicit_bzero` of the context.
+            fn drop(&mut self) {
+                self.zeroize();
+            }
+        }
+
+        impl $ctx_ty {
+            /// Zeroes the key and the inner hash in place.
+            pub(crate) fn zeroize(&mut self) {
+                explicit_bzero(&mut self.key);
+                wipe(&mut self.key_len);
+                wipe(&mut self.ctx);
             }
         }
 
@@ -353,6 +373,16 @@ mod tests {
         assert_eq!(hmac_sha1(&long, b"data"), hmac_sha1(&digest, b"data"));
         let ctx = HmacSha1Ctx::new(&long);
         assert_eq!(ctx.key_len, SHA1_DIGEST_LENGTH);
+    }
+
+    #[test]
+    fn zeroize_clears_the_key_and_the_inner_hash() {
+        // What `Drop` runs when an HMAC context is freed.
+        let mut ctx = HmacSha1Ctx::new(b"a key");
+        ctx.update(b"data");
+        assert_ne!(ctx, HmacSha1Ctx::default());
+        ctx.zeroize();
+        assert_eq!(ctx, HmacSha1Ctx::default());
     }
 }
 /* </TESTS> */
