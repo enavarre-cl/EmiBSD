@@ -360,8 +360,10 @@ fn descendants(table: &[(u32, u32)], root: u32) -> Vec<u32> {
 
 /// SIGKILLs `root` and its whole process tree, read from `ps` once, parents first, so none
 /// of them starts another process meanwhile. A tree, not a process group: a recipe in a
-/// group of its own would no longer get the terminal's Ctrl-C.
-fn kill_tree(root: u32) {
+/// group of its own would no longer get the terminal's Ctrl-C. Returns what `ps` said of
+/// those processes just before (state, CPU, wait channel, command), for the log: where a
+/// hung recipe was stuck.
+fn kill_tree(root: u32) -> String {
     let table: Vec<(u32, u32)> = Command::new("ps")
         .args(["-axo", "pid=,ppid="])
         .output()
@@ -379,12 +381,23 @@ fn kill_tree(root: u32) {
         .iter()
         .map(u32::to_string)
         .collect();
+    let listing = Command::new("ps")
+        .args([
+            "-o",
+            "pid,ppid,etime,%cpu,state,wchan,command",
+            "-p",
+            &pids.join(","),
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
     let _ = Command::new("kill")
         .arg("-KILL")
         .args(&pids)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+    listing
 }
 
 /// Runs `just --no-deps recipe` with its own run directory and log, under the watchdog
@@ -452,12 +465,12 @@ fn run_recipe(
             grew = Instant::now();
         }
         if let Some(why) = watchdog(started.elapsed(), grew.elapsed(), limit) {
-            kill_tree(child.id());
+            let listing = kill_tree(child.id());
             let _ = child.wait();
             if let Ok(mut f) = OpenOptions::new().append(true).open(&log) {
                 let _ = writeln!(
                     f,
-                    "\nsmoke-all: watchdog: {recipe} {why}; killed its process tree"
+                    "\nsmoke-all: watchdog: {recipe} {why}; killed its process tree:\n{listing}"
                 );
             }
             let mut done = finish(false, why);
@@ -588,6 +601,8 @@ mod tests {
             log.contains("smoke-all: watchdog: smoke-hang over its limit"),
             "{log}"
         );
+        // What the tree was doing when it was killed: the sleeping grandchild among it.
+        assert!(log.contains("sleep 300"), "{log}");
         // The sleeping grandchild went with it.
         let child = fs::read_to_string(dir.join("smoke-hang/child")).unwrap();
         let alive = Command::new("kill")

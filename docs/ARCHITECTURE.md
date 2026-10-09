@@ -1990,7 +1990,8 @@ user's plan). The shape is one build phase, then one run phase:
   otherwise prints nothing until it ends. Stopping a recipe SIGKILLs its whole process tree,
   read from `ps` and killed parents first (`just`, its shell, `cargo`, xtask, QEMU, swtpm), not
   a process group: in a group of its own a recipe would no longer get the terminal's Ctrl-C.
-  The cause goes at the end of the log, the recipe is reported `TIMEOUT` (a failure, its log
+  The cause goes at the end of the log, with what `ps` showed of each process of the tree just
+  before (state, CPU, wait channel, command), the recipe is reported `TIMEOUT` (a failure, its log
   printed with the others'), the other recipes go on, and `smoke-all` exits non-zero.
 
 `JOBS=N just smoke` (or `just jobs=N smoke`, or `JOBS=N just ci`) picks another N; `JOBS=1`
