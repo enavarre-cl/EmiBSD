@@ -54,7 +54,7 @@
 
 /* <CODE> */
 //! `<dev/mii/miidevs.h>`: the MII OUIs and PHY models, the subset the ported PHY drivers
-//! name (rlphy(4), rgephy(4), inphy(4)).
+//! name (rlphy(4), rgephy(4), inphy(4), lxtphy(4), dcphy(4)).
 //!
 //! Upstream: sys/dev/mii/miidevs.h @ 3ce1f3f79392
 //!
@@ -75,6 +75,12 @@ pub const MII_OUI_INTEL: u32 = 0x00aa00;
 pub const MII_OUI_REALTEK2: u32 = 0x00e04c;
 /// `MII_OUI_xxREALTEK`: Realtek.
 pub const MII_OUI_xxREALTEK: u32 = 0x000732;
+/// `MII_OUI_xxLEVEL1a`: Level 1.
+pub const MII_OUI_xxLEVEL1a: u32 = 0x0004de;
+/// `MII_OUI_xxLEVEL1`: Level 1.
+pub const MII_OUI_xxLEVEL1: u32 = 0x1e0400;
+/// `MII_OUI_xxDEC`: Digital Clone.
+pub const MII_OUI_xxDEC: u32 = 0x040440;
 
 /// `MII_MODEL_INTEL_I82555`.
 pub const MII_MODEL_INTEL_I82555: u32 = 0x0015;
@@ -120,6 +126,18 @@ pub const MII_STR_xxREALTEK_RTL8169S: &str = "RTL8169S/8110S/8211";
 pub const MII_MODEL_REALTEK_RTL8201L: u32 = 0x0020;
 /// `MII_STR_REALTEK_RTL8201L`.
 pub const MII_STR_REALTEK_RTL8201L: &str = "RTL8201L";
+/// `MII_MODEL_xxDEC_xxDC`.
+pub const MII_MODEL_xxDEC_xxDC: u32 = 0x0001;
+/// `MII_STR_xxDEC_xxDC`.
+pub const MII_STR_xxDEC_xxDC: &str = "DC";
+/// `MII_MODEL_xxLEVEL1_LXT970`.
+pub const MII_MODEL_xxLEVEL1_LXT970: u32 = 0x0000;
+/// `MII_STR_xxLEVEL1_LXT970`.
+pub const MII_STR_xxLEVEL1_LXT970: &str = "LXT970";
+/// `MII_MODEL_xxLEVEL1a_LXT971`.
+pub const MII_MODEL_xxLEVEL1a_LXT971: u32 = 0x000e;
+/// `MII_STR_xxLEVEL1a_LXT971`.
+pub const MII_STR_xxLEVEL1a_LXT971: &str = "LXT971";
 /* </CODE> */
 
 /* <TESTS> */
@@ -137,7 +155,8 @@ mod tests {
             MII_MODEL_ICPLUS_IP101, MII_MODEL_xxREALTEK_RTL8251,
             MII_MODEL_xxREALTEK_RTL8201F, MII_MODEL_xxREALTEK_RTL8211FVD,
             MII_MODEL_xxREALTEK_RTL8201E, MII_MODEL_xxREALTEK_RTL8169S,
-            MII_MODEL_REALTEK_RTL8201L);
+            MII_MODEL_REALTEK_RTL8201L, MII_OUI_xxLEVEL1a, MII_OUI_xxLEVEL1, MII_OUI_xxDEC,
+            MII_MODEL_xxDEC_xxDC, MII_MODEL_xxLEVEL1_LXT970, MII_MODEL_xxLEVEL1a_LXT971);
         for (name, s) in [
             ("MII_STR_INTEL_I82555", MII_STR_INTEL_I82555),
             ("MII_STR_INTEL_I82562G", MII_STR_INTEL_I82562G),
@@ -150,6 +169,9 @@ mod tests {
             ("MII_STR_xxREALTEK_RTL8201E", MII_STR_xxREALTEK_RTL8201E),
             ("MII_STR_xxREALTEK_RTL8169S", MII_STR_xxREALTEK_RTL8169S),
             ("MII_STR_REALTEK_RTL8201L", MII_STR_REALTEK_RTL8201L),
+            ("MII_STR_xxDEC_xxDC", MII_STR_xxDEC_xxDC),
+            ("MII_STR_xxLEVEL1_LXT970", MII_STR_xxLEVEL1_LXT970),
+            ("MII_STR_xxLEVEL1a_LXT971", MII_STR_xxLEVEL1a_LXT971),
         ] {
             assert_eq!(defs[name], std::format!("\"{s}\""), "{name}");
         }

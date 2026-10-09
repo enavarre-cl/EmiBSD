@@ -2310,6 +2310,12 @@ lz = ["sys/dev/microcode/siop/siop.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/mii/dcphy.rs"
+lz = ["sys/dev/mii/dcphy.rs"]
+status = "inherited"
+notes = "M16c: license: BSD-4 (Bill Paul), kept whole; the whole file: dcphy_ca/dcphy_cd, dcphy_funcs, MIIF_AUTOTIMEOUT, COMPAQ_PRESARIO_ID, dcphy_match (the xxDEC/xxDC id dc makes up at MII address 31), dcphy_attach, dcphy_service (Result), dcphy_status (link-partner choice in the pure dcphy_anlpar_media, host-tested), dcphy_mii_phy_auto (Result: EJUSTRETURN/EIO as Err), dcphy_reset; the C's local DC_SETBIT/DC_CLRBIT are DcSoftc's; dcphy* at mii? on amd64; QEMU's tulip has a real MII PHY, so dcphy does not attach there"
+
+[[module]]
 rust = "sys/dev/mii/inphy.rs"
 lz = ["sys/dev/mii/inphy.rs"]
 status = "inherited"
@@ -2320,6 +2326,18 @@ rust = "sys/dev/mii/inphyreg.rs"
 lz = ["sys/dev/mii/inphyreg.rs"]
 status = "inherited"
 notes = "M16c: license: NetBSD Foundation BSD-2, kept whole; the whole header: MII_INPHY_* register numbers (u32) and the SCR_/SCTRL_/SCTRL2_/LEDMASK_ bits (u16); reference-backed test"
+
+[[module]]
+rust = "sys/dev/mii/lxtphy.rs"
+lz = ["sys/dev/mii/lxtphy.rs"]
+status = "inherited"
+notes = "M16c: the whole file: lxtphy_ca/lxtphy_cd, lxtphy_funcs and lxtphy971_funcs (ukphy_status), lxtphys[] (no terminator), lxtphymatch, lxtphyattach, lxtphy_service (Result), lxtphy_status (decision in the pure lxtphy_media, host-tested), lxtphy_reset; lxtphy* at mii? on amd64; takes QEMU's tulip PHY (OpenBSD 8.0: lxtphy0 at dc0 phy 1: LXT970, rev. 0)"
+
+[[module]]
+rust = "sys/dev/mii/lxtphyreg.rs"
+lz = ["sys/dev/mii/lxtphyreg.rs"]
+status = "inherited"
+notes = "M16c: the whole header (LXT970 registers and bits, i32 as PHY_READ returns them); test-ref of every define"
 
 [[module]]
 rust = "sys/dev/mii/mii.rs"
