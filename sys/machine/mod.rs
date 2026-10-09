@@ -22,7 +22,8 @@
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
 //! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`],
 //! [`disklabel`], [`fdt`], [`proc`], [`signal`], [`tcb`], [`pci_machdep`], [`isa_machdep`], [`atomic`];
-//! [`acpi_machdep`] is the machine half of `<dev/acpi/acpivar.h>` (each arch's `acpi_machdep.c`);
+//! [`acpi_machdep`] is the machine half of `<dev/acpi/acpivar.h>` (each arch's `acpi_machdep.c`)
+//! and [`pciide_machdep`] that of `<dev/pci/pciidevar.h>` (each arch's `pciide_machdep.c`);
 //! [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c` give `subr_autoconf.c`;
 //! [`conf`] is the device switch the machine's `conf.c` fills (`bdevsw[]`, `cdevsw[]`); [`bootinfo`]
 //! is the record the boot glue hands over), all re-exported here. `pci_chipset` (cfg
@@ -54,6 +55,7 @@ pub mod param;
 #[cfg(machine_pci_chipset)]
 pub mod pci_chipset;
 pub mod pci_machdep;
+pub mod pciide_machdep;
 pub mod pmap;
 pub mod proc;
 pub mod signal;
@@ -80,6 +82,7 @@ pub use isa_machdep::*;
 pub use mpconfig::*;
 pub use param::*;
 pub use pci_machdep::*;
+pub use pciide_machdep::*;
 pub use pmap::*;
 pub use proc::*;
 pub use signal::*;
@@ -105,6 +108,7 @@ const _: () = {
             + BusSpace
             + BusDma
             + PciMachdep
+            + PciideMachdep
             + DbMachdep
             + MachineDisklabel
             + Pmap

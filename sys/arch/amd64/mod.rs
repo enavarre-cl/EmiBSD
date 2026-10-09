@@ -1080,6 +1080,27 @@ impl crate::machine::isa_machdep::IsaMachdep for Machine {
     }
 }
 
+/// A compatibility-mode PCI IDE channel's ISA IRQ (`arch/amd64/pci/pciide_machdep.c`).
+impl crate::machine::pciide_machdep::PciideMachdep for Machine {
+    fn pciide_machdep_compat_intr_establish(
+        dev: &'static crate::sys::device::Device,
+        pa: &crate::dev::pci::pcivar::PciAttachArgs,
+        chan: i32,
+        func: fn(*mut c_void) -> i32,
+        arg: *mut c_void,
+    ) -> Option<NonNull<c_void>> {
+        pci::pciide_machdep::pciide_machdep_compat_intr_establish(dev, pa, chan, func, arg)
+    }
+
+    unsafe fn pciide_machdep_compat_intr_disestablish(
+        pc: crate::machine::pci_machdep::PciChipsetTag,
+        cookie: NonNull<c_void>,
+    ) {
+        // SAFETY: forwarded.
+        unsafe { pci::pciide_machdep::pciide_machdep_compat_intr_disestablish(pc, cookie) }
+    }
+}
+
 /// amd64 has no device tree: ACPI describes the machine (M5).
 impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
     const ACPI_PRT: bool = true;
