@@ -18,9 +18,14 @@
 
 /* <CODE> */
 //! ATA and SATA support: OpenBSD `sys/dev/ata/`. `atascsi` is the SCSI to ATA translation
-//! layer of the SATA host controllers (`ahci(4)`), `pmreg` the port multiplier registers.
-//! `wd(4)`, `ata.c` and `ata_wdc.c` (the wdc-attached ATA disks) are not ported.
+//! layer of the SATA host controllers (`ahci(4)`), `pmreg` the port multiplier registers;
+//! `atareg`, `atavar`, `satareg` and `wdvar` are the IDENTIFY block, the drive data and
+//! commands, the SATA registers and wd(4)'s softc used by the wdc-attached ATA disks (M16a).
 
+pub mod atareg;
 pub mod atascsi;
+pub mod atavar;
 pub mod pmreg;
+pub mod satareg;
+pub mod wdvar;
 /* </CODE> */

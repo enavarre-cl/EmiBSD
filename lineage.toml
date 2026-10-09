@@ -1844,14 +1844,38 @@ lz = ["sys/dev/acpi/tpm.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ata/atareg.rs"
+lz = ["sys/dev/ata/atareg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct ataparams (Ataparams, repr(C), 512 bytes and the word offsets asserted; the byte pairs ordered by target_endian as the C by BYTE_ORDER; from_bytes/as_bytes for the C's bcopy/bcmp of the IDENTIFY block), every WDC_/ATA_/ATAPI_/SATA_ bit, ATAPI_CFG_TYPE as a const fn. Reference-backed test of every define"
+
+[[module]]
 rust = "sys/dev/ata/atascsi.rs"
 lz = ["sys/dev/ata/atascsi.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ata/atavar.rs"
+lz = ["sys/dev/ata/atavar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct ata_drive_datas (AtaDriveDatas: Cells; id an UnsafeCell read in place, written through the unsafe id_mut; chnl_softc kept a void pointer; mixed-case PIO_mode.. kept), DRIVE_*, ACAP_*, NERRS_MAX, NXFER, struct ata_atapi_attach (aa_drv_data a &'static reference), T_ATA/T_ATAPI, ATA_CONFIG_*, struct wdc_command (WdcCommand: Cells, shared with the channel while it runs; data a raw pointer), AT_*, WDC_COMPLETE/QUEUED/TRY_AGAIN, CMD_OK/ERR/AGAIN; the prototypes are wdc.rs's and ata.rs's. Reference-backed test of every define"
+
+[[module]]
 rust = "sys/dev/ata/pmreg.rs"
 lz = ["sys/dev/ata/pmreg.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/ata/satareg.rs"
+lz = ["sys/dev/ata/satareg.rs"]
+status = "inherited"
+notes = "M16a: license: NetBSD Foundation BSD-2, kept whole; the whole header: the SStatus, SError and SControl values (u32, mixed-case C names kept), SControl_PMP as a const fn. Reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/ata/wdvar.rs"
+lz = ["sys/dev/ata/wdvar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct ata_bio (AtaBio: Cells; lp the in-core label read in place by AtaBio::label; databuf a raw pointer; wd a NonNull), ATA_* bio flags, the error codes, struct wd_softc (WdSoftc, repr(C) Softc; sc_params an UnsafeCell with params/params_mut), WDF_*, the drive states RECAL..READY; wdc_ata_bio is ata_wdc.rs's, wddone wd.rs's, wd_hibernate_io not compiled (HIBERNATE not configured). Reference-backed test of every define"
 
 [[module]]
 rust = "sys/dev/audio.rs"
@@ -2283,6 +2307,24 @@ rust = "sys/dev/ic/vgavar.rs"
 lz = ["sys/dev/ic/vgavar.rs"]
 status = "inherited"
 license = "Carnegie Mellon notice"
+
+[[module]]
+rust = "sys/dev/ic/wdcevent.rs"
+lz = ["sys/dev/ic/wdcevent.rs"]
+status = "inherited"
+notes = "M16a: license: Sapuntzakis BSD-3, kept whole; enum wdcevent_type (WdceventType, repr(u8)) and the WDC_LOG_* helpers: with feature wdcdebug (option WDCDEBUG) they record through wdc.rs's wdc_log, without it they are empty functions as the C's empty macros. WDC_LOG_ATAPI_CMD logs at most the 18 command bytes its 20-byte record holds (the C would overrun it)"
+
+[[module]]
+rust = "sys/dev/ic/wdcreg.rs"
+lz = ["sys/dev/ic/wdcreg.rs"]
+status = "inherited"
+notes = "M16a: license: Regents BSD-3, kept whole; the whole header: WDCTL_*, WDCS_* with WDCS_BITS (%b), WDCE_*, the WDCC_ commands, SET_FEATURES and WDSF_*, WDSD_*, the ATAPI_ commands, WDCI_* and PHASE_* (all u8). Reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/ic/wdcvar.rs"
+lz = ["sys/dev/ic/wdcvar.rs"]
+status = "inherited"
+notes = "M16a: license: NetBSD Foundation BSD-2, kept whole; the whole header: struct channel_queue (TAILQ of WdcXferChain), struct channel_softc (ChannelSoftc, repr(C) so a front-end embeds it first: Cells, bus tags/handles Cell<Option> with panicking accessors), enum wdc_regs as the newtype WdcRegs with the wdr_* constants (equal values), WDC_NREG, struct channel_softc_vtbl (raw multi transfers take Option<slice>, None the bit bucket) and the CHP_* macros as ChannelSoftc methods, struct wdc_softc (WdcSoftc, repr(C) Softc; dma hooks unsafe fns over dma_arg, dma_init returning Result; channels a slice), struct wdc_xfer (WdcXfer: cmd a void pointer, chp a NonNull; struct atapi_return_args opaque), every WDCF_/WDC_/C_ constant, wdcwait/wait_for_drq/wait_for_unbusy/wait_for_ready as functions (Err(ETIMEDOUT) for -1). Reference-backed test of every define"
 
 [[module]]
 rust = "sys/dev/ipmi.rs"
