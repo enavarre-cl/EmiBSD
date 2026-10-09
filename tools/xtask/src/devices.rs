@@ -16,6 +16,22 @@
 //!   brings the controller, with the stick and the `usb-kbd` only if `--usb` is also given. The
 //!   pointers register with the guest in this order (`mouse_set N` in the monitor picks the
 //!   one `mouse_move` and `mouse_button` drive; `--monitor-after`, hwopts.rs).
+//! - `--usb-net` (M16b, `cdce(4)`): QEMU's `usb-net` on the [`UsbHc`] bus (full speed: `xhci`,
+//!   `uhci` or `ohci`; it needs no `--usb`) as the NIC on the user network (netdev `n0`), in vio0's place:
+//!   the run has no virtio NIC, the way `--nic` has none ([`usb_net`] tells `boot.rs`).
+//!   QEMU's `usb-net` offers two configurations, RNDIS first and CDC Ethernet second;
+//!   `usbd_probe_and_attach` tries each in turn, and cdce(4) takes the second.
+//! - `--usb-serial FILE` (M16b, `ucom(4)` over `uftdi(4)`): QEMU's `usb-serial` (an FTDI
+//!   FT232 at full speed: `xhci`, `uhci` or `ohci`) on the [`UsbHc`] bus. Its chardev is a Unix socket
+//!   server in the run directory whose `logfile` is FILE: everything the guest writes to the
+//!   serial port is logged there (made afresh each run), connected client or not. The device
+//!   is `always-plugged=on`: otherwise QEMU plugs it only while a client is connected.
+//!   `--usb-serial-send-after LINE --usb-serial-send TEXT` (repeatable; `\n` in TEXT is a
+//!   newline) connects to the socket once the serial console has LINE, writes TEXT and
+//!   closes: what the guest reads from the port. (A file chardev with an input file would
+//!   deliver the text at once, before the guest opens the port, and the line discipline drops
+//!   input on a tty that is not open.) `--expect-usb-serial TEXT` (repeatable, `smoke`)
+//!   requires FILE to contain TEXT once the serial expectations passed ([`after_smoke`]).
 //! - `--usb-hc xhci|ehci|uhci|ohci` (implies `--usb`, M16b): the host controller [`UsbHc`] the
 //!   devices sit on, `xhci` by default. `ehci` is QEMU's `usb-ehci` (an ICH4 EHCI function,
 //!   `ehci(4)`) with the stick alone: QEMU refuses a full speed device such as `usb-kbd` on a
@@ -136,7 +152,7 @@ impl UsbHc {
 const USB_HC_ID: &str = "usbhc";
 
 /// The M12 devices of this run (set once by `main`, read when QEMU's command line is made).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Devices {
     /// `--usb` (or `--usb-hc`).
     pub usb: bool,
@@ -150,6 +166,14 @@ pub(crate) struct Devices {
     pub usb_wacom: bool,
     /// `--usb-ccid`.
     pub usb_ccid: bool,
+    /// `--usb-net`.
+    pub usb_net: bool,
+    /// `--usb-serial FILE`: the file's name in the run directory.
+    pub usb_serial: Option<String>,
+    /// `--usb-serial-send-after LINE --usb-serial-send TEXT`, with `\n` turned into newlines.
+    pub usb_serial_send: Vec<(String, String)>,
+    /// `--expect-usb-serial TEXT`, each.
+    pub expect_usb_serial: Vec<String>,
     /// `--audio hda|ac97|usb`.
     pub audio: Option<Audio>,
     /// `--expect-tone`.
@@ -160,9 +184,10 @@ pub(crate) struct Devices {
 
 static DEVICES: OnceLock<Devices> = OnceLock::new();
 
-/// Parses `--usb`, `--usb-hc <xhci|ehci|ohci>`, `--usb-mouse`, `--usb-tablet`,
-/// `--usb-wacom-tablet`, `--usb-ccid`, `--audio <hda|ac97|usb>`, `--speakers` and `--expect-tone`
-/// and records them for the run.
+/// Parses `--usb`, `--usb-hc <xhci|ehci|uhci|ohci>`, `--usb-mouse`, `--usb-tablet`,
+/// `--usb-wacom-tablet`, `--usb-ccid`, `--usb-net`, `--usb-serial`,
+/// `--usb-serial-send-after`/`--usb-serial-send`, `--expect-usb-serial`,
+/// `--audio <hda|ac97|usb>`, `--speakers` and `--expect-tone` and records them for the run.
 pub(crate) fn set_from_args(args: &[&str]) -> Result<()> {
     let _ = DEVICES.set(parse(args)?);
     Ok(())
@@ -196,6 +221,29 @@ fn parse(args: &[&str]) -> Result<Devices> {
         None => None,
         Some(i) => Some(UsbHc::parse(args.get(i + 1).copied())?),
     };
+    let value = |opt: &str| -> Result<Option<String>> {
+        match args.iter().position(|a| *a == opt) {
+            None => Ok(None),
+            Some(i) => match args.get(i + 1) {
+                Some(v) => Ok(Some((*v).to_string())),
+                None => Err(format!("{opt}: expected a value").into()),
+            },
+        }
+    };
+    let usb_serial = value("--usb-serial")?;
+    let usb_serial_send: Vec<(String, String)> =
+        crate::hwopts::parse_pairs(args, "--usb-serial-send-after", "--usb-serial-send")?
+            .into_iter()
+            .map(|(line, text)| (line, text.replace("\\n", "\n")))
+            .collect();
+    let expect_usb_serial: Vec<String> = args
+        .windows(2)
+        .filter(|w| w[0] == "--expect-usb-serial")
+        .map(|w| w[1].to_string())
+        .collect();
+    if usb_serial.is_none() && (!usb_serial_send.is_empty() || !expect_usb_serial.is_empty()) {
+        return Err("--usb-serial-send and --expect-usb-serial need --usb-serial".into());
+    }
     Ok(Devices {
         usb: args.contains(&"--usb") || usb_hc.is_some(),
         usb_hc: usb_hc.unwrap_or_default(),
@@ -203,6 +251,10 @@ fn parse(args: &[&str]) -> Result<Devices> {
         usb_tablet: args.contains(&"--usb-tablet"),
         usb_wacom: args.contains(&"--usb-wacom-tablet"),
         usb_ccid: args.contains(&"--usb-ccid"),
+        usb_net: args.contains(&"--usb-net"),
+        usb_serial,
+        usb_serial_send,
+        expect_usb_serial,
         audio,
         expect_tone,
         speakers,
@@ -210,7 +262,50 @@ fn parse(args: &[&str]) -> Result<Devices> {
 }
 
 fn devices() -> Devices {
-    DEVICES.get().copied().unwrap_or_default()
+    DEVICES.get().cloned().unwrap_or_default()
+}
+
+/// The `--usb-serial` chardev's socket for the run directory of `image`.
+fn usb_serial_sock(image: &Path) -> PathBuf {
+    crate::hwopts::run_sock(image.parent().unwrap_or(Path::new(".")), "usbser.sock")
+}
+
+/// How many `--usb-serial-send` texts were written.
+static SERIAL_SENT: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+
+/// Whether a `--usb-serial-send` text is still to be written.
+pub(crate) fn usb_serial_pending() -> bool {
+    let sent = SERIAL_SENT.lock().map(|s| *s).unwrap_or(0);
+    sent < devices().usb_serial_send.len()
+}
+
+/// Writes the next `--usb-serial-send` text to the port once `serial` has its
+/// `--usb-serial-send-after` line.
+pub(crate) fn poll_usb_serial(serial: &str, image: &Path) -> Result<()> {
+    use std::os::unix::net::UnixStream;
+    let d = devices();
+    let sent = SERIAL_SENT.lock().map(|s| *s).unwrap_or(0);
+    let Some((after, text)) = d.usb_serial_send.get(sent) else {
+        return Ok(());
+    };
+    if !serial.contains(after.as_str()) {
+        return Ok(());
+    }
+    let sock = usb_serial_sock(image);
+    let mut s = UnixStream::connect(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
+    s.write_all(text.as_bytes())?;
+    drop(s);
+    println!("xtask: usb-serial gets {text:?} (saw {after:?})");
+    if let Ok(mut n) = SERIAL_SENT.lock() {
+        *n += 1;
+    }
+    Ok(())
+}
+
+/// Whether this run has `--usb-net`: the user network's NIC is then the USB one, and the
+/// virtio (or `--nic`) NIC is left out of QEMU's command line.
+pub(crate) fn usb_net() -> bool {
+    devices().usb_net
 }
 
 /// The USB stick of the boot image `image`: `<image>.usb`.
@@ -228,12 +323,18 @@ pub(crate) fn wav_path(image: &Path) -> PathBuf {
 pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
     let d = devices();
     let mut args = Vec::new();
-    let extras =
-        d.usb_mouse || d.usb_tablet || d.usb_wacom || d.usb_ccid || d.audio == Some(Audio::Usb);
+    let extras = d.usb_mouse
+        || d.usb_tablet
+        || d.usb_wacom
+        || d.usb_ccid
+        || d.usb_net
+        || d.usb_serial.is_some()
+        || d.audio == Some(Audio::Usb);
     if extras && !d.usb_hc.takes_full_speed() {
         return Err(
-            "--usb-mouse, --usb-tablet, --usb-wacom-tablet, --usb-ccid and --audio usb are full speed \
-                    devices: they need a controller with full speed ports (--usb-hc xhci, uhci or ohci)"
+            "--usb-mouse, --usb-tablet, --usb-wacom-tablet, --usb-ccid, --usb-net, \
+                    --usb-serial and --audio usb are full speed devices: they need a controller \
+                    with full speed ports (--usb-hc xhci, uhci or ohci)"
                 .into(),
         );
     }
@@ -262,6 +363,30 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
         if on {
             args.extend(["-device".to_string(), format!("{dev},bus={USB_HC_ID}.0")]);
         }
+    }
+    if d.usb_net {
+        args.extend([
+            "-device".to_string(),
+            format!("usb-net,netdev=n0,bus={USB_HC_ID}.0"),
+        ]);
+    }
+    if let Some(name) = &d.usb_serial {
+        let out = image.with_file_name(name);
+        // QEMU opens the log file for writing when it starts; a stale one would only matter
+        // if QEMU died before that.
+        let _ = fs::remove_file(&out);
+        let sock = usb_serial_sock(image);
+        let _ = fs::remove_file(&sock);
+        args.extend([
+            "-chardev".to_string(),
+            format!(
+                "socket,id=usbser0,path={},server=on,wait=off,logfile={}",
+                sock.display(),
+                out.display()
+            ),
+            "-device".to_string(),
+            format!("usb-serial,chardev=usbser0,bus={USB_HC_ID}.0,always-plugged=on"),
+        ]);
     }
     if let Some(audio) = d.audio {
         args.push("-audiodev".to_string());
@@ -297,7 +422,21 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
 /// What a run must leave behind once its serial expectations passed: with `--expect-tone`,
 /// a tone in the WAV file of `image`.
 pub(crate) fn after_smoke(image: &Path) -> Result<()> {
-    if !devices().expect_tone {
+    let d = devices();
+    if let Some(name) = &d.usb_serial {
+        let file = image.with_file_name(name);
+        let bytes = fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let text = String::from_utf8_lossy(&bytes);
+        for want in &d.expect_usb_serial {
+            if !text.contains(want.as_str()) {
+                return Err(
+                    format!("{}: {want:?} not written by the guest", file.display()).into(),
+                );
+            }
+            println!("xtask: {}: has {want:?}", file.display());
+        }
+    }
+    if !d.expect_tone {
         return Ok(());
     }
     let wav = wav_path(image);
@@ -493,6 +632,34 @@ mod tests {
         assert!(d.usb_mouse && d.usb_ccid && !d.usb_tablet && !d.usb_wacom && !d.usb);
         let d = parse(&["--usb-tablet", "--usb-wacom-tablet", "--usb"]).unwrap();
         assert!(d.usb_tablet && d.usb_wacom && d.usb && !d.usb_mouse);
+    }
+
+    #[test]
+    fn usb_net_and_serial_options() {
+        let d = parse(&["--usb-net"]).unwrap();
+        assert!(d.usb_net && !d.usb && d.usb_serial.is_none());
+        let d = parse(&[
+            "--usb-serial",
+            "ser.txt",
+            "--usb-serial-send-after",
+            "ready",
+            "--usb-serial-send",
+            "hello\\nworld\\n",
+            "--expect-usb-serial",
+            "a",
+            "--expect-usb-serial",
+            "b",
+        ])
+        .unwrap();
+        assert_eq!(d.usb_serial.as_deref(), Some("ser.txt"));
+        assert_eq!(
+            d.usb_serial_send,
+            [("ready".to_string(), "hello\nworld\n".to_string())]
+        );
+        assert_eq!(d.expect_usb_serial, ["a", "b"]);
+        assert!(parse(&["--expect-usb-serial", "a"]).is_err());
+        assert!(parse(&["--usb-serial-send-after", "a", "--usb-serial-send", "b"]).is_err());
+        assert!(parse(&["--usb-serial"]).is_err());
     }
 
     #[test]

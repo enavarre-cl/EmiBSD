@@ -31,6 +31,7 @@
 //! `tpm* at acpi?` (M16e), `acpicpu* at acpi?` (M16e),
 //! `ehci* at pci?` and `usb* at ehci?` (M16b), `uhci* at pci?` and `usb* at uhci?` (M16b),
 //! `ohci* at pci?` and `usb* at ohci?` (M16b),
+//! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?` (M16b),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -48,9 +49,9 @@
 //! device at `mii?` (the other PHY drivers), every
 //! other
 //! `audio*` (at `eap?`, `envy?`, ...), `pci*` at
-//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*` and `ugen*`, every device
+//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*`, `cdce*`, `uftdi*` and `ugen*`, every device
 //! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*` but the one at `ukbd?`, every
-//! `wsmouse*` but the ones at `ums?` and `uwacom?`;
+//! `wsmouse*` but the ones at `ums?` and `uwacom?`, every `ucom*` but the one at `uftdi?`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
 //! `CFDATA`), the start of its locator names and the first unit a starred entry may take.
@@ -117,8 +118,11 @@ use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::usb::ehci::EHCI_CD;
+use crate::dev::usb::if_cdce::{CDCE_CA, CDCE_CD};
 use crate::dev::usb::ohci::OHCI_CD;
 use crate::dev::usb::uaudio::{UAUDIO_CA, UAUDIO_CD};
+use crate::dev::usb::ucom::{UCOM_CA, UCOM_CD};
+use crate::dev::usb::uftdi::{UFTDI_CA, UFTDI_CD};
 use crate::dev::usb::ugen::{UGEN_CA, UGEN_CD};
 use crate::dev::usb::uhci::UHCI_CD;
 use crate::dev::usb::uhid::{UHID_CA, UHID_CD};
@@ -315,15 +319,24 @@ const LN_WSEMULDISPLAYDEV: i32 = 30;
 const LN_WSKBDDEV: i32 = 34;
 /// `cf_locnames` of an entry at `wsmousedev`: `mux`.
 const LN_WSMOUSEDEV: i32 = 37;
+/// `cf_locnames` of an entry at `ucombus`: `portno`.
+const LN_UCOMBUS: i32 = 39;
+
+/// `pv[]` for children of `uftdi*` (`cfdata[75]`): the `ucombus` attribute (`files.usb`:
+/// `define ucombus {[portno = -1]}`) is carried by `uftdi` alone here.
+const PV_UFTDI: &[i16] = &[75];
+
+/// `loc[]` of an entry at `ucombus` with the default `portno = -1`.
+const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 74 entries, 75 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 77 entries, 78 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    75
+    78
 } else {
-    74
+    77
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -1149,7 +1162,43 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 74: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 74: cdce* at uhub?
+    Cfdata::new(
+        &CDCE_CA,
+        &CDCE_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHUB_UNK,
+        0,
+        PV_UHUB,
+        LN_UHUB,
+        0,
+    ),
+    // 75: uftdi* at uhub?
+    Cfdata::new(
+        &UFTDI_CA,
+        &UFTDI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHUB_UNK,
+        0,
+        PV_UHUB,
+        LN_UHUB,
+        0,
+    ),
+    // 76: ucom* at uftdi?
+    Cfdata::new(
+        &UCOM_CA,
+        &UCOM_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UCOMBUS_UNK,
+        0,
+        PV_UFTDI,
+        LN_UCOMBUS,
+        0,
+    ),
+    // 77: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
@@ -1258,7 +1307,7 @@ pub static PDEVNAMES: [&[u8]; NPDEVINIT] = [
 ];
 
 /// `locnames[]`: every locator name of the entries above, once.
-pub static LOCNAMES: [&[u8]; 22] = [
+pub static LOCNAMES: [&[u8]; 23] = [
     b"bus",
     b"dev",
     b"function",
@@ -1281,12 +1330,13 @@ pub static LOCNAMES: [&[u8]; 22] = [
     b"console",
     b"primary",
     b"mux",
+    b"portno",
 ];
 
 /// `locnamp[]`: one run of indices into `LOCNAMES` per locator attribute, each ended by `-1`
 /// (`config(8)` writes one per parent device; `mkioconf.c`'s XXX asks for this compression).
-pub static LOCNAMP: [i16; 39] = [
+pub static LOCNAMP: [i16; 41] = [
     -1, 0, -1, 1, 2, -1, 3, 4, 5, 6, 7, 8, 9, -1, 10, 11, -1, 3, 12, 13, 14, 15, 16, -1, 17, -1, 3,
-    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1,
+    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1,
 ];
 /* </CODE> */

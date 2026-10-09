@@ -96,6 +96,9 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 /// - `uhid` is major 62 (`cdev_usbdev_init(NUHID,uhid)`, M16b): `uhid0`..`uhid7`, minor =
 ///   unit, mode 0600 (`MAKEDEV`'s `uhid*`); `ugen` is major 63 (`cdev_usbdev_init(NUGEN,ugen)`):
 ///   `ugen0.00`..`ugen1.15`, minor `unit * 16 + endpoint`, mode 0600 (`MAKEDEV`'s `ugen*`).
+/// - `ucom` is major 66 (`cdev_tty_init(NUCOM,ucom)`, M16b): `ttyU0`..`ttyU3`, minor = unit, and
+///   the call-out nodes `cuaU0`..`cuaU3`, minor `unit + 128` (`UCOMCUA_MASK`), mode 0660,
+///   group `dialer` (`MAKEDEV`'s `ttyU*`).
 ///
 /// `/dev/random` (major 45) is left out: the kernel has no `random` driver yet.
 /// (name, kind, major, minor, mode, group)
@@ -136,6 +139,16 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("uhid5", 'c', 62, 5, 0o600, "wheel"),
     ("uhid6", 'c', 62, 6, 0o600, "wheel"),
     ("uhid7", 'c', 62, 7, 0o600, "wheel"),
+    // M16b: `ucom` 66 (`cdev_tty_init(NUCOM,ucom)`), `MAKEDEV`'s `ttyU*` target for units 0 to
+    // 3: `M ttyU$U c 66 $U 660 dialer root` and `M cuaU$U c 66 $((U+128)) 660 dialer root`.
+    ("ttyU0", 'c', 66, 0, 0o660, "dialer"),
+    ("ttyU1", 'c', 66, 1, 0o660, "dialer"),
+    ("ttyU2", 'c', 66, 2, 0o660, "dialer"),
+    ("ttyU3", 'c', 66, 3, 0o660, "dialer"),
+    ("cuaU0", 'c', 66, 128, 0o660, "dialer"),
+    ("cuaU1", 'c', 66, 129, 0o660, "dialer"),
+    ("cuaU2", 'c', 66, 130, 0o660, "dialer"),
+    ("cuaU3", 'c', 66, 131, 0o660, "dialer"),
     // M13: `com4`, the first `com* at puc?` after amd64's four ISA lines (`smoke-puc`): the
     // call-out node (`com`'s `COMDIALOUT`, minor bit 0x80), which opens without a carrier.
     ("cua04", 'c', 8, 132, 0o600, "wheel"),
@@ -380,6 +393,8 @@ const GROUPS: &[(&str, u32, &str)] = &[
     ("_portmap", 28, ""),
     ("_tcpdump", 76, ""),
     ("_sndiop", 110, ""),
+    // M16b: the group of `/dev/ttyU*` and `/dev/cuaU*` (`MAKEDEV`); etc/group of the clone.
+    ("dialer", 117, ""),
     ("nogroup", 32766, ""),
     ("nobody", 32767, ""),
 ];

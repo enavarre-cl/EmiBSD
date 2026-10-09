@@ -45,7 +45,7 @@
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmouse` (68, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
-//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `ucom` (66, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -69,6 +69,9 @@ use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
 use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
+use crate::dev::usb::ucom::{
+    NUCOM, ucomclose, ucomioctl, ucomopen, ucomread, ucomstop, ucomtty, ucomwrite,
+};
 use crate::dev::usb::ugen::{
     NUGEN, ugenclose, ugenioctl, ugenkqfilter, ugenopen, ugenread, ugenwrite,
 };
@@ -336,7 +339,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     )),
     cnotdef(), // 64: USB printers (ulpt: not ported)
     cnotdef(), // 65: urio
-    cnotdef(), // 66: USB tty (ucom: not ported)
+    // 66: USB tty
+    Cell::new(cdev_tty_init(
+        NUCOM, ucomopen, ucomclose, ucomread, ucomwrite, ucomioctl, ucomstop, ucomtty,
+    )),
     // 67: keyboards
     Cell::new(cdev_mouse_init(
         NWSKBD,

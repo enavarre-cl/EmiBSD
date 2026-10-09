@@ -614,8 +614,12 @@ pub(crate) fn qemu_command(
                 cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
             }
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
-            // M13 (hwopts.rs): `--nic` puts an em(4) NIC in vio0's place.
-            cmd.args(["-device", &crate::hwopts::user_nic(arch, &nic0)]);
+            // M13 (hwopts.rs): `--nic` puts an em(4) NIC in vio0's place; M16b
+            // (devices.rs): `--usb-net` leaves out the virtio NIC, the USB one is the user
+            // network's.
+            if !crate::devices::usb_net() {
+                cmd.args(["-device", &crate::hwopts::user_nic(arch, &nic0)]);
+            }
             if let Some(v) = vm {
                 cmd.args(["-netdev", &v.netdev()]);
                 cmd.args([
@@ -670,7 +674,9 @@ pub(crate) fn qemu_command(
                     &format!("virtio-net-device,netdev=n1,mac={}", v.link_mac),
                 ]);
             }
-            cmd.args(["-device", &crate::hwopts::user_nic(arch, &nic0)]);
+            if !crate::devices::usb_net() {
+                cmd.args(["-device", &crate::hwopts::user_nic(arch, &nic0)]);
+            }
             crate::hwopts::pci_storage(&mut cmd, arch)?;
             for (k, disk) in disk_files.iter().enumerate().rev() {
                 cmd.arg("-drive").arg(format!(
@@ -885,6 +891,13 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
                 next_send += 1;
             }
         }
+        if crate::devices::usb_serial_pending() {
+            let text = transcript
+                .lock()
+                .map(|t| String::from_utf8_lossy(&t).into_owned())
+                .unwrap_or_default();
+            crate::devices::poll_usb_serial(&text, &image)?;
+        }
         if crate::hwopts::monitor_pending() {
             let text = transcript
                 .lock()
@@ -892,7 +905,11 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
                 .unwrap_or_default();
             crate::hwopts::poll_monitor(&text)?;
         }
-        if until_seen && next_send == sends.len() && !crate::hwopts::monitor_pending() {
+        if until_seen
+            && next_send == sends.len()
+            && !crate::hwopts::monitor_pending()
+            && !crate::devices::usb_serial_pending()
+        {
             let all = transcript
                 .lock()
                 .map(|t| {
