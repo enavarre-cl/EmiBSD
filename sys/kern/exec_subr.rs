@@ -63,14 +63,17 @@
 //!   `pagedvn` maps anonymous memory, copies the bytes in with `copyout` (a segment that
 //!   extends past the image reads as zeroes) and lowers the protection as `readvn` does;
 //!   `readvn` copies them out where the C reads the vnode.
-//! - `arc4random_ctx_new` is not ported: `vmcmd_randomize` uses the global generator for
-//!   large regions too.
+//! - `vmcmd_randomize` fails with `ENOMEM` if `arc4random_ctx_new` gets no memory
+//!   (`malloc(M_WAITOK)` never fails in C), as it does when its own buffer cannot be had.
 //! - The 4-clause licence (advertising clause) was accepted by the user at M2 for this
 //!   project.
 
 use core::ptr::NonNull;
 
-use crate::dev::rnd::{arc4random, arc4random_buf, arc4random_uniform};
+use crate::dev::rnd::{
+    arc4random, arc4random_buf, arc4random_ctx_buf, arc4random_ctx_free, arc4random_ctx_new,
+    arc4random_uniform,
+};
 use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::sched_bsd::r#yield;
@@ -389,12 +392,11 @@ pub fn vmcmd_randomize(_p: &Proc, cmd: &mut ExecVmcmd<'_>) -> Result<(), Errno> 
         let e = copyout(&buf[..len], cmd.ev_addr);
         libkern::explicit_bzero(&mut buf[..len]);
         e
-    } else {
-        // arc4random_ctx_new(): see the module's deviations.
-        let mut e = Ok(());
-        while len > 0 {
+    } else if let Some(mut ctx) = arc4random_ctx_new() {
+        let mut e;
+        loop {
             let sublen = len.min(PAGE_SIZE);
-            arc4random_buf(&mut buf[..sublen]);
+            arc4random_ctx_buf(&mut ctx, &mut buf[..sublen]);
             e = copyout(&buf[..sublen], cmd.ev_addr + off);
             if e.is_err() {
                 break;
@@ -402,9 +404,16 @@ pub fn vmcmd_randomize(_p: &Proc, cmd: &mut ExecVmcmd<'_>) -> Result<(), Errno> 
             off += sublen;
             len -= sublen;
             sched_pause(r#yield);
+            if len == 0 {
+                break;
+            }
         }
+        arc4random_ctx_free(ctx);
         libkern::explicit_bzero(buf);
         e
+    } else {
+        // arc4random_ctx_new: no memory (see the module's deviations).
+        Err(Errno::ENOMEM)
     };
     free(NonNull::from(&mut *buf).cast::<u8>(), M_TEMP, PAGE_SIZE);
     error
