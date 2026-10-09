@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
@@ -1533,10 +1533,7 @@ smoke-siop: (build-amd64 "--features qemu,multiprocessor")
 # up, with its address and an active link, and ping(8) gets the gateway's reply. Both archs
 # (arm64: on `virt`'s PCIe bus, MSI through the GICv2m frame). amd64 also boots the
 # 82540EM (`--nic e1000`: INTx through the I/O APIC, the I/O BAR, 32-bit DMA) and pings
-# through it, and the 82576 (`--nic igb`), which attaches and gets its link but passes no
-# traffic, probably because QEMU's igb model writes back advanced receive descriptors only
-# while em(4) programs legacy ones (SRRCTL's DESCTYPE 0), as OpenBSD's does (not checked
-# against QEMU's source). Part of `smoke`.
+# through it. QEMU's 82576 (`--nic igb`) is `smoke-igb`'s. Part of `smoke`.
 smoke-em: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-em: no ramdisk image; run just userland first"; exit 1; }
@@ -1549,9 +1546,30 @@ smoke-em: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --nic e1000 {{em_session}} {{em_ping}} \
         --expect "vendor 0x8086 product 0x100e rev 0x03: apic 0 int "
+
+# M16c: em(4) on QEMU's 82576 (`--nic igb`), both archs, in vio0's place on the user network.
+# em0 attaches with MSI, the kernel's self-test gives it 10.0.2.15/24 and, logged in,
+# ifconfig(8) shows an active link, but nothing is received: ping(8) gets no reply (the
+# kernel's self-test's ping neither). OpenBSD 8.0 does the same on the
+# same QEMU setup (`cargo xtask diff-openbsd --arch A --nic igb probe`: `em0 at pci0 dev 2
+# function 0 "Intel 82576" rev 0x01: msi`, `status: active`, `3 packets transmitted, 0 packets
+# received, 100.0% packet loss`, netstat's Ipkts 0), so the smoke asserts that behaviour (the
+# user's standing rule: faithful, "behaves as OpenBSD 8.0"). Probably QEMU's igb model writes back
+# advanced receive descriptors only while em(4) programs legacy ones (SRRCTL's DESCTYPE 0);
+# not checked against QEMU's source. Part of `smoke`.
+smoke-igb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-igb: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
-        --nic igb {{em_session}} \
+        --nic igb {{igb_session}} \
         --expect "vendor 0x8086 product 0x10c9 rev 0x01: msi, address 52:54:00:12:34:56"
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic igb {{igb_session}} \
+        --expect "vendor 0x8086 product 0x10c9 rev 0x01: msi, address 52:54:00:12:34:56"
+
+# `smoke-igb`'s session: `em_session` and the ping that gets no reply.
+igb_session := em_session + " --expect 'PING 10.0.2.2 (10.0.2.2): 56 data bytes' " + \
+    "--expect '1 packets transmitted, 0 packets received, 100.0% packet loss'"
 
 # `smoke-em`'s login and commands, the expectations every em(4) boot shares, and the ping's.
 em_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' --send 'emibsd\\n' " + \
