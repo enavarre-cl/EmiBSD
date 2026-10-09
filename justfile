@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-mpi smoke-sdmmc smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-vmwpvs smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-wd smoke-mpi smoke-sdmmc smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-vmwpvs smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
@@ -1541,6 +1541,37 @@ smoke-siop: (build-amd64 "--features qemu,multiprocessor")
         --expect '*3: A6' --expect '/dev/rsd1a: ' --expect "siop-written-42" --expect "m13-siop-42" \
         --expect "siop-cmp-42" --expect "1048576 bytes transferred" --expect "m13-raw-42" \
         --expect "m10c-iso-42"
+
+# M16a: pciide(4) and wd(4) on the `pc` machine's PIIX3 IDE controller (`--machine pc --ide`,
+# tools/xtask/src/storage.rs: a fresh zeroed 64 MiB `ide-hd`, primary master), amd64 only (arm64
+# GENERIC has no pciide). OpenBSD 8.0 on the same QEMU: `pciide0 at pci0 dev 1 function 1 "Intel
+# 82371SB IDE" rev 0x00: DMA, channel 0 wired to compatibility, channel 1 wired to
+# compatibility`, `wd0 at pciide0 channel 0 drive 0: <QEMU HARDDISK>`, `wd0: 16-sector PIO,
+# LBA48, 64MB, 131072 sectors`, `wd0(pciide0:0:0): using PIO mode 4, DMA mode 2`, `pciide0:
+# channel 1 ignored (disabled)`. The session runs fdisk(8), disklabel(8) and newfs(8) on wd0,
+# writes a file and a copy of /bin/ksh, unmounts, mounts read-only and reads both back (cmp(1)),
+# and reads 1 MiB raw with dd(1): bus master DMA through the compatibility IRQ 14. Part of
+# `smoke`.
+smoke-wd: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-wd: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --machine pc --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --ide wd-amd64.img \
+        {{disk_login}} \
+        --send-after '# ' --send 'fdisk -iy -f /dev/rwd0c wd0 && fdisk -f /dev/rwd0c wd0\n' \
+        --send-after '# ' --send 'disklabel -w -A wd0 && disklabel wd0\n' \
+        --send-after '# ' --send 'newfs wd0a\n' \
+        --send-after '# ' --send 'mount /dev/wd0a /mnt && echo m16a-wd-$((40+2)) >/mnt/wd.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo wd-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/wd0a /mnt && cat /mnt/wd.txt && cmp /bin/ksh /mnt/ksh && echo wd-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rwd0c of=/dev/null bs=64k count=16\n' \
+        --reject "bus-master DMA error" --reject "lost interrupt" \
+        --expect "pciide0 at pci0 dev 1 function 1 vendor 0x8086 product 0x7010 rev 0x00: DMA, channel 0 wired to compatibility, channel 1 wired to compatibility" \
+        --expect "wd0 at pciide0 channel 0 drive 0: <QEMU HARDDISK>" \
+        --expect "wd0: 16-sector PIO, LBA48, 64MB, 131072 sectors" \
+        --expect "wd0(pciide0:0:0): using PIO mode 4, DMA mode 2" \
+        --expect "pciide0: channel 1 ignored (disabled)" \
+        --expect '/dev/rwd0a: ' --expect "wd-written-42" --expect "m16a-wd-42" --expect "wd-cmp-42" \
+        --expect "1048576 bytes transferred"
 
 # M16a: mpi(4) on QEMU's LSI SAS1068 (`--mptsas`, `tools/xtask/src/storage.rs`: the adapter
 # after every other device and a fresh zeroed 64 MiB `scsi-hd` at target 0), both archs.

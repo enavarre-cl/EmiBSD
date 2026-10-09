@@ -53,6 +53,7 @@
 //! `pcn* at pci?`, `ne* at pci?`, `fxp* at pci?`, `inphy* at mii?`, `dc* at pci?`,
 //! `lxtphy* at mii?` and `dcphy* at mii?` (M16c),
 //! `vmwpvs* at pci?` (M16a), `sdhc* at pci?` and `sdmmc* at sdhc?` (M16a),
+//! `pciide* at pci? flags 0x0000` and `wd* at pciide? flags 0x0000` (M16a),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -64,9 +65,11 @@
 //! `lm*`, ... are not ported: the scan prints what it finds as not configured), the other
 //! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
-//! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
+//! `pcppi0`, `lpt0`, `fdc0`, `wdc0` and `wdc1` (`disable`), the sensors, ...), `wd* at wdc?`
+//! (no `wdc` parent is configured), `pciide* at jmb?` (jmb(4) is not ported), `atapiscsi* at
+//! pciide?` (atapiscsi(4) is not ported); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re, vmx, pcn, ne, fxp and dc (`rl* at pci?` among them: QEMU's rtl8139 is
-//! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci, siop, vmwpvs, mpi and sdhc, ...), `sdmmc*` at
+//! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci, siop, vmwpvs, mpi, sdhc and pciide, ...), `sdmmc*` at
 //! `rtsx?` and `bwfm*` at `sdmmc?`, every other
 //! device at `mii?` (the other PHY drivers), every
 //! other
@@ -97,6 +100,7 @@ use crate::dev::acpi::acpiprt::{ACPIPRT_CA, ACPIPRT_CD};
 use crate::dev::acpi::acpitimer::{ACPITIMER_CA, ACPITIMER_CD};
 use crate::dev::acpi::ipmi_acpi::IPMI_ACPI_CA;
 use crate::dev::acpi::tpm::{TPM_CA, TPM_CD};
+use crate::dev::ata::wd::{WD_CA, WD_CD};
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
 use crate::dev::i2c::i2c::{IIC_CA, IIC_CD};
@@ -136,6 +140,7 @@ use crate::dev::pci::mpi_pci::MPI_PCI_CA;
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::ohci_pci::OHCI_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
+use crate::dev::pci::pciide::{PCIIDE_CD, PCIIDE_PCI_CA};
 use crate::dev::pci::piixpm::{PIIXPM_CA, PIIXPM_CD};
 use crate::dev::pci::ppb::{PPB_CA, PPB_CD};
 use crate::dev::pci::puc::{PUC_CD, PUC_PCI_CA};
@@ -374,14 +379,24 @@ const PV_UFTDI: &[i16] = &[75];
 /// `loc[]` of an entry at `ucombus` with the default `portno = -1`.
 const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 
+/// `pv[]` for children of `pciide*` (`cfdata[88]`, M16a).
+const PV_PCIIDE: &[i16] = &[88];
+
+/// `loc[]` of an entry at `ata` with the defaults `channel = -1`, `drive = -1` (`conf/files`:
+/// `define ata {[channel = -1], [drive = -1]}`).
+const LOC_ATA_UNK: &[i64] = &[-1, -1];
+
+/// `cf_locnames` of an entry at `ata`: `channel`, `drive`.
+const LN_ATA: i32 = 41;
+
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 88 entries, 89 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 90 entries, 91 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    89
+    91
 } else {
-    88
+    90
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -1365,7 +1380,31 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
     ),
     // 87: sdmmc* at sdhc? (M16a)
     Cfdata::new(&SDMMC_CA, &SDMMC_CD, 0, FSTATE_STAR, &[], 0, PV_SDHC, 0, 0),
-    // 88: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 88: pciide* at pci? flags 0x0000 (M16a)
+    Cfdata::new(
+        &PCIIDE_PCI_CA,
+        &PCIIDE_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 89: wd* at pciide? flags 0x0000 (M16a)
+    Cfdata::new(
+        &WD_CA,
+        &WD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_ATA_UNK,
+        0,
+        PV_PCIIDE,
+        LN_ATA,
+        0,
+    ),
+    // 90: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
@@ -1474,7 +1513,7 @@ pub static PDEVNAMES: [&[u8]; NPDEVINIT] = [
 ];
 
 /// `locnames[]`: every locator name of the entries above, once.
-pub static LOCNAMES: [&[u8]; 23] = [
+pub static LOCNAMES: [&[u8]; 25] = [
     b"bus",
     b"dev",
     b"function",
@@ -1498,12 +1537,14 @@ pub static LOCNAMES: [&[u8]; 23] = [
     b"primary",
     b"mux",
     b"portno",
+    b"channel",
+    b"drive",
 ];
 
 /// `locnamp[]`: one run of indices into `LOCNAMES` per locator attribute, each ended by `-1`
 /// (`config(8)` writes one per parent device; `mkioconf.c`'s XXX asks for this compression).
-pub static LOCNAMP: [i16; 41] = [
+pub static LOCNAMP: [i16; 44] = [
     -1, 0, -1, 1, 2, -1, 3, 4, 5, 6, 7, 8, 9, -1, 10, 11, -1, 3, 12, 13, 14, 15, 16, -1, 17, -1, 3,
-    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1,
+    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1, 23, 24, -1,
 ];
 /* </CODE> */
