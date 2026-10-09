@@ -653,6 +653,11 @@ pub(crate) fn user_nic(arch: Arch, props: &str) -> String {
     user_nic_arg(NIC.get().map(String::as_str), arch, props)
 }
 
+/// `--nic`'s model, if one was given (`diff-openbsd probe` puts it on OpenBSD's VM).
+pub(crate) fn nic_model() -> Option<&'static str> {
+    NIC.get().map(String::as_str)
+}
+
 /// [`user_nic`] for the model `nic` (`--nic`, if any).
 fn user_nic_arg(nic: Option<&str>, arch: Arch, props: &str) -> String {
     match (nic, arch) {

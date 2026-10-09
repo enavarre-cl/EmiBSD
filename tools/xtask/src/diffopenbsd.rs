@@ -22,7 +22,7 @@
 //!
 //! ```text
 //! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run | powerbtn]
-//! cargo xtask diff-openbsd --arch A [--ipmi] [--usb] [--usb-hc xhci|ehci|uhci|ohci] [--ukc CMD]...
+//! cargo xtask diff-openbsd --arch A [--ipmi] [--nic MODEL] [--usb] [--usb-hc xhci|ehci|uhci|ohci] [--ukc CMD]...
 //!                           [--sh CMD] probe
 //! ```
 //!
@@ -51,13 +51,16 @@
 //!   (`<run dir>/<arch>/openbsd-powerbtn.log`). It is how M16f checked what OpenBSD 8.0
 //!   does with QEMU's power key before porting gpiokeys(4).
 //! - `probe` (M16e): boots the installed OpenBSD alone (`-snapshot`) with the smokes' device
-//!   options (`hwopts.rs`: `--ipmi` so far; `devices.rs`: `--usb` and `--usb-hc xhci|ehci|uhci`,
+//!   options (`hwopts.rs`: `--ipmi`, and `--nic MODEL` (M16c), the user network's NIC in
+//!   virtio-net's place, which the installed system leaves unconfigured, so `--sh` sets it
+//!   up; `devices.rs`: `--usb` and `--usb-hc xhci|ehci|uhci`,
 //!   the M12 stick on that controller, `openbsd-probe.usb` in the work directory), logs in and runs `dmesg` and the shell command
 //!   `--sh` gives (`<run dir>/<arch>/openbsd-probe.log`). Each `--ukc CMD` makes it boot
 //!   with `boot -c` at efiboot's `boot>` prompt and send CMD at `UKC>`, then `quit`, as an
 //!   OpenBSD user enables a GENERIC line marked `disable`. It is how M16e checked what
 //!   OpenBSD 8.0 does with ichiic(4) under OVMF and with ipmi(4) on QEMU's simulated BMC,
-//!   and M16b what it does with ehci(4) on QEMU's `usb-ehci`.
+//!   and M16b what it does with ehci(4) on QEMU's `usb-ehci`, and M16c what its network
+//!   drivers do on QEMU's NIC models.
 //!
 //! The OpenBSD binaries are test fixtures under `target/` only: never committed, never
 //! redistributed. Per-run files (logs, scripts, reports, the OpenBSD VM's variable store) go
@@ -134,7 +137,7 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
             // A device option: `hwopts::set` or `devices::set_from_args` (main) has recorded
             // it; `probe` adds the device.
             "--ipmi" | "--usb" => {}
-            "--usb-hc" => {
+            "--usb-hc" | "--nic" => {
                 it.next();
             }
             "fetch" | "install" | "run" | "powerbtn" | "probe" => what = a,
@@ -360,7 +363,11 @@ fn openbsd_qemu(root: &Path, arch: Arch, mode: &Boot<'_>) -> Result<Command> {
             ("virtio-blk-device", "virtio-net-device")
         }
     };
-    cmd.args(["-device", &format!("{net},netdev=n0")]);
+    // `probe` takes `--nic`'s model (hwopts) in the virtio NIC's place.
+    match (mode, crate::hwopts::nic_model()) {
+        (Boot::Probe(_), Some(model)) => cmd.args(["-device", &format!("{model},netdev=n0")]),
+        _ => cmd.args(["-device", &format!("{net},netdev=n0")]),
+    };
     let (second, second_opts, boot_second) = match mode {
         Boot::Install(img) => (Some(*img), ",snapshot=on", true),
         Boot::Prepare | Boot::Probe(_) => (None, "", false),
