@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
@@ -1578,6 +1578,35 @@ em_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' -
     "--expect 'status: active' --expect 'inet 10.0.2.15 netmask 0xffffff00'"
 em_ping := "--expect 'PING 10.0.2.2 (10.0.2.2): 56 data bytes' " + \
     "--expect '1 packets transmitted, 1 packets received, 0.0% packet loss'"
+
+# M16c: dc(4) on QEMU's DEC 21143 (`--nic tulip`, PCI 1011:0019 revision 0), amd64 only (dc* at
+# pci? is in amd64's GENERIC alone), in vio0's place on the user network. dc0 attaches with the
+# I/O APIC's interrupt and the address from its SROM, and lxtphy(4) takes the LXT970 that mii(4)
+# finds at address 1. The kernel's self-test gives dc0 10.0.2.15/24; bringing it up, dc_setcfg
+# cannot get QEMU's transmitter to report idle (`dc0: failed to force tx to idle state`), and,
+# logged in, ifconfig(8) shows autoselected 100baseTX full duplex with an active link, but
+# nothing is received: ping(8) gets no reply (a watchdog timeout, two more tx idle messages;
+# the ramdisk has no netstat(8)). OpenBSD 8.0 does the same on the same QEMU setup (`cargo
+# xtask diff-openbsd --arch amd64 --nic tulip probe`: `dc0 at pci0 dev 2 function 0 "DEC 21142/3" rev 0x00: apic 0 int 22, address
+# 52:54:00:12:34:56`, `lxtphy0 at dc0 phy 1: LXT970, rev. 0`, the tx idle message, a watchdog
+# timeout, `status: active`, 100.0% packet loss, Ipkts 0), so the smoke asserts that behaviour
+# (the user's standing rule: faithful, "behaves as OpenBSD 8.0"). Part of `smoke`.
+smoke-dc: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-dc: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic tulip {{dc_session}}
+
+# `smoke-dc`'s login and commands and its expectations.
+dc_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' --send 'emibsd\\n' " + \
+    "--send-after '# ' --send 'ifconfig dc0\\n' --send-after '# ' --send 'ping -c 1 10.0.2.2\\n' " + \
+    "--expect 'dc0 at pci0 dev 2 function 0 vendor 0x1011 product 0x0019 rev 0x00: apic 0 int ' " + \
+    "--expect ', address 52:54:00:12:34:56' --expect 'lxtphy0 at dc0 phy 1: LXT970, rev. 0' " + \
+    "--expect 'dc0: failed to force tx to idle state' --expect 'rc: multi-user' " + \
+    "--expect 'dc0: flags=' --expect 'media: Ethernet autoselect (100baseTX full-duplex)' " + \
+    "--expect 'status: active' --expect 'inet 10.0.2.15 netmask 0xffffff00' " + \
+    "--expect 'PING 10.0.2.2 (10.0.2.2): 56 data bytes' " + \
+    "--expect '1 packets transmitted, 0 packets received, 100.0% packet loss'"
 
 # M13: re(4) on QEMU's Realtek 8139C+ (`--nic rtl8139`, PCI 10ec:8139 revision 0x20, which
 # re_pci_probe takes and rl_pci_match leaves to it), in vio0's place on the user network. re0
