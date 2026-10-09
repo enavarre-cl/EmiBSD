@@ -964,7 +964,6 @@ const _: () = assert!((BUFSIZE as i32) < TTHIWATMINSPACE);
 mod tests {
     // Host tests of viocon(4): the minor number's unit and port, and the queue names.
 
-    use core::fmt::Write as _;
     use std::assert_eq;
 
     use super::*;
