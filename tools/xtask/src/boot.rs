@@ -867,7 +867,62 @@ pub struct SmokeOptions<'a> {
     pub disks: Disks<'a>,
 }
 
+/// Firmware failures that end a boot before the kernel runs and are not ours: each is the two
+/// texts of one line of the firmware's console, logged as an external bug in
+/// `docs/EXTERNAL_BUGS.md` (the id is the last field). A smoke boot that fails with one of them
+/// on its transcript and no kernel line yet is booted once more ([`smoke`]).
+const FIRMWARE_FLAKES: &[(&str, &str, &str)] = &[(
+    "ASSERT [UhciDxe]",
+    "UhciSched.c(974): CR has Bad Signature",
+    "EXT-1",
+)];
+
+/// The marker `smoke` prints before booting again after a [`FIRMWARE_FLAKES`] failure;
+/// `smoke-all` counts it in each recipe's log.
+pub(crate) const FIRMWARE_RETRY_MARKER: &str = "retrying once after a known firmware bug";
+
+/// The external bug id of the firmware failure on `serial`, when the boot ended in one of
+/// [`FIRMWARE_FLAKES`] before the kernel printed anything (its first line is `bsd: `).
+fn firmware_flake(serial: &str) -> Option<&'static str> {
+    if serial.contains("bsd: ") {
+        return None;
+    }
+    FIRMWARE_FLAKES
+        .iter()
+        .find(|(a, b, _)| serial.lines().any(|l| l.contains(a) && l.contains(b)))
+        .map(|(_, _, id)| *id)
+}
+
+/// Boots `arch` under QEMU and checks the serial lines and the exit status (`--expect`,
+/// `--reject`, `--status`, `--until-seen`, ...). A boot that fails because the firmware hit
+/// one of [`FIRMWARE_FLAKES`] before the kernel ran is booted once more (the user's decision
+/// of 2026-10-09: the failure is the firmware's, a fresh QEMU each time, and our code never
+/// ran); the marker line says so, and a second failure of any kind fails the smoke.
 pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
+    let mut flake = None;
+    match smoke_once(root, arch, opts, &mut flake) {
+        Err(e) if flake.is_some() => {
+            println!(
+                "xtask: smoke {}: {FIRMWARE_RETRY_MARKER} ({}, docs/EXTERNAL_BUGS.md) before the \
+                 kernel ran: {e}",
+                arch.name(),
+                flake.unwrap_or_default()
+            );
+            let mut again = None;
+            smoke_once(root, arch, opts, &mut again)
+        }
+        result => result,
+    }
+}
+
+/// One boot of [`smoke`]; on a failure, `flake` is set to the external bug id when it was a
+/// [`FIRMWARE_FLAKES`] one.
+fn smoke_once(
+    root: &Path,
+    arch: Arch,
+    opts: &SmokeOptions<'_>,
+    flake: &mut Option<&'static str>,
+) -> Result<()> {
     let SmokeOptions {
         kernel,
         cmdline,
@@ -1043,6 +1098,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         crate::hwopts::after_smoke()?;
         return crate::devices::after_smoke(&image);
     }
+    *flake = firmware_flake(&serial);
     println!("----- serial transcript ({}) -----", arch.name());
     print!("{serial}");
     if !serial.ends_with('\n') {
@@ -1211,6 +1267,26 @@ mod tests {
         assert_eq!(timeout_scale(Some("0")), 1);
         assert_eq!(timeout_scale(Some("11")), 1);
         assert_eq!(timeout_scale(Some("1.5")), 1);
+    }
+
+    #[test]
+    fn only_a_known_firmware_failure_before_the_kernel_is_a_flake() {
+        let edk2 = "BdsDxe: loading Boot0001\r\nASSERT [UhciDxe] /home/kraxel/projects/qemu/roms/\
+                    edk2/MdeModulePkg/Bus/Pci/UhciDxe/UhciSched.c(974): CR has Bad Signature\r\n";
+        assert_eq!(firmware_flake(edk2), Some("EXT-1"));
+        // Once the kernel has printed, a failure is ours, whatever came before.
+        let late = format!("{edk2}bsd: EmiBSD 8.0\n");
+        assert_eq!(firmware_flake(&late), None);
+        // Another assertion, or the two halves on different lines, is not this one.
+        assert_eq!(
+            firmware_flake("ASSERT [UhciDxe] UhciSched.c(1): other\n"),
+            None
+        );
+        assert_eq!(
+            firmware_flake("ASSERT [UhciDxe]\nUhciSched.c(974): CR has Bad Signature\n"),
+            None
+        );
+        assert_eq!(firmware_flake("panic: uvm_fault\n"), None);
     }
 
     #[test]

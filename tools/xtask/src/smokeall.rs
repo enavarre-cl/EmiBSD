@@ -131,6 +131,8 @@ struct Finished {
     ok: bool,
     /// Stopped by the watchdog (`why` says which limit).
     timeout: bool,
+    /// Boots that were booted again after a known firmware bug (`boot::FIRMWARE_FLAKES`).
+    retries: usize,
     seconds: f32,
     log: PathBuf,
     why: String,
@@ -177,10 +179,14 @@ pub fn smoke_all(root: &Path, jobs: usize, just_bin: &str, recipes: &[&str]) -> 
 
     let mut failed: Vec<Finished> = Vec::new();
     let mut count = 0;
+    let mut retried: Vec<String> = Vec::new();
     for done in rx {
         count += 1;
+        if done.retries > 0 {
+            retried.push(format!("{} ({})", done.recipe, done.retries));
+        }
         println!(
-            "smoke-all: [{count:>2}/{total}] {} {:<16} {:>6.1}s{}",
+            "smoke-all: [{count:>2}/{total}] {} {:<16} {:>6.1}s{}{}",
             if done.ok {
                 "ok  "
             } else if done.timeout {
@@ -194,6 +200,11 @@ pub fn smoke_all(root: &Path, jobs: usize, just_bin: &str, recipes: &[&str]) -> 
                 String::new()
             } else {
                 format!("  ({})", done.why)
+            },
+            if done.retries > 0 {
+                format!("  [{} firmware retry]", done.retries)
+            } else {
+                String::new()
             }
         );
         if !done.ok {
@@ -212,6 +223,12 @@ pub fn smoke_all(root: &Path, jobs: usize, just_bin: &str, recipes: &[&str]) -> 
             Err(e) => println!("(cannot read the log: {e})"),
         }
         println!("===== end of {} =====", f.recipe);
+    }
+    if !retried.is_empty() {
+        println!(
+            "smoke-all: booted again after a known firmware bug (docs/EXTERNAL_BUGS.md): {}",
+            retried.join(" ")
+        );
     }
     let names: Vec<&str> = failed.iter().map(|f| f.recipe.as_str()).collect();
     println!(
@@ -417,6 +434,7 @@ fn run_recipe(
         recipe: recipe.to_string(),
         ok,
         timeout: false,
+        retries: 0,
         seconds: started.elapsed().as_secs_f32(),
         log: log.clone(),
         why,
@@ -479,11 +497,14 @@ fn run_recipe(
         }
         thread::sleep(Duration::from_secs(1));
     };
-    let done = match status {
+    let mut done = match status {
         Ok(s) if s.success() => finish(true, String::new()),
         Ok(s) => finish(false, format!("just exited with {s}")),
         Err(e) => finish(false, format!("{just_bin}: {e}")),
     };
+    done.retries = fs::read_to_string(&log)
+        .map(|l| l.matches(boot::FIRMWARE_RETRY_MARKER).count())
+        .unwrap_or(0);
     if done.ok {
         let _ = fs::write(dir.join("seconds"), format!("{:.1}\n", done.seconds));
         remove_boot_files(&dir);

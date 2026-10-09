@@ -67,6 +67,12 @@ Four tiers. Every change lands with the tier it belongs to.
    reported `TIMEOUT`, a failure; the others go on and `smoke-all` exits non-zero. So a
    waiting boot prints a line a minute (`boot::Heartbeat`), and a recipe step that runs for
    minutes without output (none does yet) must print as it goes or it is taken for hung.
+   One retry, and only one, for a firmware bug that is not ours (the user's decision of
+   2026-10-09): a smoke boot that fails with a line of `boot::FIRMWARE_FLAKES` on its console
+   and no kernel line yet (EDK2's UhciDxe ASSERT on arm64, EXT-1 in LZ's external bugs log;
+   native keeps none, `subagents.md`) is booted once more, says so in its log, and `smoke-all`
+   counts it; anything else, or a second failure, fails as before. A new entry there needs the
+   user.
 4. **Differential tests** (M12+): `just diff-openbsd`, beside `ci`, not in it. The same
    scenarios on EmiBSD and on the OpenBSD snapshot of `tools/xtask/openbsd-snapshot.toml`
    (docs/ARCHITECTURE.md "diff-openbsd"). Run it before closing a milestone and after any
