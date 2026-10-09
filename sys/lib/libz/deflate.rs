@@ -3257,5 +3257,175 @@ mod tests {
             assert_eq!(deflateEnd(&mut strm), Ok(()));
         }
     }
+
+    /// Compress `data` handing `deflate()` at most `in_chunk` new input bytes and `out_chunk`
+    /// bytes of output space at a time, with `Flush::NoFlush` until the input is used up and
+    /// then `Flush::Finish` until the end. `deflate()` only returns `Ok` (or `ZError::Buf` for
+    /// no progress) on the way.
+    fn deflate_chunked(
+        data: &[u8],
+        level: i32,
+        wbits: i32,
+        strategy: Strategy,
+        in_chunk: usize,
+        out_chunk: usize,
+    ) -> Vec<u8> {
+        let mut out = vec![0u8; data.len() * 2 + 1024];
+        let mut strm = ZStream::new();
+        assert_eq!(
+            deflateInit2(&mut strm, level, Z_DEFLATED, wbits, 8, strategy),
+            Ok(())
+        );
+        let mut rest_in = data;
+        let mut rest_out: &mut [u8] = &mut out;
+        for _ in 0..10 * (data.len() + 1024) {
+            if strm.avail_in() == 0 && !rest_in.is_empty() {
+                let (piece, r) = rest_in.split_at(rest_in.len().min(in_chunk));
+                strm.next_in = piece;
+                rest_in = r;
+            }
+            if strm.avail_out() == 0 {
+                let n = rest_out.len().min(out_chunk);
+                let (piece, r) = core::mem::take(&mut rest_out).split_at_mut(n);
+                strm.next_out = piece;
+                rest_out = r;
+            }
+            let flush = if rest_in.is_empty() && strm.avail_in() == 0 {
+                Flush::Finish
+            } else {
+                Flush::NoFlush
+            };
+            match deflate(&mut strm, flush) {
+                Ok(ZStatus::StreamEnd) => {
+                    let n = strm.total_out as usize;
+                    assert_eq!(strm.total_in as usize, data.len());
+                    assert_eq!(deflateEnd(&mut strm), Ok(()));
+                    out.truncate(n);
+                    return out;
+                }
+                Ok(ZStatus::Ok) | Err(ZError::Buf) => {}
+                other => panic!("level {level} {strategy:?}: {other:?}"),
+            }
+        }
+        panic!("no end: level {level} {strategy:?} {in_chunk}/{out_chunk}")
+    }
+
+    /// One byte of input and one byte of output space at a time give the same stream as one
+    /// call, byte for byte, at every compressing level and strategy, raw and zlib, small and
+    /// large windows; so do random piece sizes. A stored stream (level 0) sizes its blocks by
+    /// the output space, so it is only checked to decode back.
+    #[test]
+    fn byte_at_a_time_equals_one_call() {
+        let mut rng = XorShift(0x3c6e_f372_fe94_f82b);
+        for level in 0..=9 {
+            for strategy in STRATEGIES {
+                let len = rng.below(6000);
+                let data = prng_data(&mut rng, len);
+                let wbits = [15, -15, 9, -9][rng.below(4)];
+                let once = compress_once(&data, None, level, wbits, 8, strategy);
+                let bytewise = deflate_chunked(&data, level, wbits, strategy, 1, 1);
+                let (ic, oc) = (1 + rng.below(700), 1 + rng.below(700));
+                let pieces = deflate_chunked(&data, level, wbits, strategy, ic, oc);
+                let at = format!("level {level} {strategy:?} wbits {wbits} len {len}");
+                if level != 0 {
+                    assert!(bytewise == once, "{at} bytewise");
+                    assert!(pieces == once, "{at} pieces {ic}/{oc}");
+                }
+                for z in [&once, &bytewise, &pieces] {
+                    assert!(inflate_all(z, wbits, len) == data, "{at}");
+                }
+            }
+        }
+    }
+
+    /// Every flush mode in sequence, the input a byte at a time: each piece of input is
+    /// followed by a flush call, repeated with more output space while it returns with none
+    /// left (zlib's contract). The output space comes 7 bytes at a time, the least zlib.h
+    /// allows a sync or full flush ("avail_out is greater than six") so that a flush call
+    /// that fills it exactly is not taken as a new request forever. After every complete
+    /// sync and full flush the output ends with the empty stored block's `00 00 ff ff`; the
+    /// stream decodes back.
+    #[test]
+    fn every_flush_mode_in_sequence() {
+        let mut rng = XorShift(0xa54f_f53a_5f1d_36f1);
+        let modes = [
+            Flush::NoFlush,
+            Flush::PartialFlush,
+            Flush::SyncFlush,
+            Flush::FullFlush,
+            Flush::Block,
+        ];
+        for round in 0..20 {
+            let level = rng.below(10) as i32;
+            let strategy = STRATEGIES[rng.below(5)];
+            let wbits = if round % 2 == 0 { 15 } else { -12 };
+            let data = prng_data(&mut rng, 4000);
+            let mut out = vec![0u8; 64 * 1024];
+            let mut strm = ZStream::new();
+            assert_eq!(
+                deflateInit2(&mut strm, level, Z_DEFLATED, wbits, 8, strategy),
+                Ok(())
+            );
+            let mut rest_out: &mut [u8] = &mut out;
+            let mut pieces = data.chunks(1 + rng.below(400)).peekable();
+            let mut k = round;
+            let mut marks = Vec::new();
+            while let Some(piece) = pieces.next() {
+                let last = pieces.peek().is_none();
+                let flush = if last { Flush::Finish } else { modes[k % 5] };
+                k += 1;
+                // the piece, a byte at a time
+                for byte in piece.chunks(1) {
+                    strm.next_in = byte;
+                    while strm.avail_in() != 0 {
+                        if strm.avail_out() == 0 {
+                            let (o, r) = core::mem::take(&mut rest_out).split_at_mut(7);
+                            strm.next_out = o;
+                            rest_out = r;
+                        }
+                        assert_eq!(deflate(&mut strm, Flush::NoFlush), Ok(ZStatus::Ok));
+                    }
+                }
+                // the flush, until it returns with output space left
+                loop {
+                    if strm.avail_out() == 0 {
+                        let (o, r) = core::mem::take(&mut rest_out).split_at_mut(7);
+                        strm.next_out = o;
+                        rest_out = r;
+                    }
+                    let ret = deflate(&mut strm, flush);
+                    if flush == Flush::Finish {
+                        if ret == Ok(ZStatus::StreamEnd) {
+                            break;
+                        }
+                        assert_eq!(ret, Ok(ZStatus::Ok));
+                    } else if flush == Flush::NoFlush {
+                        // nothing to flush: no progress is a buffer error, as in the C
+                        assert!(matches!(ret, Ok(ZStatus::Ok) | Err(ZError::Buf)));
+                        if strm.avail_out() != 0 {
+                            break;
+                        }
+                    } else {
+                        assert_eq!(ret, Ok(ZStatus::Ok), "round {round} {flush:?}");
+                        if strm.avail_out() != 0 {
+                            break;
+                        }
+                    }
+                }
+                if matches!(flush, Flush::SyncFlush | Flush::FullFlush) {
+                    marks.push(strm.total_out as usize);
+                }
+            }
+            let n = strm.total_out as usize;
+            assert_eq!(deflateEnd(&mut strm), Ok(()));
+            for m in marks {
+                assert_eq!(out[m - 4..m], [0, 0, 0xff, 0xff], "round {round} at {m}");
+            }
+            assert!(
+                inflate_all(&out[..n], wbits, data.len()) == data,
+                "round {round}"
+            );
+        }
+    }
 }
 /* </TESTS> */

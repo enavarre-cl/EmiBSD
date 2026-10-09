@@ -3456,5 +3456,135 @@ mod tests {
             }
         }
     }
+
+    /// Decode `input` like [`decode`], but call again after a buffer error while there is
+    /// still input and output space: zlib.h says `Z_BUF_ERROR` is not fatal, and a
+    /// `Flush::Block` or `Flush::Trees` call that only steps over a boundary whose bits are
+    /// already in the bit buffer uses no input and writes no output, so it reports one. Two
+    /// such calls in a row would be a stall, and fail the test.
+    fn decode_patiently(
+        input: &[u8],
+        wbits: i32,
+        slow: bool,
+        in_chunk: usize,
+        out_chunk: usize,
+        flush: Flush,
+    ) -> Decoded {
+        let mut out = vec![0u8; 1 << 17];
+        let mut strm = ZStream::new();
+        assert_eq!(inflateInit2(&mut strm, wbits), Ok(()));
+        let mut rest_in = input;
+        let mut rest_out: &mut [u8] = &mut out;
+        let mut stalls = 0;
+        let ret = loop {
+            if strm.avail_in() == 0 && !rest_in.is_empty() {
+                let (piece, r) = rest_in.split_at(rest_in.len().min(in_chunk));
+                strm.next_in = piece;
+                rest_in = r;
+            }
+            if strm.avail_out() == 0 && !rest_out.is_empty() {
+                let n = rest_out.len().min(out_chunk);
+                let (piece, r) = core::mem::take(&mut rest_out).split_at_mut(n);
+                strm.next_out = piece;
+                rest_out = r;
+            }
+            let ret = inflate_impl(&mut strm, flush, slow);
+            match ret {
+                Ok(ZStatus::Ok) => stalls = 0,
+                Err(ZError::Buf) if strm.avail_in() != 0 && strm.avail_out() != 0 => {
+                    stalls += 1;
+                    assert!(stalls < 2, "{flush:?}: no progress twice");
+                }
+                Err(ZError::Buf)
+                    if (strm.avail_in() == 0 && !rest_in.is_empty())
+                        || (strm.avail_out() == 0 && !rest_out.is_empty()) =>
+                {
+                    stalls = 0;
+                }
+                _ => break ret,
+            }
+        };
+        let n = strm.total_out as usize;
+        let (total_in, adler, msg) = (strm.total_in, strm.adler, strm.msg);
+        assert_eq!(inflateEnd(&mut strm), Ok(()));
+        out.truncate(n);
+        Decoded {
+            ret,
+            out,
+            total_in,
+            adler,
+            msg,
+        }
+    }
+
+    /// Streams of random levels, strategies and windows, with flushes of every kind between
+    /// pieces, decoded one byte in and one byte out at a time with every flush mode inflate
+    /// takes (`Flush::Block` and `Flush::Trees` stop at each block and header, `Flush::Finish`
+    /// is a buffer error until the end), and in random piece sizes: always the same data as
+    /// one call, in both decoders.
+    #[test]
+    fn every_inflate_flush_mode_a_byte_at_a_time() {
+        let mut rng = XorShift(0x510e_527f_ade6_82d1);
+        let strategies = [
+            Strategy::Default,
+            Strategy::Filtered,
+            Strategy::HuffmanOnly,
+            Strategy::Rle,
+            Strategy::Fixed,
+        ];
+        let deflate_flushes = [
+            Flush::NoFlush,
+            Flush::PartialFlush,
+            Flush::SyncFlush,
+            Flush::FullFlush,
+            Flush::Block,
+        ];
+        let modes = [
+            Flush::NoFlush,
+            Flush::PartialFlush,
+            Flush::SyncFlush,
+            Flush::FullFlush,
+            Flush::Finish,
+            Flush::Block,
+            Flush::Trees,
+        ];
+        for round in 0..10 {
+            // text from the corpus with noise spliced in
+            let start = rng.below(CORPUS.len() - 4000);
+            let mut data = CORPUS[start..start + 1 + rng.below(3000)].to_vec();
+            for _ in 0..rng.below(4) {
+                let at = rng.below(data.len());
+                let noise: Vec<u8> = (0..rng.below(300)).map(|_| rng.next() as u8).collect();
+                data.splice(at..at, noise);
+            }
+            let level = rng.below(10) as i32;
+            let strategy = strategies[rng.below(5)];
+            let wbits = if round % 2 == 0 {
+                9 + rng.below(7) as i32
+            } else {
+                -15
+            };
+            let flush = deflate_flushes[rng.below(5)];
+            let chunk = 50 + rng.below(1000); // deflate_with has room for 1.5x + 1K
+            let z = deflate_with(&data, level, wbits, strategy, chunk, flush);
+            for slow in BOTH {
+                let once = decode_all(&z, wbits, slow);
+                assert_eq!(once.ret, Ok(ZStatus::StreamEnd));
+                assert!(once.out == data);
+                for mode in modes {
+                    let at =
+                        format!("round {round} level {level} {strategy:?} {mode:?} slow {slow}");
+                    let d = decode_patiently(&z, wbits, slow, 1, 1, mode);
+                    assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "{at}");
+                    assert!(d.out == data, "{at}");
+                    assert_eq!(d.total_in as usize, z.len(), "{at}");
+                    let (ic, oc) = (1 + rng.below(64), 1 + rng.below(64));
+                    let d = decode_patiently(&z, wbits, slow, ic, oc, mode);
+                    assert_eq!(d.ret, Ok(ZStatus::StreamEnd), "{at} {ic}/{oc}");
+                    assert!(d.out == data, "{at} {ic}/{oc}");
+                }
+            }
+        }
+    }
 }
 /* </TESTS> */
