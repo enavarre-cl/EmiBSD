@@ -26,7 +26,8 @@ ISC, BSD-2-Clause, BSD-3-Clause, BSD-4-Clause (its advertising clause
 included), MIT, the Carnegie Mellon (Mach) license, Poul-Henning Kamp's
 beerware license, John S. Dyson's license, the zlib license, permissive
 notices in the HPND style (the IPsec authors, Carnegie Mellon, M.I.T., the
-Open Software Foundation, Julian Elischer / TRW Financial Systems), Intel's
+Open Software Foundation, Julian Elischer / TRW Financial Systems, David
+Greenman's notice on the DP8390 driver), Intel's
 EFI notice (the UEFI headers of sys/stand/efi/include, from FreeBSD), and
 public domain. Files without license text keep their copyright lines as
 they are. Provenance
