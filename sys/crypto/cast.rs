@@ -29,27 +29,55 @@
 //!
 //! Upstream: sys/crypto/cast.h @ 3ce1f3f79392, sys/crypto/cast.c @ 3ce1f3f79392,
 //! sys/crypto/castsb.h @ 3ce1f3f79392
+//! LZ: sys/crypto/cast.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header, the S-box header and the file share this module; `cast_key` is [`CastKey`].
-//! - The functions take slices: `cast_setkey` the raw key (`keybytes` is its length), the block
-//!   functions 8-byte arrays (the in-place calls of `xform.c`, `cast_encrypt(key, blk, blk)`,
-//!   copy the block first).
 //! - The sixteen rounds of the C's unrolled `F1`/`F2`/`F3` calls are a loop: round `i` uses
 //!   `F1`, `F2` or `F3` for `i % 3` and updates `l` when `i` is even, `r` when it is odd (in
 //!   the reverse order for decryption); the key schedule keeps the C's four-subkeys-at-a-time
 //!   structure, its byte selectors written out as in the C.
 //! - The workspace and the halves `l` and `r` are wiped with `crate::crypto::wipe`.
+//!
+//! ## Redesign
+//! - `cast_setkey` is the constructor [`CastKey::new`], which returns the expanded key (LZ:
+//!   it filled an `&mut CastKey`); `cast_encrypt` and `cast_decrypt` are the methods
+//!   [`CastKey::encrypt`] and [`CastKey::decrypt`], which return the output block (LZ: an
+//!   `&mut [u8; 8]` out parameter; the in-place calls of `xform.c` needed a copy). The raw key
+//!   is a slice, up to 16 bytes read (`keybytes` is its length); it is copied into a
+//!   zero-padded 16-byte block read as four big-endian words (wiped with `explicit_bzero`
+//!   after), where the C tests `i * 4 + k < keybytes` byte by byte.
+//! - `rounds` is a `usize` (LZ: `i32`); the byte selectors `U_INT8_T*` take the bytes of the
+//!   word with `to_be_bytes` instead of shifts and `as` casts.
+//! - [`CastKey`] zeroes its subkeys when dropped (`docs/IDIOMS.md`), so it is no longer `Copy`
+//!   or `PartialEq`.
+
+use libkern::explicit_bzero;
 
 use super::wipe;
 
-/// `cast_key`: the expanded key.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// `cast_key`: the expanded key. Built by [`CastKey::new`]; zeroed when dropped.
+#[derive(Clone, Debug, Default)]
 pub struct CastKey {
     /// `xkey`: key, after expansion.
     pub xkey: [u32; 32],
     /// `rounds`: number of rounds to use, 12 or 16.
-    pub rounds: i32,
+    pub rounds: usize,
+}
+
+impl Drop for CastKey {
+    /// Wipes the subkeys (`docs/IDIOMS.md`: a key schedule is zeroed when dropped).
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl CastKey {
+    /// Zeroes the subkeys, with stores the compiler keeps (`crate::crypto::wipe`).
+    pub(crate) fn zeroize(&mut self) {
+        self.xkey.iter_mut().for_each(wipe);
+        wipe(&mut self.rounds);
+    }
 }
 
 /// `cast_sbox1`.
@@ -342,22 +370,22 @@ static CAST_SBOX8: [u32; 256] = [
 
 /// `U_INT8_Ta`: the top byte of `x`.
 fn ta(x: u32) -> usize {
-    (x >> 24) as usize
+    usize::from(x.to_be_bytes()[0])
 }
 
 /// `U_INT8_Tb`.
 fn tb(x: u32) -> usize {
-    ((x >> 16) & 255) as usize
+    usize::from(x.to_be_bytes()[1])
 }
 
 /// `U_INT8_Tc`.
 fn tc(x: u32) -> usize {
-    ((x >> 8) & 255) as usize
+    usize::from(x.to_be_bytes()[2])
 }
 
 /// `U_INT8_Td`: the low byte of `x`.
 fn td(x: u32) -> usize {
-    (x & 255) as usize
+    usize::from(x.to_be_bytes()[3])
 }
 
 /// `F1`, `F2` and `F3`, the three round functions of CAST-128: `i % 3` picks one. Returns the
@@ -384,217 +412,227 @@ fn round(key: &CastKey, l: u32, r: u32, i: usize) -> u32 {
     }
 }
 
-/// `cast_encrypt`: encryption function.
-pub fn cast_encrypt(key: &CastKey, inblock: &[u8; 8], outblock: &mut [u8; 8]) {
-    // Get inblock into l,r
-    let mut l = u32::from_be_bytes([inblock[0], inblock[1], inblock[2], inblock[3]]);
-    let mut r = u32::from_be_bytes([inblock[4], inblock[5], inblock[6], inblock[7]]);
-    // Do the work. Only do full 16 rounds if key length > 80 bits.
-    let rounds = if key.rounds > 12 { 16 } else { 12 };
-    for i in 0..rounds {
-        if i % 2 == 0 {
-            l = round(key, l, r, i);
-        } else {
-            r = round(key, r, l, i);
-        }
-    }
-    // Put l,r into outblock
-    outblock[..4].copy_from_slice(&r.to_be_bytes());
-    outblock[4..].copy_from_slice(&l.to_be_bytes());
-    // Wipe clean
-    wipe(&mut l);
-    wipe(&mut r);
+/// The two big-endian halves of `block`.
+fn halves(block: &[u8; 8]) -> (u32, u32) {
+    let [a, b, c, d, e, f, g, h] = *block;
+    (
+        u32::from_be_bytes([a, b, c, d]),
+        u32::from_be_bytes([e, f, g, h]),
+    )
 }
 
-/// `cast_decrypt`: decryption function.
-pub fn cast_decrypt(key: &CastKey, inblock: &[u8; 8], outblock: &mut [u8; 8]) {
-    // Get inblock into l,r
-    let mut r = u32::from_be_bytes([inblock[0], inblock[1], inblock[2], inblock[3]]);
-    let mut l = u32::from_be_bytes([inblock[4], inblock[5], inblock[6], inblock[7]]);
-    // Do the work. Only do full 16 rounds if key length > 80 bits.
-    let rounds = if key.rounds > 12 { 16 } else { 12 };
-    for i in (0..rounds).rev() {
-        if i % 2 == 0 {
-            l = round(key, l, r, i);
-        } else {
-            r = round(key, r, l, i);
-        }
-    }
-    // Put l,r into outblock
-    outblock[..4].copy_from_slice(&l.to_be_bytes());
-    outblock[4..].copy_from_slice(&r.to_be_bytes());
-    // Wipe clean
-    wipe(&mut l);
-    wipe(&mut r);
+/// The block of the two big-endian halves `hi`, `lo`.
+fn block(hi: u32, lo: u32) -> [u8; 8] {
+    let [a, b, c, d] = hi.to_be_bytes();
+    let [e, f, g, h] = lo.to_be_bytes();
+    [a, b, c, d, e, f, g, h]
 }
 
-/// `cast_setkey`: the key schedule; `rawkey` is the key, up to 16 bytes.
-pub fn cast_setkey(key: &mut CastKey, rawkey: &[u8]) {
-    let keybytes = rawkey.len();
-    let mut t = [0u32; 4];
-    let mut z = [0u32; 4];
-    let mut x = [0u32; 4];
-
-    // Set number of rounds to 12 or 16, depending on key length
-    key.rounds = if keybytes <= 10 { 12 } else { 16 };
-
-    // Copy key to workspace x
-    for i in 0..4 {
-        x[i] = 0;
-        if (i * 4) < keybytes {
-            x[i] = u32::from(rawkey[i * 4]) << 24;
+impl CastKey {
+    /// `cast_encrypt`: the encryption of `inblock`.
+    pub fn encrypt(&self, inblock: &[u8; 8]) -> [u8; 8] {
+        // Get inblock into l,r
+        let (mut l, mut r) = halves(inblock);
+        // Do the work. Only do full 16 rounds if key length > 80 bits.
+        let rounds = if self.rounds > 12 { 16 } else { 12 };
+        for i in 0..rounds {
+            if i % 2 == 0 {
+                l = round(self, l, r, i);
+            } else {
+                r = round(self, r, l, i);
+            }
         }
-        if (i * 4 + 1) < keybytes {
-            x[i] |= u32::from(rawkey[i * 4 + 1]) << 16;
-        }
-        if (i * 4 + 2) < keybytes {
-            x[i] |= u32::from(rawkey[i * 4 + 2]) << 8;
-        }
-        if (i * 4 + 3) < keybytes {
-            x[i] |= u32::from(rawkey[i * 4 + 3]);
-        }
+        // Put l,r into outblock
+        let outblock = block(r, l);
+        // Wipe clean
+        wipe(&mut l);
+        wipe(&mut r);
+        outblock
     }
-    // Generate 32 subkeys, four at a time
-    for i in (0..32).step_by(4) {
-        match i & 4 {
-            0 => {
-                z[0] = x[0]
-                    ^ CAST_SBOX5[tb(x[3])]
-                    ^ CAST_SBOX6[td(x[3])]
-                    ^ CAST_SBOX7[ta(x[3])]
-                    ^ CAST_SBOX8[tc(x[3])]
-                    ^ CAST_SBOX7[ta(x[2])];
-                t[0] = z[0];
-                z[1] = x[2]
-                    ^ CAST_SBOX5[ta(z[0])]
-                    ^ CAST_SBOX6[tc(z[0])]
-                    ^ CAST_SBOX7[tb(z[0])]
-                    ^ CAST_SBOX8[td(z[0])]
-                    ^ CAST_SBOX8[tc(x[2])];
-                t[1] = z[1];
-                z[2] = x[3]
-                    ^ CAST_SBOX5[td(z[1])]
-                    ^ CAST_SBOX6[tc(z[1])]
-                    ^ CAST_SBOX7[tb(z[1])]
-                    ^ CAST_SBOX8[ta(z[1])]
-                    ^ CAST_SBOX5[tb(x[2])];
-                t[2] = z[2];
-                z[3] = x[1]
-                    ^ CAST_SBOX5[tc(z[2])]
-                    ^ CAST_SBOX6[tb(z[2])]
-                    ^ CAST_SBOX7[td(z[2])]
-                    ^ CAST_SBOX8[ta(z[2])]
-                    ^ CAST_SBOX6[td(x[2])];
-                t[3] = z[3];
-            }
-            _ => {
-                x[0] = z[2]
-                    ^ CAST_SBOX5[tb(z[1])]
-                    ^ CAST_SBOX6[td(z[1])]
-                    ^ CAST_SBOX7[ta(z[1])]
-                    ^ CAST_SBOX8[tc(z[1])]
-                    ^ CAST_SBOX7[ta(z[0])];
-                t[0] = x[0];
-                x[1] = z[0]
-                    ^ CAST_SBOX5[ta(x[0])]
-                    ^ CAST_SBOX6[tc(x[0])]
-                    ^ CAST_SBOX7[tb(x[0])]
-                    ^ CAST_SBOX8[td(x[0])]
-                    ^ CAST_SBOX8[tc(z[0])];
-                t[1] = x[1];
-                x[2] = z[1]
-                    ^ CAST_SBOX5[td(x[1])]
-                    ^ CAST_SBOX6[tc(x[1])]
-                    ^ CAST_SBOX7[tb(x[1])]
-                    ^ CAST_SBOX8[ta(x[1])]
-                    ^ CAST_SBOX5[tb(z[0])];
-                t[2] = x[2];
-                x[3] = z[3]
-                    ^ CAST_SBOX5[tc(x[2])]
-                    ^ CAST_SBOX6[tb(x[2])]
-                    ^ CAST_SBOX7[td(x[2])]
-                    ^ CAST_SBOX8[ta(x[2])]
-                    ^ CAST_SBOX6[td(z[0])];
-                t[3] = x[3];
+
+    /// `cast_decrypt`: the decryption of `inblock`.
+    pub fn decrypt(&self, inblock: &[u8; 8]) -> [u8; 8] {
+        // Get inblock into l,r
+        let (mut r, mut l) = halves(inblock);
+        // Do the work. Only do full 16 rounds if key length > 80 bits.
+        let rounds = if self.rounds > 12 { 16 } else { 12 };
+        for i in (0..rounds).rev() {
+            if i % 2 == 0 {
+                l = round(self, l, r, i);
+            } else {
+                r = round(self, r, l, i);
             }
         }
-        match i & 12 {
-            0 | 12 => {
-                key.xkey[i] = CAST_SBOX5[ta(t[2])]
-                    ^ CAST_SBOX6[tb(t[2])]
-                    ^ CAST_SBOX7[td(t[1])]
-                    ^ CAST_SBOX8[tc(t[1])];
-                key.xkey[i + 1] = CAST_SBOX5[tc(t[2])]
-                    ^ CAST_SBOX6[td(t[2])]
-                    ^ CAST_SBOX7[tb(t[1])]
-                    ^ CAST_SBOX8[ta(t[1])];
-                key.xkey[i + 2] = CAST_SBOX5[ta(t[3])]
-                    ^ CAST_SBOX6[tb(t[3])]
-                    ^ CAST_SBOX7[td(t[0])]
-                    ^ CAST_SBOX8[tc(t[0])];
-                key.xkey[i + 3] = CAST_SBOX5[tc(t[3])]
-                    ^ CAST_SBOX6[td(t[3])]
-                    ^ CAST_SBOX7[tb(t[0])]
-                    ^ CAST_SBOX8[ta(t[0])];
-            }
-            _ => {
-                // 4 and 8
-                key.xkey[i] = CAST_SBOX5[td(t[0])]
-                    ^ CAST_SBOX6[tc(t[0])]
-                    ^ CAST_SBOX7[ta(t[3])]
-                    ^ CAST_SBOX8[tb(t[3])];
-                key.xkey[i + 1] = CAST_SBOX5[tb(t[0])]
-                    ^ CAST_SBOX6[ta(t[0])]
-                    ^ CAST_SBOX7[tc(t[3])]
-                    ^ CAST_SBOX8[td(t[3])];
-                key.xkey[i + 2] = CAST_SBOX5[td(t[1])]
-                    ^ CAST_SBOX6[tc(t[1])]
-                    ^ CAST_SBOX7[ta(t[2])]
-                    ^ CAST_SBOX8[tb(t[2])];
-                key.xkey[i + 3] = CAST_SBOX5[tb(t[1])]
-                    ^ CAST_SBOX6[ta(t[1])]
-                    ^ CAST_SBOX7[tc(t[2])]
-                    ^ CAST_SBOX8[td(t[2])];
-            }
-        }
-        match i & 12 {
-            0 => {
-                key.xkey[i] ^= CAST_SBOX5[tc(z[0])];
-                key.xkey[i + 1] ^= CAST_SBOX6[tc(z[1])];
-                key.xkey[i + 2] ^= CAST_SBOX7[tb(z[2])];
-                key.xkey[i + 3] ^= CAST_SBOX8[ta(z[3])];
-            }
-            4 => {
-                key.xkey[i] ^= CAST_SBOX5[ta(x[2])];
-                key.xkey[i + 1] ^= CAST_SBOX6[tb(x[3])];
-                key.xkey[i + 2] ^= CAST_SBOX7[td(x[0])];
-                key.xkey[i + 3] ^= CAST_SBOX8[td(x[1])];
-            }
-            8 => {
-                key.xkey[i] ^= CAST_SBOX5[tb(z[2])];
-                key.xkey[i + 1] ^= CAST_SBOX6[ta(z[3])];
-                key.xkey[i + 2] ^= CAST_SBOX7[tc(z[0])];
-                key.xkey[i + 3] ^= CAST_SBOX8[tc(z[1])];
-            }
-            _ => {
-                // 12
-                key.xkey[i] ^= CAST_SBOX5[td(x[0])];
-                key.xkey[i + 1] ^= CAST_SBOX6[td(x[1])];
-                key.xkey[i + 2] ^= CAST_SBOX7[ta(x[2])];
-                key.xkey[i + 3] ^= CAST_SBOX8[tb(x[3])];
-            }
-        }
-        if i >= 16 {
-            key.xkey[i] &= 31;
-            key.xkey[i + 1] &= 31;
-            key.xkey[i + 2] &= 31;
-            key.xkey[i + 3] &= 31;
-        }
+        // Put l,r into outblock
+        let outblock = block(l, r);
+        // Wipe clean
+        wipe(&mut l);
+        wipe(&mut r);
+        outblock
     }
-    // Wipe clean
-    wipe(&mut t);
-    wipe(&mut x);
-    wipe(&mut z);
+
+    /// `cast_setkey`: the key schedule of `rawkey`, of which up to 16 bytes are read.
+    pub fn new(rawkey: &[u8]) -> Self {
+        let keybytes = rawkey.len();
+        let mut key = CastKey::default();
+        let mut t = [0u32; 4];
+        let mut z = [0u32; 4];
+        let mut x = [0u32; 4];
+
+        // Set number of rounds to 12 or 16, depending on key length
+        key.rounds = if keybytes <= 10 { 12 } else { 16 };
+
+        // Copy key to workspace x: big-endian words, the bytes past the key zero
+        let mut raw = [0u8; 16];
+        let n = keybytes.min(raw.len());
+        raw[..n].copy_from_slice(&rawkey[..n]);
+        for (w, b) in x.iter_mut().zip(raw.as_chunks::<4>().0) {
+            *w = u32::from_be_bytes(*b);
+        }
+        explicit_bzero(&mut raw);
+        // Generate 32 subkeys, four at a time
+        for i in (0..32).step_by(4) {
+            match i & 4 {
+                0 => {
+                    z[0] = x[0]
+                        ^ CAST_SBOX5[tb(x[3])]
+                        ^ CAST_SBOX6[td(x[3])]
+                        ^ CAST_SBOX7[ta(x[3])]
+                        ^ CAST_SBOX8[tc(x[3])]
+                        ^ CAST_SBOX7[ta(x[2])];
+                    t[0] = z[0];
+                    z[1] = x[2]
+                        ^ CAST_SBOX5[ta(z[0])]
+                        ^ CAST_SBOX6[tc(z[0])]
+                        ^ CAST_SBOX7[tb(z[0])]
+                        ^ CAST_SBOX8[td(z[0])]
+                        ^ CAST_SBOX8[tc(x[2])];
+                    t[1] = z[1];
+                    z[2] = x[3]
+                        ^ CAST_SBOX5[td(z[1])]
+                        ^ CAST_SBOX6[tc(z[1])]
+                        ^ CAST_SBOX7[tb(z[1])]
+                        ^ CAST_SBOX8[ta(z[1])]
+                        ^ CAST_SBOX5[tb(x[2])];
+                    t[2] = z[2];
+                    z[3] = x[1]
+                        ^ CAST_SBOX5[tc(z[2])]
+                        ^ CAST_SBOX6[tb(z[2])]
+                        ^ CAST_SBOX7[td(z[2])]
+                        ^ CAST_SBOX8[ta(z[2])]
+                        ^ CAST_SBOX6[td(x[2])];
+                    t[3] = z[3];
+                }
+                _ => {
+                    x[0] = z[2]
+                        ^ CAST_SBOX5[tb(z[1])]
+                        ^ CAST_SBOX6[td(z[1])]
+                        ^ CAST_SBOX7[ta(z[1])]
+                        ^ CAST_SBOX8[tc(z[1])]
+                        ^ CAST_SBOX7[ta(z[0])];
+                    t[0] = x[0];
+                    x[1] = z[0]
+                        ^ CAST_SBOX5[ta(x[0])]
+                        ^ CAST_SBOX6[tc(x[0])]
+                        ^ CAST_SBOX7[tb(x[0])]
+                        ^ CAST_SBOX8[td(x[0])]
+                        ^ CAST_SBOX8[tc(z[0])];
+                    t[1] = x[1];
+                    x[2] = z[1]
+                        ^ CAST_SBOX5[td(x[1])]
+                        ^ CAST_SBOX6[tc(x[1])]
+                        ^ CAST_SBOX7[tb(x[1])]
+                        ^ CAST_SBOX8[ta(x[1])]
+                        ^ CAST_SBOX5[tb(z[0])];
+                    t[2] = x[2];
+                    x[3] = z[3]
+                        ^ CAST_SBOX5[tc(x[2])]
+                        ^ CAST_SBOX6[tb(x[2])]
+                        ^ CAST_SBOX7[td(x[2])]
+                        ^ CAST_SBOX8[ta(x[2])]
+                        ^ CAST_SBOX6[td(z[0])];
+                    t[3] = x[3];
+                }
+            }
+            match i & 12 {
+                0 | 12 => {
+                    key.xkey[i] = CAST_SBOX5[ta(t[2])]
+                        ^ CAST_SBOX6[tb(t[2])]
+                        ^ CAST_SBOX7[td(t[1])]
+                        ^ CAST_SBOX8[tc(t[1])];
+                    key.xkey[i + 1] = CAST_SBOX5[tc(t[2])]
+                        ^ CAST_SBOX6[td(t[2])]
+                        ^ CAST_SBOX7[tb(t[1])]
+                        ^ CAST_SBOX8[ta(t[1])];
+                    key.xkey[i + 2] = CAST_SBOX5[ta(t[3])]
+                        ^ CAST_SBOX6[tb(t[3])]
+                        ^ CAST_SBOX7[td(t[0])]
+                        ^ CAST_SBOX8[tc(t[0])];
+                    key.xkey[i + 3] = CAST_SBOX5[tc(t[3])]
+                        ^ CAST_SBOX6[td(t[3])]
+                        ^ CAST_SBOX7[tb(t[0])]
+                        ^ CAST_SBOX8[ta(t[0])];
+                }
+                _ => {
+                    // 4 and 8
+                    key.xkey[i] = CAST_SBOX5[td(t[0])]
+                        ^ CAST_SBOX6[tc(t[0])]
+                        ^ CAST_SBOX7[ta(t[3])]
+                        ^ CAST_SBOX8[tb(t[3])];
+                    key.xkey[i + 1] = CAST_SBOX5[tb(t[0])]
+                        ^ CAST_SBOX6[ta(t[0])]
+                        ^ CAST_SBOX7[tc(t[3])]
+                        ^ CAST_SBOX8[td(t[3])];
+                    key.xkey[i + 2] = CAST_SBOX5[td(t[1])]
+                        ^ CAST_SBOX6[tc(t[1])]
+                        ^ CAST_SBOX7[ta(t[2])]
+                        ^ CAST_SBOX8[tb(t[2])];
+                    key.xkey[i + 3] = CAST_SBOX5[tb(t[1])]
+                        ^ CAST_SBOX6[ta(t[1])]
+                        ^ CAST_SBOX7[tc(t[2])]
+                        ^ CAST_SBOX8[td(t[2])];
+                }
+            }
+            match i & 12 {
+                0 => {
+                    key.xkey[i] ^= CAST_SBOX5[tc(z[0])];
+                    key.xkey[i + 1] ^= CAST_SBOX6[tc(z[1])];
+                    key.xkey[i + 2] ^= CAST_SBOX7[tb(z[2])];
+                    key.xkey[i + 3] ^= CAST_SBOX8[ta(z[3])];
+                }
+                4 => {
+                    key.xkey[i] ^= CAST_SBOX5[ta(x[2])];
+                    key.xkey[i + 1] ^= CAST_SBOX6[tb(x[3])];
+                    key.xkey[i + 2] ^= CAST_SBOX7[td(x[0])];
+                    key.xkey[i + 3] ^= CAST_SBOX8[td(x[1])];
+                }
+                8 => {
+                    key.xkey[i] ^= CAST_SBOX5[tb(z[2])];
+                    key.xkey[i + 1] ^= CAST_SBOX6[ta(z[3])];
+                    key.xkey[i + 2] ^= CAST_SBOX7[tc(z[0])];
+                    key.xkey[i + 3] ^= CAST_SBOX8[tc(z[1])];
+                }
+                _ => {
+                    // 12
+                    key.xkey[i] ^= CAST_SBOX5[td(x[0])];
+                    key.xkey[i + 1] ^= CAST_SBOX6[td(x[1])];
+                    key.xkey[i + 2] ^= CAST_SBOX7[ta(x[2])];
+                    key.xkey[i + 3] ^= CAST_SBOX8[tb(x[3])];
+                }
+            }
+            if i >= 16 {
+                key.xkey[i] &= 31;
+                key.xkey[i + 1] &= 31;
+                key.xkey[i + 2] &= 31;
+                key.xkey[i + 3] &= 31;
+            }
+        }
+        // Wipe clean
+        wipe(&mut t);
+        wipe(&mut x);
+        wipe(&mut z);
+        key
+    }
 }
 /* </CODE> */
 
@@ -602,8 +640,9 @@ pub fn cast_setkey(key: &mut CastKey, rawkey: &[u8]) {
 #[cfg(test)]
 mod tests {
     // Known-answer tests for CAST-128: RFC 2144 appendix B.1 (the single-block vectors for the
-    // 128, 80 and 40-bit keys, the last two using the 12-round variant), round trips, and a
-    // reference-backed comparison of the eight S-boxes with the C file's.
+    // 128, 80 and 40-bit keys, the last two using the 12-round variant) and B.2 (the full
+    // maintenance test: a million rounds of keying and encrypting), round trips, the zeroing
+    // `Drop` runs, and a reference-backed comparison of the eight S-boxes with the C file's.
 
     use super::*;
     use crate::crypto::testutil::{c_table, hex, hexn};
@@ -613,11 +652,8 @@ mod tests {
 
     fn encrypt(keybytes: usize) -> ([u8; 8], CastKey) {
         let k: [u8; 16] = hexn(KEY);
-        let mut key = CastKey::default();
-        cast_setkey(&mut key, &k[..keybytes]);
-        let mut out = [0u8; 8];
-        cast_encrypt(&key, &hexn(PT), &mut out);
-        (out, key)
+        let key = CastKey::new(&k[..keybytes]);
+        (key.encrypt(&hexn(PT)), key)
     }
 
     #[test]
@@ -631,9 +667,7 @@ mod tests {
             let (out, key) = encrypt(keybytes);
             assert_eq!(out.to_vec(), hex(ct), "{keybytes}-byte key");
             assert_eq!(key.rounds, rounds);
-            let mut back = [0u8; 8];
-            cast_decrypt(&key, &out, &mut back);
-            assert_eq!(back.to_vec(), hex(PT));
+            assert_eq!(key.decrypt(&out).to_vec(), hex(PT));
         }
     }
 
@@ -642,17 +676,17 @@ mod tests {
         // 11 to 16 bytes use 16 rounds, up to 10 bytes 12; a short key is the same as the key
         // padded with zeros.
         let k: [u8; 16] = hexn(KEY);
-        let mut a = CastKey::default();
-        let mut b = CastKey::default();
-        cast_setkey(&mut a, &k[..11]);
+        let a = CastKey::new(&k[..11]);
         let mut padded = [0u8; 16];
         padded[..11].copy_from_slice(&k[..11]);
-        cast_setkey(&mut b, &padded);
+        let b = CastKey::new(&padded);
         assert_eq!((a.rounds, b.rounds), (16, 16));
         assert_eq!(a.xkey, b.xkey);
-        let mut c = CastKey::default();
-        cast_setkey(&mut c, &k[..4]);
-        assert_eq!(c.rounds, 12);
+        assert_eq!(CastKey::new(&k[..4]).rounds, 12);
+        // Bytes past the sixteenth are not read.
+        let mut long = [0xffu8; 20];
+        long[..16].copy_from_slice(&k);
+        assert_eq!(CastKey::new(&long).xkey, CastKey::new(&k).xkey);
     }
 
     #[test]
@@ -660,13 +694,47 @@ mod tests {
         let (_, key) = encrypt(16);
         let mut blk = [0u8; 8];
         for round in 0..50u8 {
-            let mut next = [0u8; 8];
-            cast_encrypt(&key, &blk, &mut next);
-            let mut back = [0u8; 8];
-            cast_decrypt(&key, &next, &mut back);
-            assert_eq!(back, blk, "round {round}");
+            let next = key.encrypt(&blk);
+            assert_eq!(key.decrypt(&next), blk, "round {round}");
             blk = next;
         }
+    }
+
+    #[test]
+    fn rfc2144_b_2_full_maintenance_test() {
+        // a and b start as the 128-bit key; a million times, each half of a is encrypted
+        // under b, then each half of b under the new a.
+        let mut a: [u8; 16] = hexn(KEY);
+        let mut b: [u8; 16] = hexn(KEY);
+        let half = |x: &[u8; 16], i: usize| -> [u8; 8] { hexn_from(&x[8 * i..8 * i + 8]) };
+        for _ in 0..1_000_000 {
+            let kb = CastKey::new(&b);
+            let (al, ar) = (kb.encrypt(&half(&a, 0)), kb.encrypt(&half(&a, 1)));
+            a[..8].copy_from_slice(&al);
+            a[8..].copy_from_slice(&ar);
+            let ka = CastKey::new(&a);
+            let (bl, br) = (ka.encrypt(&half(&b, 0)), ka.encrypt(&half(&b, 1)));
+            b[..8].copy_from_slice(&bl);
+            b[8..].copy_from_slice(&br);
+        }
+        assert_eq!(a.to_vec(), hex("eea9d0a249fd3ba6b3436fb89d6dca92"));
+        assert_eq!(b.to_vec(), hex("b2c95eb00c31ad7180ac05b8e83d696e"));
+    }
+
+    fn hexn_from(s: &[u8]) -> [u8; 8] {
+        let mut a = [0u8; 8];
+        a.copy_from_slice(s);
+        a
+    }
+
+    #[test]
+    fn zeroize_clears_the_subkeys() {
+        // What `Drop` runs.
+        let (_, mut key) = encrypt(16);
+        assert!(key.xkey.iter().any(|w| *w != 0));
+        key.zeroize();
+        assert!(key.xkey.iter().all(|w| *w == 0));
+        assert_eq!(key.rounds, 0);
     }
 
     #[test]

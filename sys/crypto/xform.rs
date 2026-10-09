@@ -121,7 +121,7 @@ use alloc::vec::Vec;
 
 use super::aes::{AES_Decrypt, AES_Encrypt, AES_Setkey, AesCtx};
 use super::blf::BlfCtx;
-use super::cast::{CastKey, cast_decrypt, cast_encrypt, cast_setkey};
+use super::cast::CastKey;
 use super::chachapoly::{
     CHACHA20_KEYSIZE, CHACHA20_SALT, Chacha20_Poly1305_Final, Chacha20_Poly1305_Init,
     Chacha20_Poly1305_Reinit, Chacha20_Poly1305_Setkey, Chacha20_Poly1305_Update, Chacha20Ctx,
@@ -449,26 +449,22 @@ fn null_decrypt(_key: &mut Kschedule, _blk: &mut [u8]) {}
 /// `cast5_encrypt`.
 fn cast5_encrypt(key: &mut Kschedule, blk: &mut [u8]) {
     let mut input = [0u8; 8];
-    let mut out = [0u8; 8];
     input.copy_from_slice(&blk[..8]);
-    cast_encrypt(key.cast(), &input, &mut out);
+    let out = key.cast().encrypt(&input);
     blk[..8].copy_from_slice(&out);
 }
 
 /// `cast5_decrypt`.
 fn cast5_decrypt(key: &mut Kschedule, blk: &mut [u8]) {
     let mut input = [0u8; 8];
-    let mut out = [0u8; 8];
     input.copy_from_slice(&blk[..8]);
-    cast_decrypt(key.cast(), &input, &mut out);
+    let out = key.cast().decrypt(&input);
     blk[..8].copy_from_slice(&out);
 }
 
 /// `cast5_setkey`.
 fn cast5_setkey(sched: &mut Kschedule, key: &[u8]) -> Result<(), Errno> {
-    let mut ck = CastKey::default();
-    cast_setkey(&mut ck, key);
-    *sched = Kschedule::Cast(ck);
+    *sched = Kschedule::Cast(CastKey::new(key));
     Ok(())
 }
 

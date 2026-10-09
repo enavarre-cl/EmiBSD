@@ -1155,7 +1155,22 @@ kind = "renamed"
 [[module]]
 rust = "sys/crypto/cast.rs"
 lz = ["sys/crypto/cast.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/cast.rs::cast_setkey"
+native = ["CastKey::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/cast.rs::cast_encrypt"
+native = ["CastKey::encrypt"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/cast.rs::cast_decrypt"
+native = ["CastKey::decrypt"]
+kind = "renamed"
 
 [[module]]
 rust = "sys/crypto/chacha_private.rs"
@@ -1477,7 +1492,7 @@ status = "inherited"
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
 status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs"]
+adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs"]
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
