@@ -1035,7 +1035,57 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/blake2s.rs"
 lz = ["sys/crypto/blake2s.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_set_lastblock"
+native = ["Blake2sState::set_lastblock"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_increment_counter"
+native = ["Blake2sState::increment_counter"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_init_param"
+native = ["Blake2sState::init_param", "Blake2sState::param"]
+kind = "split"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_init"
+native = ["Blake2sState::new"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_init_key"
+native = ["Blake2sState::new_keyed"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_compress"
+native = ["Blake2sState::compress"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_update"
+native = ["Blake2sState::update"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_final"
+native = ["Blake2sState::finalize"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_hmac_digest"
+native = ["blake2s_hmac"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/crypto/blake2s.rs::blake2s_hmac_inplace"
+native = ["blake2s_hmac"]
+kind = "merged"
 
 [[module]]
 rust = "sys/crypto/blf.rs"
@@ -3995,12 +4045,14 @@ status = "inherited"
 [[module]]
 rust = "sys/net/wg_cookie.rs"
 lz = ["sys/net/wg_cookie.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/blake2s.rs"]
 
 [[module]]
 rust = "sys/net/wg_noise.rs"
 lz = ["sys/net/wg_noise.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/crypto/blake2s.rs"]
 
 [[module]]
 rust = "sys/netinet/icmp6.rs"

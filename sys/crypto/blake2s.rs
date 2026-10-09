@@ -58,18 +58,38 @@
 //! on, and an HMAC over it (`blake2s_hmac`, the `HMAC-BLAKE2s` of the Noise `KDF`).
 //!
 //! Upstream: sys/crypto/blake2s.h @ 3ce1f3f79392, sys/crypto/blake2s.c @ 3ce1f3f79392
+//! LZ: sys/crypto/blake2s.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module.
-//! - Inputs and keys are slices; `inlen` and `keylen` are their lengths. `outlen` stays a
-//!   parameter (the digest is truncated to it). `blake2s_final` and `blake2s_hmac` write
-//!   `outlen` bytes to the front of a slice at least that long.
-//! - `blake2s_hmac(out, out, ...)` (the C reads its input before it writes the output, so the
-//!   two may be one buffer, as `wg_noise.c`'s `KDF` does) is [`blake2s_hmac_inplace`]: the
-//!   buffer's first `inlen` bytes are the message and its first `outlen` bytes the result.
 //! - `enum blake2s_lengths` is three constants.
 //! - The `KASSERT`s are `kassert!`; the stack buffers holding key material are wiped with
-//!   `explicit_bzero`, the state by assignment through `crate::crypto::wipe`.
+//!   `explicit_bzero`, the state through `crate::crypto::wipe`.
+//!
+//! ## Redesign
+//! - `struct blake2s_state` and its functions are a type with methods (`docs/IDIOMS.md`, "a
+//!   hash context"): `blake2s_init(state, outlen)` is [`Blake2sState::new`],
+//!   `blake2s_init_key(state, outlen, key, keylen)` is [`Blake2sState::new_keyed`],
+//!   `blake2s_update` is [`Blake2sState::update`] over a slice, and `blake2s_final(state, out)`
+//!   is [`Blake2sState::finalize`], which returns the digest and wipes the state in place (the
+//!   C's `explicit_bzero(state, ..)`). The static helpers (`blake2s_init_param`,
+//!   `blake2s_increment_counter`, `blake2s_set_lastblock`, `blake2s_compress`) are private
+//!   methods.
+//! - The digest length `outlen`, a run-time parameter stored in the state and checked by
+//!   `KASSERT(outlen && outlen <= BLAKE2S_HASH_SIZE)`, is the state's const parameter
+//!   `Blake2sState<N>`: the check is a compile-time assertion (`new`, `new_keyed`), the
+//!   `outlen` field is gone, and `finalize` returns exactly `[u8; N]` instead of writing
+//!   `outlen` bytes into a caller's buffer of unchecked length. Every caller's length was a
+//!   constant (`NOISE_HASH_LEN`, `COOKIE_MAC_SIZE`, `COOKIE_COOKIE_SIZE`, `COOKIE_KEY_SIZE`).
+//! - The one-call [`blake2s`] and [`blake2s_hmac`] return `[u8; N]` the same way (the HMAC's
+//!   `outlen <= BLAKE2S_HASH_SIZE`, unchecked in the C, is the same compile-time assertion).
+//!   LZ's `blake2s_hmac_inplace` (the C's `blake2s_hmac(out, out, ..)`, input and output one
+//!   buffer, as `noise_kdf` uses it) and its `blake2s_hmac_digest` helper merge into
+//!   `blake2s_hmac`: the result is a value, so the caller reads the message from its buffer
+//!   and then writes the MAC over it, with no aliasing to describe.
+//! - `blake2s_compress(state, block, nblocks, inc)` takes whole blocks
+//!   (`&[[u8; BLAKE2S_BLOCK_SIZE]]`), so `nblocks` is their count and no block can be short;
+//!   its `KASSERT` on `inc` is kept. `buflen` is a `usize`.
 
 use libkern::explicit_bzero;
 
@@ -102,24 +122,26 @@ const BLAKE2S_SIGMA: [[u8; 16]; 10] = [
     [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0],
 ];
 
-/// `struct blake2s_state`: a hash in progress.
+/// `struct blake2s_state`: a hash in progress with an `N`-byte digest (1 to
+/// [`BLAKE2S_HASH_SIZE`], the C's `outlen`), from [`Blake2sState::new`] or
+/// [`Blake2sState::new_keyed`] to [`Blake2sState::finalize`].
+///
+/// `Default` is the wiped, all-zero state `finalize` leaves behind, not the start of a hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Blake2sState {
+pub struct Blake2sState<const N: usize> {
     /// `h`: the chained value.
-    pub h: [u32; 8],
+    h: [u32; 8],
     /// `t`: the 64-bit byte counter.
-    pub t: [u32; 2],
+    t: [u32; 2],
     /// `f`: the finalisation flags.
-    pub f: [u32; 2],
+    f: [u32; 2],
     /// `buf`: the block not yet compressed.
-    pub buf: [u8; BLAKE2S_BLOCK_SIZE],
-    /// `buflen`: bytes in `buf`.
-    pub buflen: u32,
-    /// `outlen`: the digest length.
-    pub outlen: u32,
+    buf: [u8; BLAKE2S_BLOCK_SIZE],
+    /// `buflen`: bytes in `buf`, at most a block.
+    buflen: usize,
 }
 
-impl Default for Blake2sState {
+impl<const N: usize> Default for Blake2sState<N> {
     fn default() -> Self {
         Self {
             h: [0; 8],
@@ -127,185 +149,190 @@ impl Default for Blake2sState {
             f: [0; 2],
             buf: [0; BLAKE2S_BLOCK_SIZE],
             buflen: 0,
-            outlen: 0,
         }
     }
 }
 
-/// `blake2s_set_lastblock`.
-fn blake2s_set_lastblock(state: &mut Blake2sState) {
-    state.f[0] = u32::MAX;
-}
+impl<const N: usize> Blake2sState<N> {
+    /// `blake2s_set_lastblock`.
+    fn set_lastblock(&mut self) {
+        self.f[0] = u32::MAX;
+    }
 
-/// `blake2s_increment_counter`.
-fn blake2s_increment_counter(state: &mut Blake2sState, inc: u32) {
-    state.t[0] = state.t[0].wrapping_add(inc);
-    state.t[1] = state.t[1].wrapping_add(u32::from(state.t[0] < inc));
-}
+    /// `blake2s_increment_counter`.
+    fn increment_counter(&mut self, inc: u32) {
+        self.t[0] = self.t[0].wrapping_add(inc);
+        self.t[1] = self.t[1].wrapping_add(u32::from(self.t[0] < inc));
+    }
 
-/// `blake2s_init_param`: the zeroed state with the IV xor the parameter block's first word.
-fn blake2s_init_param(state: &mut Blake2sState, param: u32) {
-    *state = Blake2sState::default();
-    state.h = BLAKE2S_IV;
-    state.h[0] ^= param;
-}
-
-/// `blake2s_init`: an unkeyed hash with a digest of `outlen` bytes.
-pub fn blake2s_init(state: &mut Blake2sState, outlen: usize) {
-    kassert!(!(outlen == 0 || outlen > BLAKE2S_HASH_SIZE));
-    blake2s_init_param(state, 0x01010000 | outlen as u32);
-    state.outlen = outlen as u32;
-}
-
-/// `blake2s_init_key`: a keyed hash (the PRF); the key is padded with zeros to a block that is
-/// hashed first.
-pub fn blake2s_init_key(state: &mut Blake2sState, outlen: usize, key: &[u8]) {
-    let keylen = key.len();
-    let mut block = [0u8; BLAKE2S_BLOCK_SIZE];
-
-    kassert!(
-        !(outlen == 0 || outlen > BLAKE2S_HASH_SIZE || keylen == 0 || keylen > BLAKE2S_KEY_SIZE)
-    );
-
-    blake2s_init_param(state, 0x01010000 | (keylen as u32) << 8 | outlen as u32);
-    state.outlen = outlen as u32;
-    block[..keylen].copy_from_slice(key);
-    blake2s_update(state, &block);
-    explicit_bzero(&mut block);
-}
-
-/// `blake2s_compress`: absorbs `nblocks` whole blocks of `block`, counting `inc` bytes each.
-fn blake2s_compress(state: &mut Blake2sState, block: &[u8], nblocks: usize, inc: u32) {
-    let mut m = [0u32; 16];
-    let mut v = [0u32; 16];
-
-    kassert!(!(nblocks > 1 && inc != BLAKE2S_BLOCK_SIZE as u32));
-
-    for blk in block
-        .as_chunks::<BLAKE2S_BLOCK_SIZE>()
-        .0
-        .iter()
-        .take(nblocks)
-    {
-        blake2s_increment_counter(state, inc);
-        for i in 0..16 {
-            m[i] = u32::from_le_bytes([blk[4 * i], blk[4 * i + 1], blk[4 * i + 2], blk[4 * i + 3]]);
-        }
-        v[..8].copy_from_slice(&state.h);
-        v[8] = BLAKE2S_IV[0];
-        v[9] = BLAKE2S_IV[1];
-        v[10] = BLAKE2S_IV[2];
-        v[11] = BLAKE2S_IV[3];
-        v[12] = BLAKE2S_IV[4] ^ state.t[0];
-        v[13] = BLAKE2S_IV[5] ^ state.t[1];
-        v[14] = BLAKE2S_IV[6] ^ state.f[0];
-        v[15] = BLAKE2S_IV[7] ^ state.f[1];
-
-        // G(r, i, a, b, c, d)
-        let g = |v: &mut [u32; 16], r: usize, i: usize, a: usize, b: usize, c: usize, d: usize| {
-            let s = &BLAKE2S_SIGMA[r];
-            v[a] = v[a].wrapping_add(v[b]).wrapping_add(m[s[2 * i] as usize]);
-            v[d] = (v[d] ^ v[a]).rotate_right(16);
-            v[c] = v[c].wrapping_add(v[d]);
-            v[b] = (v[b] ^ v[c]).rotate_right(12);
-            v[a] = v[a]
-                .wrapping_add(v[b])
-                .wrapping_add(m[s[2 * i + 1] as usize]);
-            v[d] = (v[d] ^ v[a]).rotate_right(8);
-            v[c] = v[c].wrapping_add(v[d]);
-            v[b] = (v[b] ^ v[c]).rotate_right(7);
-        };
-
-        for r in 0..10 {
-            g(&mut v, r, 0, 0, 4, 8, 12);
-            g(&mut v, r, 1, 1, 5, 9, 13);
-            g(&mut v, r, 2, 2, 6, 10, 14);
-            g(&mut v, r, 3, 3, 7, 11, 15);
-            g(&mut v, r, 4, 0, 5, 10, 15);
-            g(&mut v, r, 5, 1, 6, 11, 12);
-            g(&mut v, r, 6, 2, 7, 8, 13);
-            g(&mut v, r, 7, 3, 4, 9, 14);
-        }
-
-        for i in 0..8 {
-            state.h[i] ^= v[i] ^ v[i + 8];
+    /// `blake2s_init_param`: the zeroed state with the IV xor the parameter block's first word.
+    fn init_param(param: u32) -> Self {
+        let mut h = BLAKE2S_IV;
+        h[0] ^= param;
+        Self {
+            h,
+            ..Self::default()
         }
     }
-}
 
-/// `blake2s_update`: adds `input` to the message.
-pub fn blake2s_update(state: &mut Blake2sState, input: &[u8]) {
-    let mut input = input;
-    let fill = BLAKE2S_BLOCK_SIZE - state.buflen as usize;
+    /// The parameter block's first word: digest length, key length, fanout 1, depth 1. Both
+    /// lengths are at most 32 (checked by the callers), so the conversions are exact.
+    fn param(keylen: usize) -> u32 {
+        0x01010000 | (keylen as u32) << 8 | N as u32
+    }
 
-    if input.is_empty() {
-        return;
+    /// `blake2s_init`: an unkeyed hash with an `N`-byte digest.
+    pub fn new() -> Self {
+        // The C's `KASSERT(outlen && outlen <= BLAKE2S_HASH_SIZE)`, at compile time.
+        const { assert!(N >= 1 && N <= BLAKE2S_HASH_SIZE) };
+        Self::init_param(Self::param(0))
     }
-    if input.len() > fill {
-        let buflen = state.buflen as usize;
-        state.buf[buflen..].copy_from_slice(&input[..fill]);
-        let buf = state.buf;
-        blake2s_compress(state, &buf, 1, BLAKE2S_BLOCK_SIZE as u32);
-        state.buflen = 0;
-        input = &input[fill..];
-    }
-    if input.len() > BLAKE2S_BLOCK_SIZE {
-        let nblocks = input.len().div_ceil(BLAKE2S_BLOCK_SIZE);
-        // Hash one less (full) block than strictly possible
-        blake2s_compress(state, input, nblocks - 1, BLAKE2S_BLOCK_SIZE as u32);
-        input = &input[BLAKE2S_BLOCK_SIZE * (nblocks - 1)..];
-    }
-    let buflen = state.buflen as usize;
-    state.buf[buflen..buflen + input.len()].copy_from_slice(input);
-    state.buflen += input.len() as u32;
-}
 
-/// `blake2s_final`: pads and compresses the last block, writes the `outlen`-byte digest to
-/// the front of `out` and wipes the state.
-pub fn blake2s_final(state: &mut Blake2sState, out: &mut [u8]) {
-    blake2s_set_lastblock(state);
-    let buflen = state.buflen as usize;
-    state.buf[buflen..].fill(0); // Padding
-    let buf = state.buf;
-    blake2s_compress(state, &buf, 1, state.buflen);
-    let outlen = state.outlen as usize;
-    for (i, w) in state.h.iter().enumerate() {
-        let b = w.to_le_bytes();
-        for (j, byte) in b.iter().enumerate() {
-            if 4 * i + j < outlen {
-                out[4 * i + j] = *byte;
+    /// `blake2s_init_key`: a keyed hash (the PRF) under a key of 1 to [`BLAKE2S_KEY_SIZE`]
+    /// bytes; the key is padded with zeros to a block that is hashed first.
+    pub fn new_keyed(key: &[u8]) -> Self {
+        // The C's `KASSERT(outlen && outlen <= BLAKE2S_HASH_SIZE ..)`, at compile time.
+        const { assert!(N >= 1 && N <= BLAKE2S_HASH_SIZE) };
+        let keylen = key.len();
+        let mut block = [0u8; BLAKE2S_BLOCK_SIZE];
+
+        kassert!(!(keylen == 0 || keylen > BLAKE2S_KEY_SIZE));
+
+        let mut state = Self::init_param(Self::param(keylen));
+        block[..keylen].copy_from_slice(key);
+        state.update(&block);
+        explicit_bzero(&mut block);
+        state
+    }
+
+    /// `blake2s_compress`: absorbs the whole `blocks`, counting `inc` bytes for each.
+    fn compress(&mut self, blocks: &[[u8; BLAKE2S_BLOCK_SIZE]], inc: u32) {
+        let mut m = [0u32; 16];
+        let mut v = [0u32; 16];
+
+        kassert!(!(blocks.len() > 1 && inc != BLAKE2S_BLOCK_SIZE as u32));
+
+        for blk in blocks {
+            self.increment_counter(inc);
+            for (w, bytes) in m.iter_mut().zip(blk.as_chunks::<4>().0) {
+                *w = u32::from_le_bytes(*bytes);
+            }
+            v[..8].copy_from_slice(&self.h);
+            v[8..].copy_from_slice(&BLAKE2S_IV);
+            v[12] ^= self.t[0];
+            v[13] ^= self.t[1];
+            v[14] ^= self.f[0];
+            v[15] ^= self.f[1];
+
+            // G(r, i, a, b, c, d)
+            let g =
+                |v: &mut [u32; 16], r: usize, i: usize, a: usize, b: usize, c: usize, d: usize| {
+                    let s = &BLAKE2S_SIGMA[r];
+                    v[a] = v[a]
+                        .wrapping_add(v[b])
+                        .wrapping_add(m[usize::from(s[2 * i])]);
+                    v[d] = (v[d] ^ v[a]).rotate_right(16);
+                    v[c] = v[c].wrapping_add(v[d]);
+                    v[b] = (v[b] ^ v[c]).rotate_right(12);
+                    v[a] = v[a]
+                        .wrapping_add(v[b])
+                        .wrapping_add(m[usize::from(s[2 * i + 1])]);
+                    v[d] = (v[d] ^ v[a]).rotate_right(8);
+                    v[c] = v[c].wrapping_add(v[d]);
+                    v[b] = (v[b] ^ v[c]).rotate_right(7);
+                };
+
+            for r in 0..10 {
+                g(&mut v, r, 0, 0, 4, 8, 12);
+                g(&mut v, r, 1, 1, 5, 9, 13);
+                g(&mut v, r, 2, 2, 6, 10, 14);
+                g(&mut v, r, 3, 3, 7, 11, 15);
+                g(&mut v, r, 4, 0, 5, 10, 15);
+                g(&mut v, r, 5, 1, 6, 11, 12);
+                g(&mut v, r, 6, 2, 7, 8, 13);
+                g(&mut v, r, 7, 3, 4, 9, 14);
+            }
+
+            for (i, h) in self.h.iter_mut().enumerate() {
+                *h ^= v[i] ^ v[i + 8];
             }
         }
     }
-    wipe(state);
-}
 
-/// `blake2s`: the hash of `input` in one call, keyed when `key` is not empty.
-pub fn blake2s(out: &mut [u8], input: &[u8], key: &[u8], outlen: usize) {
-    let mut state = Blake2sState::default();
+    /// `blake2s_update`: adds `input` to the message.
+    pub fn update(&mut self, input: &[u8]) {
+        let mut input = input;
+        let fill = BLAKE2S_BLOCK_SIZE - self.buflen;
 
-    kassert!(outlen <= BLAKE2S_HASH_SIZE && key.len() <= BLAKE2S_KEY_SIZE);
-
-    if !key.is_empty() {
-        blake2s_init_key(&mut state, outlen, key);
-    } else {
-        blake2s_init(&mut state, outlen);
+        if input.is_empty() {
+            return;
+        }
+        if input.len() > fill {
+            let (head, rest) = input.split_at(fill);
+            self.buf[self.buflen..].copy_from_slice(head);
+            let buf = self.buf;
+            self.compress(&[buf], BLAKE2S_BLOCK_SIZE as u32);
+            self.buflen = 0;
+            input = rest;
+        }
+        if input.len() > BLAKE2S_BLOCK_SIZE {
+            // Hash one less (full) block than strictly possible
+            let nblocks = input.len().div_ceil(BLAKE2S_BLOCK_SIZE);
+            let (blocks, _) = input.as_chunks::<BLAKE2S_BLOCK_SIZE>();
+            self.compress(&blocks[..nblocks - 1], BLAKE2S_BLOCK_SIZE as u32);
+            input = &input[BLAKE2S_BLOCK_SIZE * (nblocks - 1)..];
+        }
+        self.buf[self.buflen..self.buflen + input.len()].copy_from_slice(input);
+        self.buflen += input.len();
     }
 
-    blake2s_update(&mut state, input);
-    blake2s_final(&mut state, out);
+    /// `blake2s_final`: pads and compresses the last block and returns the `N`-byte digest;
+    /// the state is wiped.
+    pub fn finalize(&mut self) -> [u8; N] {
+        self.set_lastblock();
+        self.buf[self.buflen..].fill(0); // Padding
+        let buf = self.buf;
+        // `buflen` is at most a block, so the conversion is exact.
+        self.compress(&[buf], self.buflen as u32);
+
+        let mut full = [0u8; BLAKE2S_HASH_SIZE];
+        for (out, word) in full.as_chunks_mut::<4>().0.iter_mut().zip(self.h) {
+            *out = word.to_le_bytes();
+        }
+        let mut digest = [0u8; N];
+        digest.copy_from_slice(&full[..N]);
+        explicit_bzero(&mut full);
+        wipe(self);
+        digest
+    }
 }
 
-/// The two passes of HMAC-BLAKE2s over `input`; the digest is `outlen` bytes of `i_hash`.
-fn blake2s_hmac_digest(input: &[u8], key: &[u8]) -> [u8; BLAKE2S_HASH_SIZE] {
-    let mut state = Blake2sState::default();
+/// `blake2s`: the `N`-byte hash of `input` in one call, keyed when `key` is not empty.
+pub fn blake2s<const N: usize>(input: &[u8], key: &[u8]) -> [u8; N] {
+    kassert!(key.len() <= BLAKE2S_KEY_SIZE);
+
+    let mut state = if !key.is_empty() {
+        Blake2sState::<N>::new_keyed(key)
+    } else {
+        Blake2sState::<N>::new()
+    };
+
+    state.update(input);
+    state.finalize()
+}
+
+/// `blake2s_hmac`: HMAC (RFC 2104) with BLAKE2s-256 as the hash; the first `N` bytes of the
+/// MAC (`N` at most [`BLAKE2S_HASH_SIZE`], checked at compile time).
+pub fn blake2s_hmac<const N: usize>(input: &[u8], key: &[u8]) -> [u8; N] {
+    const { assert!(N <= BLAKE2S_HASH_SIZE) };
     let mut x_key = [0u8; BLAKE2S_BLOCK_SIZE];
-    let mut i_hash = [0u8; BLAKE2S_HASH_SIZE];
 
     if key.len() > BLAKE2S_BLOCK_SIZE {
-        blake2s_init(&mut state, BLAKE2S_HASH_SIZE);
-        blake2s_update(&mut state, key);
-        blake2s_final(&mut state, &mut x_key);
+        let mut state = Blake2sState::<BLAKE2S_HASH_SIZE>::new();
+        state.update(key);
+        let mut hashed = state.finalize();
+        x_key[..BLAKE2S_HASH_SIZE].copy_from_slice(&hashed);
+        explicit_bzero(&mut hashed);
     } else {
         x_key[..key.len()].copy_from_slice(key);
     }
@@ -314,41 +341,26 @@ fn blake2s_hmac_digest(input: &[u8], key: &[u8]) -> [u8; BLAKE2S_HASH_SIZE] {
         *b ^= 0x36;
     }
 
-    blake2s_init(&mut state, BLAKE2S_HASH_SIZE);
-    blake2s_update(&mut state, &x_key);
-    blake2s_update(&mut state, input);
-    blake2s_final(&mut state, &mut i_hash);
+    let mut state = Blake2sState::<BLAKE2S_HASH_SIZE>::new();
+    state.update(&x_key);
+    state.update(input);
+    let mut i_hash = state.finalize();
 
     for b in x_key.iter_mut() {
         *b ^= 0x5c ^ 0x36;
     }
 
-    let i_hash_in = i_hash;
-    blake2s_init(&mut state, BLAKE2S_HASH_SIZE);
-    blake2s_update(&mut state, &x_key);
-    blake2s_update(&mut state, &i_hash_in);
-    blake2s_final(&mut state, &mut i_hash);
+    let mut state = Blake2sState::<BLAKE2S_HASH_SIZE>::new();
+    state.update(&x_key);
+    state.update(&i_hash);
+    let mut o_hash = state.finalize();
 
+    let mut out = [0u8; N];
+    out.copy_from_slice(&o_hash[..N]);
     explicit_bzero(&mut x_key);
-    i_hash
-}
-
-/// `blake2s_hmac`: HMAC (RFC 2104) with BLAKE2s-256 as the hash; the first `outlen` bytes of
-/// the MAC go to the front of `out`.
-pub fn blake2s_hmac(out: &mut [u8], input: &[u8], key: &[u8], outlen: usize) {
-    let mut i_hash = blake2s_hmac_digest(input, key);
-
-    out[..outlen].copy_from_slice(&i_hash[..outlen]);
     explicit_bzero(&mut i_hash);
-}
-
-/// `blake2s_hmac(buf, buf, ...)`: the message is `buf[..inlen]`, replaced by the first
-/// `outlen` bytes of its MAC.
-pub fn blake2s_hmac_inplace(buf: &mut [u8], inlen: usize, key: &[u8], outlen: usize) {
-    let mut i_hash = blake2s_hmac_digest(&buf[..inlen], key);
-
-    buf[..outlen].copy_from_slice(&i_hash[..outlen]);
-    explicit_bzero(&mut i_hash);
+    explicit_bzero(&mut o_hash);
+    out
 }
 /* </CODE> */
 
@@ -357,10 +369,11 @@ pub fn blake2s_hmac_inplace(buf: &mut [u8], inlen: usize, key: &[u8], outlen: us
 mod tests {
     // Known-answer tests for BLAKE2s: RFC 7693 appendix B ("abc") and digests of messages around
     // the block size, plain and keyed, with the HMAC built on it; the expected values come from
-    // Python's `hashlib.blake2s` and `hmac`.
+    // Python's `hashlib.blake2s` and `hmac`. A property test: random keys (none or 1 to 32
+    // bytes) and random splits give the one-call hash, for 32- and 16-byte digests.
 
     use super::*;
-    use crate::crypto::testutil::{c_table, hex};
+    use crate::crypto::testutil::{XorShift, c_table, hex};
 
     extern crate std;
     use std::vec::Vec;
@@ -381,20 +394,18 @@ mod tests {
         k
     }
 
-    fn hash(input: &[u8], key: &[u8], outlen: usize) -> Vec<u8> {
-        let mut out = std::vec![0u8; outlen];
-        blake2s(&mut out, input, key, outlen);
-        out
+    fn hash<const N: usize>(input: &[u8], key: &[u8]) -> Vec<u8> {
+        blake2s::<N>(input, key).to_vec()
     }
 
     #[test]
     fn rfc7693_appendix_b() {
         assert_eq!(
-            hash(b"abc", &[], 32),
+            hash::<32>(b"abc", &[]),
             hex("508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982")
         );
         assert_eq!(
-            hash(b"", &[], 32),
+            hash::<32>(b"", &[]),
             hex("69217a3079908094e11121d042354a7c1f55b6482ca1a51e1b250dfd1ed0eef9")
         );
     }
@@ -447,11 +458,11 @@ mod tests {
         let d = data();
         let k = key();
         for (n, plain, keyed) in PLAIN_AND_KEYED {
-            assert_eq!(hash(&d[..*n], &[], 32), hex(plain), "plain {n}");
-            assert_eq!(hash(&d[..*n], &k, 32), hex(keyed), "keyed {n}");
+            assert_eq!(hash::<32>(&d[..*n], &[]), hex(plain), "plain {n}");
+            assert_eq!(hash::<32>(&d[..*n], &k), hex(keyed), "keyed {n}");
         }
         assert_eq!(
-            hash(b"", &k, 32),
+            hash::<32>(b"", &k),
             hex("48a8997da407876b3d79c0d92325ad3b89cbb754d86ab71aee047ad345fd2c49")
         );
     }
@@ -462,21 +473,17 @@ mod tests {
         let k = key();
         for (n, plain, keyed) in PLAIN_AND_KEYED {
             for chunk in [1usize, 5, 63, 64, 65, 100] {
-                let mut st = Blake2sState::default();
-                let mut out = [0u8; 32];
-                blake2s_init(&mut st, 32);
+                let mut st = Blake2sState::<32>::new();
                 for piece in d[..*n].chunks(chunk) {
-                    blake2s_update(&mut st, piece);
+                    st.update(piece);
                 }
-                blake2s_final(&mut st, &mut out);
-                assert_eq!(out.to_vec(), hex(plain), "plain {n} by {chunk}");
+                assert_eq!(st.finalize().to_vec(), hex(plain), "plain {n} by {chunk}");
 
-                blake2s_init_key(&mut st, 32, &k);
+                let mut st = Blake2sState::<32>::new_keyed(&k);
                 for piece in d[..*n].chunks(chunk) {
-                    blake2s_update(&mut st, piece);
+                    st.update(piece);
                 }
-                blake2s_final(&mut st, &mut out);
-                assert_eq!(out.to_vec(), hex(keyed), "keyed {n} by {chunk}");
+                assert_eq!(st.finalize().to_vec(), hex(keyed), "keyed {n} by {chunk}");
             }
         }
     }
@@ -486,18 +493,16 @@ mod tests {
         // WireGuard's cookies use 16-byte keyed outputs: the digest length is in the parameter block.
         let d = data();
         assert_eq!(
-            hash(&d[..100], &key()[..16], 16),
+            hash::<16>(&d[..100], &key()[..16]),
             hex("56301549e674c3b72a0e1dafb7a2c620")
         );
     }
 
     #[test]
     fn final_wipes_the_state() {
-        let mut st = Blake2sState::default();
-        let mut out = [0u8; 32];
-        blake2s_init_key(&mut st, 32, &key());
-        blake2s_update(&mut st, b"secret");
-        blake2s_final(&mut st, &mut out);
+        let mut st = Blake2sState::<32>::new_keyed(&key());
+        st.update(b"secret");
+        let _ = st.finalize();
         assert_eq!(st, Blake2sState::default());
     }
 
@@ -533,23 +538,64 @@ mod tests {
         ];
         for (klen, want) in cases {
             let k: Vec<u8> = (0..*klen).map(|i| ((7 * i + 3) % 256) as u8).collect();
-            let mut out = [0u8; 32];
-            blake2s_hmac(&mut out, &d[..77], &k, 32);
+            let out: [u8; 32] = blake2s_hmac(&d[..77], &k);
             assert_eq!(out.to_vec(), hex(want), "key length {klen}");
 
-            // The in-place form WireGuard's KDF uses: the message at the front of the buffer.
-            let mut buf = [0u8; 77];
-            buf.copy_from_slice(&d[..77]);
+            // The pattern of WireGuard's KDF (the C's `blake2s_hmac(out, out, ..)`): the MAC of
+            // the message at the front of a buffer, written over that front.
             let mut big = [0u8; 77];
-            big.copy_from_slice(&buf);
-            blake2s_hmac_inplace(&mut big, 77, &k, 32);
-            assert_eq!(big[..32].to_vec(), hex(want), "in place, key length {klen}");
-            assert_eq!(big[32..], buf[32..], "bytes past the output are left alone");
+            big.copy_from_slice(&d[..77]);
+            let mac: [u8; 32] = blake2s_hmac(&big, &k);
+            big[..32].copy_from_slice(&mac);
+            assert_eq!(
+                big[..32].to_vec(),
+                hex(want),
+                "over the input, key length {klen}"
+            );
+            assert_eq!(big[32..], d[32..77], "bytes past the output are left alone");
 
             // A truncated output is the front of the full one.
-            let mut short = [0u8; 20];
-            blake2s_hmac(&mut short, &d[..77], &k, 20);
+            let short: [u8; 20] = blake2s_hmac(&d[..77], &k);
             assert_eq!(short.to_vec(), hex(want)[..20].to_vec());
+        }
+    }
+
+    #[test]
+    fn random_splits_give_the_one_call_hash() {
+        let mut rng = XorShift::new(0x626c_616b_6532_7370);
+        for _ in 0..200 {
+            let key_len = rng.below(BLAKE2S_KEY_SIZE + 1);
+            let k = rng.bytes(key_len);
+            let len = rng.below(400);
+            let msg = rng.bytes(len);
+
+            let mut long = if k.is_empty() {
+                Blake2sState::<32>::new()
+            } else {
+                Blake2sState::<32>::new_keyed(&k)
+            };
+            for piece in rng.split(&msg) {
+                long.update(piece);
+            }
+            assert_eq!(
+                long.finalize(),
+                blake2s::<32>(&msg, &k),
+                "32, {key_len}, {len}"
+            );
+
+            let mut short = if k.is_empty() {
+                Blake2sState::<16>::new()
+            } else {
+                Blake2sState::<16>::new_keyed(&k)
+            };
+            for piece in rng.split(&msg) {
+                short.update(piece);
+            }
+            assert_eq!(
+                short.finalize(),
+                blake2s::<16>(&msg, &k),
+                "16, {key_len}, {len}"
+            );
         }
     }
 

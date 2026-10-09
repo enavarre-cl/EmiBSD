@@ -74,9 +74,7 @@ use core::ptr::{self, NonNull};
 
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
-use crate::crypto::blake2s::{
-    Blake2sState, blake2s_final, blake2s_init, blake2s_init_key, blake2s_update,
-};
+use crate::crypto::blake2s::Blake2sState;
 use crate::crypto::chachapoly::{
     XCHACHA20POLY1305_NONCE_SIZE, xchacha20poly1305_decrypt, xchacha20poly1305_encrypt,
 };
@@ -579,29 +577,26 @@ fn cookie_precompute_key(
     input: &[u8; COOKIE_INPUT_SIZE],
     label: &[u8],
 ) {
-    let mut blake = Blake2sState::default();
+    let mut blake = Blake2sState::<COOKIE_KEY_SIZE>::new();
 
-    blake2s_init(&mut blake, COOKIE_KEY_SIZE);
-    blake2s_update(&mut blake, label);
-    blake2s_update(&mut blake, input);
-    blake2s_final(&mut blake, key);
+    blake.update(label);
+    blake.update(input);
+    *key = blake.finalize();
 }
 
 /// `cookie_macs_mac1`: `mac1 = MAC(key, buf)`.
 fn cookie_macs_mac1(cm: &mut CookieMacs, buf: &[u8], key: &[u8; COOKIE_KEY_SIZE]) {
-    let mut state = Blake2sState::default();
-    blake2s_init_key(&mut state, COOKIE_MAC_SIZE, key);
-    blake2s_update(&mut state, buf);
-    blake2s_final(&mut state, &mut cm.mac1);
+    let mut state = Blake2sState::<COOKIE_MAC_SIZE>::new_keyed(key);
+    state.update(buf);
+    cm.mac1 = state.finalize();
 }
 
 /// `cookie_macs_mac2`: `mac2 = MAC(cookie, buf || mac1)`.
 fn cookie_macs_mac2(cm: &mut CookieMacs, buf: &[u8], key: &[u8; COOKIE_COOKIE_SIZE]) {
-    let mut state = Blake2sState::default();
-    blake2s_init_key(&mut state, COOKIE_MAC_SIZE, key);
-    blake2s_update(&mut state, buf);
-    blake2s_update(&mut state, &cm.mac1);
-    blake2s_final(&mut state, &mut cm.mac2);
+    let mut state = Blake2sState::<COOKIE_MAC_SIZE>::new_keyed(key);
+    state.update(buf);
+    state.update(&cm.mac1);
+    cm.mac2 = state.finalize();
 }
 
 /// `cookie_timer_expired`: is `birthdate` unset, or more than `sec` seconds and `nsec`
@@ -621,19 +616,19 @@ fn cookie_timer_expired(birthdate: &Timespec, sec: Time, nsec: i64) -> bool {
 /// The `AF_INET6` half of `cookie_checker_make_cookie`: hashes `sin6_addr` and `sin6_port`;
 /// `false` when `sa` is not an IPv6 address (always, without `INET6`).
 #[cfg(feature = "inet6")]
-fn cookie_update_in6(state: &mut Blake2sState, sa: &SockaddrStorage) -> bool {
+fn cookie_update_in6(state: &mut Blake2sState<COOKIE_COOKIE_SIZE>, sa: &SockaddrStorage) -> bool {
     if sa.ss_family != AF_INET6 {
         return false;
     }
     let sin6 = sin6_of(sa);
-    blake2s_update(state, &sin6.sin6_addr.s6_addr);
-    blake2s_update(state, &sin6.sin6_port.to_ne_bytes());
+    state.update(&sin6.sin6_addr.s6_addr);
+    state.update(&sin6.sin6_port.to_ne_bytes());
     true
 }
 
 /// The `AF_INET6` half of `cookie_checker_make_cookie` (without `INET6`: never).
 #[cfg(not(feature = "inet6"))]
-fn cookie_update_in6(_state: &mut Blake2sState, _sa: &SockaddrStorage) -> bool {
+fn cookie_update_in6(_state: &mut Blake2sState<COOKIE_COOKIE_SIZE>, _sa: &SockaddrStorage) -> bool {
     false
 }
 
@@ -644,8 +639,6 @@ fn cookie_checker_make_cookie(
     cookie: &mut [u8; COOKIE_COOKIE_SIZE],
     sa: &SockaddrStorage,
 ) {
-    let mut state = Blake2sState::default();
-
     rw_enter_write(&cc.cc_secret_lock);
     if cookie_timer_expired(&cc.cc_secret_birthdate.get(), COOKIE_SECRET_MAX_AGE, 0) {
         let mut secret = [0u8; COOKIE_SECRET_SIZE];
@@ -655,17 +648,17 @@ fn cookie_checker_make_cookie(
         cc.cc_secret_birthdate.set(getnanouptime());
     }
     let mut secret = cc.cc_secret.get();
-    blake2s_init_key(&mut state, COOKIE_COOKIE_SIZE, &secret);
+    let mut state = Blake2sState::<COOKIE_COOKIE_SIZE>::new_keyed(&secret);
     explicit_bzero(&mut secret);
     rw_exit_write(&cc.cc_secret_lock);
 
     if sa.ss_family == AF_INET {
         let sin = sin_of(sa);
-        blake2s_update(&mut state, &sin.sin_addr.s_addr.to_ne_bytes());
-        blake2s_update(&mut state, &sin.sin_port.to_ne_bytes());
-        blake2s_final(&mut state, cookie);
+        state.update(&sin.sin_addr.s_addr.to_ne_bytes());
+        state.update(&sin.sin_port.to_ne_bytes());
+        *cookie = state.finalize();
     } else if cookie_update_in6(&mut state, sa) {
-        blake2s_final(&mut state, cookie);
+        *cookie = state.finalize();
     } else {
         arc4random_buf(cookie);
     }

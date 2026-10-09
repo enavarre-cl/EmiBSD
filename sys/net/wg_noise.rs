@@ -99,10 +99,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
-use crate::crypto::blake2s::{
-    BLAKE2S_HASH_SIZE, Blake2sState, blake2s, blake2s_final, blake2s_hmac, blake2s_hmac_inplace,
-    blake2s_init, blake2s_update,
-};
+use crate::crypto::blake2s::{BLAKE2S_HASH_SIZE, Blake2sState, blake2s, blake2s_hmac};
 use crate::crypto::chachapoly::{
     CHACHA20POLY1305_AUTHTAG_SIZE, CHACHA20POLY1305_KEY_SIZE, chacha20poly1305_decrypt,
     chacha20poly1305_decrypt_inplace, chacha20poly1305_encrypt_inplace,
@@ -1295,7 +1292,6 @@ fn noise_kdf(
     ck: &[u8; NOISE_HASH_LEN],
 ) {
     let mut out = [0u8; BLAKE2S_HASH_SIZE + 1];
-    let mut sec = [0u8; BLAKE2S_HASH_SIZE];
     let a_len = a.as_ref().map_or(0, |a| a.len());
     let b_len = b.as_ref().map_or(0, |b| b.len());
     let c_len = c.as_ref().map_or(0, |c| c.len());
@@ -1306,17 +1302,19 @@ fn noise_kdf(
     kassert!(!(b.is_some() || c.is_some()) || a_len != 0);
     kassert!(c.is_none() || b_len != 0);
 
-    'out: {
-        // Extract entropy from "x" into sec
-        blake2s_hmac(&mut sec, x, ck, BLAKE2S_HASH_SIZE);
+    // Extract entropy from "x" into sec
+    let mut sec: [u8; BLAKE2S_HASH_SIZE] = blake2s_hmac(x, ck);
 
+    'out: {
         let Some(a) = a.filter(|a| !a.is_empty()) else {
             break 'out;
         };
 
         // Expand first key: key = sec, data = 0x1
         out[0] = 1;
-        blake2s_hmac_inplace(&mut out, 1, &sec, BLAKE2S_HASH_SIZE);
+        let mut mac: [u8; BLAKE2S_HASH_SIZE] = blake2s_hmac(&out[..1], &sec);
+        out[..BLAKE2S_HASH_SIZE].copy_from_slice(&mac);
+        explicit_bzero(&mut mac);
         a.copy_from_slice(&out[..a_len]);
 
         let Some(b) = b.filter(|b| !b.is_empty()) else {
@@ -1325,7 +1323,9 @@ fn noise_kdf(
 
         // Expand second key: key = sec, data = "a" || 0x2
         out[BLAKE2S_HASH_SIZE] = 2;
-        blake2s_hmac_inplace(&mut out, BLAKE2S_HASH_SIZE + 1, &sec, BLAKE2S_HASH_SIZE);
+        let mut mac: [u8; BLAKE2S_HASH_SIZE] = blake2s_hmac(&out, &sec);
+        out[..BLAKE2S_HASH_SIZE].copy_from_slice(&mac);
+        explicit_bzero(&mut mac);
         b.copy_from_slice(&out[..b_len]);
 
         let Some(c) = c.filter(|c| !c.is_empty()) else {
@@ -1334,7 +1334,9 @@ fn noise_kdf(
 
         // Expand third key: key = sec, data = "b" || 0x3
         out[BLAKE2S_HASH_SIZE] = 3;
-        blake2s_hmac_inplace(&mut out, BLAKE2S_HASH_SIZE + 1, &sec, BLAKE2S_HASH_SIZE);
+        let mut mac: [u8; BLAKE2S_HASH_SIZE] = blake2s_hmac(&out, &sec);
+        out[..BLAKE2S_HASH_SIZE].copy_from_slice(&mac);
+        explicit_bzero(&mut mac);
         c.copy_from_slice(&out[..c_len]);
     }
 
@@ -1382,12 +1384,11 @@ fn noise_mix_ss(
 
 /// `noise_mix_hash`: `hash = HASH(hash || src)`.
 fn noise_mix_hash(hash: &mut [u8; NOISE_HASH_LEN], src: &[u8]) {
-    let mut blake = Blake2sState::default();
+    let mut blake = Blake2sState::<NOISE_HASH_LEN>::new();
 
-    blake2s_init(&mut blake, NOISE_HASH_LEN);
-    blake2s_update(&mut blake, hash);
-    blake2s_update(&mut blake, src);
-    blake2s_final(&mut blake, hash);
+    blake.update(hash);
+    blake.update(src);
+    *hash = blake.finalize();
 }
 
 /// `noise_mix_psk`: mixes the pre-shared key into the chaining key, the hash and `key`.
@@ -1412,13 +1413,11 @@ fn noise_param_init(
     hash: &mut [u8; NOISE_HASH_LEN],
     s: &[u8; NOISE_PUBLIC_KEY_LEN],
 ) {
-    let mut blake = Blake2sState::default();
-
-    blake2s(ck, NOISE_HANDSHAKE_NAME, &[], NOISE_HASH_LEN);
-    blake2s_init(&mut blake, NOISE_HASH_LEN);
-    blake2s_update(&mut blake, ck);
-    blake2s_update(&mut blake, NOISE_IDENTIFIER_NAME);
-    blake2s_final(&mut blake, hash);
+    *ck = blake2s(NOISE_HANDSHAKE_NAME, &[]);
+    let mut blake = Blake2sState::<NOISE_HASH_LEN>::new();
+    blake.update(ck);
+    blake.update(NOISE_IDENTIFIER_NAME);
+    *hash = blake.finalize();
 
     noise_mix_hash(hash, s);
 }
@@ -2064,12 +2063,10 @@ pub(crate) mod tests {
             hex("60e26daef327efc02ec335e2a025d2d016eb4206f87277f52d38d1988b78cd36")
         );
         // Hi, then HASH(Hi || s): the responder's static key mixed in.
-        let mut hi = [0u8; NOISE_HASH_LEN];
-        let mut blake = Blake2sState::default();
-        blake2s_init(&mut blake, NOISE_HASH_LEN);
-        blake2s_update(&mut blake, &ck);
-        blake2s_update(&mut blake, NOISE_IDENTIFIER_NAME);
-        blake2s_final(&mut blake, &mut hi);
+        let mut blake = Blake2sState::<NOISE_HASH_LEN>::new();
+        blake.update(&ck);
+        blake.update(NOISE_IDENTIFIER_NAME);
+        let hi = blake.finalize();
         assert_eq!(
             hi.to_vec(),
             hex("2211b361081ac566691243db458ad5322d9c6c662293e8b70ee19c65ba079ef3")
