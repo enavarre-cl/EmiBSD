@@ -333,6 +333,33 @@ pub fn bus_space_write_raw_multi_2(
     }
 }
 
+/// `bus_space_read_raw_multi_4(9)`: reads `values.len() / 4` 4-byte words from the one
+/// location `offset` into `values` in the bus's byte order, without swapping (`rep insl` on
+/// amd64; wdc(4)'s 32-bit data transfers).
+pub fn bus_space_read_raw_multi_4(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    values: &mut [u8],
+) {
+    for w in values.as_chunks_mut::<4>().0.iter_mut() {
+        w.copy_from_slice(&bus_space_read_4(t, h, offset).to_ne_bytes());
+    }
+}
+
+/// `bus_space_write_raw_multi_4(9)`: writes the 4-byte words of `values` to the one location
+/// `offset`, as [`bus_space_read_raw_multi_4`] reads them.
+pub fn bus_space_write_raw_multi_4(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    values: &[u8],
+) {
+    for w in values.as_chunks::<4>().0.iter() {
+        bus_space_write_4(t, h, offset, u32::from_ne_bytes(*w));
+    }
+}
+
 /// `bus_space_copy_2(9)` on the selected machine.
 pub fn bus_space_copy_2(
     t: BusSpaceTag,

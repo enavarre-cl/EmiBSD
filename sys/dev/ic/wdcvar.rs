@@ -86,6 +86,8 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::dev::ata::atavar::AtaDriveDatas;
+use crate::dev::ic::wdc::wdc_wait_for_status;
+use crate::dev::ic::wdcreg::{WDCS_DRDY, WDCS_DRQ};
 use crate::kern::subr_prf::panic;
 use crate::machine::bus::{BusSize, BusSpaceHandle, BusSpaceTag};
 use crate::queue_adapter;
@@ -749,6 +751,64 @@ impl WdcXfer {
     pub fn clr(&self, f: u32) {
         self.c_flags.set(self.c_flags.get() & !f);
     }
+
+    /// `xfer->chp`, which `wdc_exec_xfer` sets. Panics where the C would dereference NULL.
+    pub fn chp(&self) -> &ChannelSoftc {
+        match self.chp.get() {
+            // SAFETY: `wdc_exec_xfer` points `chp` at the channel the transfer is queued on,
+            // which outlives its queued transfers (`wdcdetach` kills them first).
+            Some(chp) => unsafe { chp.as_ref() },
+            None => panic(format_args!("wdc_xfer {:p} has no channel", self)),
+        }
+    }
+
+    /// `xfer->c_start(chp, xfer)`.
+    pub fn start(&self, chp: &ChannelSoftc) {
+        match self.c_start.get() {
+            Some(f) => f(chp, self),
+            None => panic(format_args!("wdc_xfer {:p} has no c_start", self)),
+        }
+    }
+
+    /// `xfer->c_intr(chp, xfer, irq)`.
+    pub fn intr(&self, chp: &ChannelSoftc, irq: i32) -> i32 {
+        match self.c_intr.get() {
+            Some(f) => f(chp, self, irq),
+            None => panic(format_args!("wdc_xfer {:p} has no c_intr", self)),
+        }
+    }
+
+    /// `(*xfer->c_kill_xfer)(chp, xfer)`.
+    pub fn kill(&self, chp: &ChannelSoftc) {
+        match self.c_kill_xfer.get() {
+            Some(f) => f(chp, self),
+            None => panic(format_args!("wdc_xfer {:p} has no c_kill_xfer", self)),
+        }
+    }
+}
+
+/// `wdcwait(chp, status, mask, timeout)`: waits up to `timeout` ms for the drive to be !BSY
+/// with its `status` bits equal to `mask`.
+///
+/// ST506 spec says that if READY or SEEKCMPLT go off, then the read or write command is
+/// aborted.
+pub fn wdcwait(chp: &ChannelSoftc, status: u8, mask: u8, timeout: i32) -> Result<(), Errno> {
+    wdc_wait_for_status(chp, status, mask, timeout).map(|_| ())
+}
+
+/// `wait_for_drq(chp, timeout)`.
+pub fn wait_for_drq(chp: &ChannelSoftc, timeout: i32) -> Result<(), Errno> {
+    wdcwait(chp, WDCS_DRQ, WDCS_DRQ, timeout)
+}
+
+/// `wait_for_unbusy(chp, timeout)`.
+pub fn wait_for_unbusy(chp: &ChannelSoftc, timeout: i32) -> Result<(), Errno> {
+    wdcwait(chp, 0, 0, timeout)
+}
+
+/// `wait_for_ready(chp, timeout)`.
+pub fn wait_for_ready(chp: &ChannelSoftc, timeout: i32) -> Result<(), Errno> {
+    wdcwait(chp, WDCS_DRDY, WDCS_DRDY, timeout)
 }
 
 /* </CODE> */

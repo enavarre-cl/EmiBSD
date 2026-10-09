@@ -69,6 +69,7 @@ pub mod vga;
 pub mod vga_subr;
 pub mod vgareg;
 pub mod vgavar;
+pub mod wdc;
 pub mod wdcevent;
 pub mod wdcreg;
 pub mod wdcvar;
