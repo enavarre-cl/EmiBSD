@@ -1,0 +1,197 @@
+# Per-subsystem unsafe budget: the kernel total (blocks + fn + impl + trait + other)
+# each subsystem may not exceed. `cargo xtask unsafe-report --check` (in `just ci`) fails
+# when one does; `--write` lowers a budget to the current count and never raises it.
+# Raising a budget is a commit of its own, with the reason in the body
+# (.claude/rules/unsafe-budget.md). Names are unsafe-report's row names.
+
+[[subsystem]]
+name = "(crate root)"
+total = 0
+
+[[subsystem]]
+name = "arch"
+total = 0
+
+[[subsystem]]
+name = "arch/amd64"
+total = 831
+
+[[subsystem]]
+name = "arch/arm64"
+total = 940
+
+[[subsystem]]
+name = "arch/host"
+total = 37
+
+[[subsystem]]
+name = "conf"
+total = 2
+
+[[subsystem]]
+name = "crypto"
+total = 5
+
+[[subsystem]]
+name = "ddb"
+total = 15
+
+[[subsystem]]
+name = "dev"
+total = 398
+
+[[subsystem]]
+name = "dev/acpi"
+total = 205
+
+[[subsystem]]
+name = "dev/ata"
+total = 44
+
+[[subsystem]]
+name = "dev/efi"
+total = 8
+
+[[subsystem]]
+name = "dev/fdt"
+total = 94
+
+[[subsystem]]
+name = "dev/gpio"
+total = 18
+
+[[subsystem]]
+name = "dev/hid"
+total = 12
+
+[[subsystem]]
+name = "dev/i2c"
+total = 7
+
+[[subsystem]]
+name = "dev/ic"
+total = 406
+
+[[subsystem]]
+name = "dev/isa"
+total = 17
+
+[[subsystem]]
+name = "dev/microcode"
+total = 0
+
+[[subsystem]]
+name = "dev/mii"
+total = 23
+
+[[subsystem]]
+name = "dev/ofw"
+total = 21
+
+[[subsystem]]
+name = "dev/pci"
+total = 473
+
+[[subsystem]]
+name = "dev/puc"
+total = 4
+
+[[subsystem]]
+name = "dev/pv"
+total = 176
+
+[[subsystem]]
+name = "dev/rasops"
+total = 251
+
+[[subsystem]]
+name = "dev/usb"
+total = 528
+
+[[subsystem]]
+name = "dev/wscons"
+total = 335
+
+[[subsystem]]
+name = "dev/wsfont"
+total = 25
+
+[[subsystem]]
+name = "init"
+total = 11
+
+[[subsystem]]
+name = "isofs"
+total = 89
+
+[[subsystem]]
+name = "kern"
+total = 1178
+
+[[subsystem]]
+name = "lib/libkern"
+total = 10
+
+[[subsystem]]
+name = "lib/libsa"
+total = 84
+
+[[subsystem]]
+name = "lib/libz"
+total = 2
+
+[[subsystem]]
+name = "machine"
+total = 82
+
+[[subsystem]]
+name = "miscfs"
+total = 37
+
+[[subsystem]]
+name = "msdosfs"
+total = 60
+
+[[subsystem]]
+name = "net"
+total = 1579
+
+[[subsystem]]
+name = "netinet"
+total = 553
+
+[[subsystem]]
+name = "netinet6"
+total = 355
+
+[[subsystem]]
+name = "nfs"
+total = 143
+
+[[subsystem]]
+name = "ntfs"
+total = 54
+
+[[subsystem]]
+name = "scsi"
+total = 149
+
+[[subsystem]]
+name = "stand"
+total = 235
+
+[[subsystem]]
+name = "sys"
+total = 394
+
+[[subsystem]]
+name = "tmpfs"
+total = 24
+
+[[subsystem]]
+name = "ufs"
+total = 228
+
+[[subsystem]]
+name = "uvm"
+total = 215

@@ -1,4 +1,5 @@
 /target
 /reference/openbsd-src/
+/reference/emibsd-lz/
 *.img
 .DS_Store

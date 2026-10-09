@@ -6,7 +6,7 @@ Four tiers. Every change lands with the tier it belongs to.
    page-allocator math, queue adapters, formatting) runs on macOS through `sys/arch/host`.
    Every new `pub fn` with testable logic gets a test in the same file: an inline
    `#[cfg(test)] mod tests` in the `<TESTS>` zone at the end, whatever its length (there is no
-   `tests.rs`; `rust-kernel.md`, file layout). `cargo xtask ports check` rejects a `tests.rs`, a
+   `tests.rs`; `rust-kernel.md`, file layout). `cargo xtask lz check` rejects a `tests.rs`, a
    `mod tests` outside `<TESTS>` and a `<TESTS>` zone without one.
    Table-driven tests for C-compatible behaviour (`strlcpy` return values, `crc32` vectors).
    The host tests share one process, and `setup_real_memory` (under
@@ -26,7 +26,9 @@ Four tiers. Every change lands with the tier it belongs to.
    (`errno.h`, `param.h`, syscall numbers). They parse simple `#define` lines, nothing more.
 3. **QEMU smoke tests**: `just smoke`. Boot both archs headless, assert serial lines and the exit
    code (amd64 `isa-debug-exit`, arm64 semihosting). Every change to boot, console, traps or
-   scheduling adds or updates an expectation in `tools/xtask`.
+   scheduling adds or updates an expectation in `tools/xtask`; a redesign that changes a serial
+   line the smokes assert updates the expectation in the same commit; a line userland prints
+   never changes.
    Every smoke and smoke2 run boots the `multiprocessor` kernel (recipes built with
    `--features qemu,multiprocessor`). Since the user's decision of 2026-10-07 (replacing the
    `-smp 4` everywhere of 2026-10-03) the CPU count is the justfile's `smp` variable,
@@ -66,6 +68,13 @@ Four tiers. Every change lands with the tier it belongs to.
    branding, the snapshot's gap to the pin), an entry in `tools/xtask/diff-openbsd/
    expected.toml` with its reason, kept alone in its own step. An unported part that gets
    ported removes its entry. Scenario steps print only what is deterministic, or normalize it.
+   Run it also before any commit in a security-sensitive area (`security-review.md`) and at
+   every `N` milestone close.
+5. **Lineage and budget checks**, part of `just ci`: `cargo xtask lz check` (`lineage.md`),
+   `cargo xtask lz drift --strict` (no untriaged LZ commit, `lz-sync.md`) and
+   `cargo xtask unsafe-report --check` (`unsafe-budget.md`). A milestone close is `just ci`,
+   `just ci-full`, `just diff-openbsd` equal, `cargo xtask lz drift --security` empty, and the
+   numbers in the closing commit.
 
 Always:
 

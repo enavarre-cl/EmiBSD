@@ -6,7 +6,7 @@
 
 <p align="center"><em>Ferffy, the EmiBSD mascot: half Ferris (Rust's crab), half Puffy (OpenBSD's pufferfish).</em></p>
 
-<p align="center"><strong>The OpenBSD kernel, re-implemented in Rust, one file at a time.</strong></p>
+<p align="center"><strong>An operating system in Rust, grown from the faithful port of the OpenBSD kernel.</strong></p>
 
 <p align="center">License: ISC · Rust: stable (1.98.1) · Targets: amd64, arm64 · Runs in: QEMU</p>
 
@@ -15,59 +15,44 @@
 
 ## What is this
 
-- A file-by-file port of the OpenBSD kernel, pinned to commit `3ce1f3f79392` of
-  [openbsd/src](https://github.com/openbsd/src) (`reference/PINNED.md`).
-- Not a new kernel design, not a Rust-for-Linux style hybrid, not a wrapper around C.
-- The C sources are the specification. Names, structure and semantics stay OpenBSD's.
-  Every deviation is written down, in the file and in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- A standalone `#![no_std]` kernel for amd64 and arm64, booted by Limine, run in QEMU.
+- An operating system in Rust derived from [EmiBSD.LZ](https://github.com/enavarre-cl/EmiBSD.LZ),
+  the faithful file-by-file port of the OpenBSD kernel, synced to its commit `f5985f1d055a` (tag
+  `lz-origin`; [lz/PINNED.md](lz/PINNED.md)). LZ ports OpenBSD; EmiBSD redesigns what LZ ported.
+- OpenBSD's behaviour is the specification. The system-call ABI and everything userland sees
+  never change: OpenBSD's own userland runs unmodified here, as on LZ, and `just diff-openbsd`
+  checks the three against each other.
+- The inside changes: fewer and smaller `unsafe` blocks with soundness arguments, idiomatic
+  ownership where the port mirrored C, measured performance. Every module says what it derives
+  from ([lineage.toml](lineage.toml)), and every LZ commit after the pin is triaged
+  ([lz-sync.toml](lz-sync.toml)).
+- A standalone `#![no_std]` kernel for amd64 and arm64, booted by its own boot(8)/efiboot or by
+  Limine, run in QEMU.
 
 ## Status
 
-Status: M16b (USB drivers: ehci, uhci, ohci, mice and tablets, uhid, ugen, cdce, ucom with
-uftdi, uaudio), M16e (platform drivers) and M16f (arm64 platform) met; the rest of M16 (M16a,
-M16c, M16d, M16g: storage, network, console/virtio/legacy, install images) under way.
+Status: N0 (bootstrap: the governance, `lineage.toml` and `cargo xtask lz`) under way; its close
+is the first `just ci` and `just diff-openbsd` in this tree and the baseline numbers.
 
 | Milestone | Scope | State |
 |---|---|---|
-| M0 | Toolchain and boot | met |
-| M1 | libkern and `sys/sys` | met |
-| M2 | Console, printf, panic, ddb-lite | met |
-| M3 | Physical memory and uvm basics | met |
-| M4 | Traps and interrupts | met |
-| M5 | Timers, scheduler, proc | met |
-| M6 | System calls and a minimal init | met |
-| M7a, M7b | uvm (demand paging); mbufs, virtio-net, IPv4 ping | met |
-| M8, M8b | OpenBSD's userland on an ffs ramdisk; multi-user boot and login | met |
-| M9a..M9d | Sockets, WireGuard, IPsec, pf | met |
-| M9+ | Network completion: TCP, bpf, divert, IPComp, HTTPS, tcpdump, INET6 | met |
-| M10a | Persistent disk (vioblk, SCSI midlayer) | met |
-| M10b | UFS options (quotas, dirhash, mfs) | met |
-| M10c | Memory and removable file systems (tmpfs, msdosfs, cd9660, udf, vnd) | met |
-| M10f | softraid (RAID 0, 1, 5, 6, concat, RAID 1C, CRYPTO; bio(4), bioctl) | met |
-| M10e | NFS client and server (portmap, mountd, nfsd, mount_nfs, showmount) | met |
-| M10d | ext2fs, ntfs (amd64), fuse | met |
-| M11a | MP bring-up: APs started through Limine, the kernel lock, per-CPU run queues, SMR, percpu and pool caches, IPIs and TLB shootdowns | met |
-| M11b | MP timekeeping: the TSC synchronisation test per AP, clock interrupts on every CPU | met |
-| M11c | ddb on MP: the command loop, the other CPUs stopped by IPI, `machine cpuinfo`, `machine ddbcpu` | met |
-| M11d | Network parallelism: one softnet task queue per CPU (up to 8), `kern_intrmap.c`, SMR for the interface index | met |
-| M11e | The MP audit: every `MULTIPROCESSOR` site, MPSAFE flags and `SY_NOLOCK` honoured, unlocked page faults; every smoke runs on four CPUs | met |
-| M12 | Devices in QEMU: audio(4) with azalia and auich, USB with xhci, uhub, umass and ukbd; arm64's PCI bus | met |
-| M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd against a real OpenBSD | met |
-| M13 | Storage, firmware and console: NVMe and AHCI roots, ACPI on amd64, PSCI, the RTC, em/re/vmx, the frame buffer with wsdisplay and the USB keyboard | met |
-| M14 | Installable: our efiboot on both archs, bsd.rd, install.sub with the base and comp sets (clang, lld), the installed disk booting to `login:` with `cc` working; arm64 ACPI | met |
-| M15 | Code and test layout: LICENSES, CODE and TESTS zones in every `.rs` under `sys/` and `tools/`, the 324 `tests.rs` inline, validated by `ports check` | met |
-| M16f | arm64 platform: agintc(4) (GICv3, LPIs, the ITS), smmu(4) (SMMUv2 and v3), gpio(4), plgpio(4) and gpiokeys(4); every arm64 smoke on `gic-version=3` | met |
-| M16e | Platform drivers: UKC (`boot -c`), ppb(4), acpidmar(4) (VT-d and AMD-Vi), iic(4) with ichiic(4) and piixpm(4), ipmi(4) with the watchdog and SMBIOS, tpm(4) on swtpm, acpicpu(4) | met |
-| M16b | USB drivers: ehci(4), uhci(4), ohci(4), ums(4) and uwacom(4) over hidms, uhid(4), ugen(4) with usbdevs(8), cdce(4), ucom(4) with uftdi(4), uaudio(4); ehci, and a write through ohci, behave as on OpenBSD 8.0 in QEMU | met |
-| M16a, M16c, M16d, M16g | QEMU drivers, the other four parts: storage, network, console/virtio/legacy devices, install images | next |
-| M17 | Real hardware and virtualisation (vmm, vmd; optional) | next |
+| N0 | Bootstrap: governance, lineage, the `lz` tooling, the unsafe budget, the baseline | under way |
+| N1 | Leaves: libkern, libz, the crypto primitives | next |
+| N2 | Core structures: queue, tree, the `Cell`-everywhere header types | next |
+| N3 | Memory (uvm) | next |
+| N4 | Processes and scheduling (kern) | next |
+| N5 | VFS and file systems | next |
+| N6 | Network stack | next |
+| N7 | Devices: bus_space, DMA, the driver model | next |
+| N8 | Security subsystems, last: pf, IPsec, WireGuard, softraid CRYPTO, the crypto framework | next |
 
-Stage 2 of the diagnostic tools (ps, fstat, vmstat, df) is also met. Exit criteria and dates are
-in [docs/ROADMAP.md](docs/ROADMAP.md); the current state is in
-[docs/STATUS.md](docs/STATUS.md).
+Exit criteria are in [docs/ROADMAP.md](docs/ROADMAP.md); the current state is in
+[docs/STATUS.md](docs/STATUS.md). The port's milestones (M0..M16b at `lz-origin`, and onwards)
+are EmiBSD.LZ's; this history holds them up to `f5985f1d055a`.
 
 ## What works today
+
+Everything the port had at `lz-origin`; every smoke here is also LZ's, and a redesign may not
+change what they see.
 
 Every line below is a recipe of `just smoke`, run on both architectures, on the
 `multiprocessor` kernel with two processors (`-smp 2`; four for `smoke-mp`, `smoke-vmx`,
@@ -356,8 +341,10 @@ The test image's root password is in docs/SETUP.md ("The test image's login").
 
 ## How it's built
 
-- `sys/` mirrors OpenBSD's `sys/` path for path: `kern/tty.c` becomes `sys/kern/tty.rs`.
-  Types live where the C header is; functions live where the C file is.
+- `sys/` keeps LZ's subsystem directories (`kern/`, `uvm/`, `net/`, `dev/`, ...); inside them the
+  modules are redesigned, and [lineage.toml](lineage.toml) says which LZ files (and, through
+  them, which C files) each one derives from, item by item where a redesign split, renamed,
+  moved, merged or dropped one. `cargo xtask lz trace` answers both ways.
 - Generic code reaches the hardware only through `crate::machine`, a set of traits that stands in
   for `<machine/*.h>`. Each arch implements them; the compiler checks it.
 - One kernel crate, `bsd`, because kern, uvm and arch call each other. Only true leaves
@@ -374,17 +361,63 @@ OpenBSD 8.0 snapshot nearest the pin, on both archs: 99 equal, 3 expected differ
 
 Details, boot flow and deviations: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Porting progress
+## Lineage and safety
 
-From `cargo xtask ports status` at the commit of this README:
+From `cargo xtask lz status --write` and `cargo xtask unsafe-report --write` at the commit of
+this README: modules per subsystem by status (`inherited`: byte for byte LZ's; `adapted`: only
+its call sites changed; `redesigned`), and the `unsafe` totals against the baseline at
+`lz-origin` ([unsafe-budget.toml](unsafe-budget.toml), which `just ci` enforces).
 
-| todo | wip | ported | skipped | total |
-|---:|---:|---:|---:|---:|
-| 144 | 140 | 1042 | 37 | 1363 |
+<!-- lz:begin -->
+_Generated by `cargo xtask lz status --write` against EmiBSD.LZ f5985f1d055a: 1028 modules, 0 function rows, 35 extras, 0 dropped._
 
-The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
-`wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
-Source of truth: [ports.toml](ports.toml).
+| Subsystem | inherited | adapted | redesigned | total |
+|---|---:|---:|---:|---:|
+| arch/amd64 | 102 | 0 | 0 | 102 |
+| arch/arm64 | 82 | 0 | 0 | 82 |
+| conf | 3 | 0 | 0 | 3 |
+| crypto | 30 | 0 | 0 | 30 |
+| ddb | 10 | 0 | 0 | 10 |
+| dev | 23 | 0 | 0 | 23 |
+| dev/acpi | 18 | 0 | 0 | 18 |
+| dev/ata | 2 | 0 | 0 | 2 |
+| dev/efi | 1 | 0 | 0 | 1 |
+| dev/fdt | 10 | 0 | 0 | 10 |
+| dev/gpio | 2 | 0 | 0 | 2 |
+| dev/hid | 4 | 0 | 0 | 4 |
+| dev/i2c | 5 | 0 | 0 | 5 |
+| dev/ic | 31 | 0 | 0 | 31 |
+| dev/isa | 5 | 0 | 0 | 5 |
+| dev/microcode | 1 | 0 | 0 | 1 |
+| dev/mii | 9 | 0 | 0 | 9 |
+| dev/ofw | 5 | 0 | 0 | 5 |
+| dev/pci | 40 | 0 | 0 | 40 |
+| dev/puc | 1 | 0 | 0 | 1 |
+| dev/pv | 8 | 0 | 0 | 8 |
+| dev/rasops | 9 | 0 | 0 | 9 |
+| dev/usb | 43 | 0 | 0 | 43 |
+| dev/wscons | 32 | 0 | 0 | 32 |
+| dev/wsfont | 5 | 0 | 0 | 5 |
+| isofs | 16 | 0 | 0 | 16 |
+| kern | 85 | 0 | 0 | 85 |
+| lib/libkern | 12 | 0 | 0 | 12 |
+| lib/libsa | 42 | 0 | 0 | 42 |
+| lib/libz | 14 | 0 | 0 | 14 |
+| miscfs | 10 | 0 | 0 | 10 |
+| msdosfs | 12 | 0 | 0 | 12 |
+| net | 43 | 0 | 0 | 43 |
+| netinet | 44 | 0 | 0 | 44 |
+| netinet6 | 25 | 0 | 0 | 25 |
+| nfs | 24 | 0 | 0 | 24 |
+| ntfs | 9 | 0 | 0 | 9 |
+| scsi | 10 | 0 | 0 | 10 |
+| stand | 19 | 0 | 0 | 19 |
+| sys | 106 | 0 | 0 | 106 |
+| tmpfs | 7 | 0 | 0 | 7 |
+| ufs | 43 | 0 | 0 | 43 |
+| uvm | 26 | 0 | 0 | 26 |
+| **total** | 1028 | 0 | 0 | 1028 |
+<!-- lz:end -->
 
 ## Testing
 
@@ -404,26 +437,31 @@ Four tiers:
    or listed with its reason in `tools/xtask/diff-openbsd/expected.toml`. About two minutes
    for both archs once installed.
 
-`just ci` runs fmt, clippy for amd64, arm64 and the host, all tests, both builds, every smoke and
-the tracker checks. Green `just ci` is the definition of done.
+`just ci` runs fmt, clippy for amd64, arm64 and the host, all tests, both builds, every smoke, and
+the lineage, drift and unsafe-budget checks (`cargo xtask lz check`, `lz drift --strict`,
+`unsafe-report --check`). Green `just ci` is the definition of done.
 Rules: [.claude/rules/testing.md](.claude/rules/testing.md).
 
 ## Repository layout
 
 ```
-reference/openbsd-src/  OpenBSD sources, sparse clone, gitignored, read-only
-sys/                    the kernel (package `bsd`), mirroring OpenBSD's sys/
+reference/openbsd-src/  OpenBSD sources at LZ's pin, sparse clone, gitignored, read-only
+reference/emibsd-lz/    EmiBSD.LZ, full history, gitignored, read-only (what every module started from)
+lz/PINNED.md            the LZ commit this tree is synced to
+lineage.toml            native module -> LZ files and items (the source of truth for provenance)
+lz-sync.toml            one triage record per LZ commit after the pin
+unsafe-budget.toml      per-subsystem unsafe totals that `just ci` enforces
+sys/                    the kernel (package `bsd`): LZ's subsystem directories, redesigned inside
   kern/ uvm/ dev/ net/ netinet/ crypto/ ufs/ ddb/
   sys/                  header types
   machine/              the <machine/*.h> contract (traits)
   arch/{amd64,arm64}/   per-arch code
   arch/host/            std-backed test double for `cargo test`
-  stand/                Limine boot glue (replaces boot(8) for now)
+  stand/                boot glue (Limine; boot(8)/efiboot under arch/*/stand)
   lib/libkern/ lib/libz/
-init/                   the Rust init, now the kernel's self-test
-tools/xtask/            images, QEMU, smoke tests, userland build, ports tracker
-docs/                   architecture, porting, roadmap, setup, status
-ports.toml              porting tracker
+init/                   the Rust init, the kernel's self-test
+tools/xtask/            images, QEMU, smoke tests, userland build, the lz tooling, unsafe-report
+docs/                   the process (PHASE2), architecture, idioms, roadmap, sync, journal, status
 ```
 
 ## Documentation
@@ -433,36 +471,43 @@ ports.toml              porting tracker
 | How do I set up the toolchain on macOS? | [docs/SETUP.md](docs/SETUP.md) |
 | How do I get the OpenBSD sources? | [reference/README.md](reference/README.md) |
 | Why is it built this way? What deviates from OpenBSD? | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| How does a C file become a Rust file? | [docs/PORTING.md](docs/PORTING.md), tracker in [ports.toml](ports.toml) |
-| How is this C idiom written in Rust? | [docs/C_TO_RUST.md](docs/C_TO_RUST.md) |
-| What comes next? | [docs/ROADMAP.md](docs/ROADMAP.md) |
-| What happens after the faithful port? | [docs/PHASE2.md](docs/PHASE2.md) (draft) |
+| Where does a module come from? | [lineage.toml](lineage.toml), [docs/PHASE2.md](docs/PHASE2.md), `cargo xtask lz trace` |
+| How is this LZ shape redesigned? | [docs/IDIOMS.md](docs/IDIOMS.md); the C -> LZ idioms, frozen: [docs/C_TO_RUST.md](docs/C_TO_RUST.md) |
+| What comes next? | [docs/ROADMAP.md](docs/ROADMAP.md) (N0..N8) |
+| How is LZ's later work absorbed? | [docs/SYNC.md](docs/SYNC.md), [.claude/rules/lz-sync.md](.claude/rules/lz-sync.md) |
 | Where are we right now? | [docs/STATUS.md](docs/STATUS.md) |
 | What rules does every change follow? | [CLAUDE.md](CLAUDE.md), [.claude/rules/](.claude/rules/) |
 
 ## Contributing and workflow
 
-Porting one file:
+Re-engineering one module:
 
-1. Pick: `cargo xtask ports next` lists `todo` files whose dependencies are done.
-2. Read the `.c`, its headers and the man pages it cites, completely.
-3. Write `sys/<same path>.rs`: the original licence block, an `Upstream:` line, a `Deviations` list.
-4. Test: host tests in the same file; `just ci` green.
-5. Record: mark the file `ported` in `ports.toml`, then commit.
-
-One commit per file or coherent cluster, with a trailer per ported C file:
+1. Pick one module of the subsystem the roadmap names (`cargo xtask lz status` shows what is
+   still inherited).
+2. Measure: `cargo xtask unsafe-report` for the subsystem, the smokes and `diff-openbsd`
+   scenarios that cover it.
+3. Read the LZ module completely, and the C it ported.
+4. Redesign with ownership first; the ABI edge stays byte-identical.
+5. Prove: soundness arguments for every `unsafe` that stays, tests for what changed, the smokes,
+   `just diff-openbsd`.
+6. Record: `lineage.toml` (the module `redesigned`, a row per item split, renamed, moved,
+   merged or dropped), the `//! LZ:` lines and the `## Redesign` section.
+7. `just ci` green, then one commit per step, with its numbers:
 
 ```
-kern: port subr_prf.c (printf, panic)
+kern: own the run queues inside the scheduler lock
 
-Upstream: sys/kern/subr_prf.c@3ce1f3f79392
+LZ: sys/kern/kern_sched.rs@f5985f1d055a
+LZ: sys/kern/sched_bsd.rs@f5985f1d055a
+Unsafe: kern 1234 -> 1201
 ```
 
-The full process is in [docs/PORTING.md](docs/PORTING.md).
+The full process is in [docs/PHASE2.md](docs/PHASE2.md); the monthly sync with LZ in
+[docs/SYNC.md](docs/SYNC.md).
 
-Feedback is welcome: [GitHub Discussions](https://github.com/enavarre-cl/EmiBSD/discussions) for
-feedback and design questions, [Issues](https://github.com/enavarre-cl/EmiBSD/issues) for concrete
-problems. External pull requests are not accepted, for now.
+Problems go to [Issues](https://github.com/enavarre-cl/EmiBSD/issues). Problems of the port
+itself go to [EmiBSD.LZ's Issues](https://github.com/enavarre-cl/EmiBSD.LZ/issues). External
+pull requests are not accepted, for now.
 
 ## Mascot
 

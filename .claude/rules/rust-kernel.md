@@ -16,9 +16,11 @@ paths:
   Every `unsafe fn` has a `# Safety` doc section stating what the caller must guarantee.
 - Errors: `Result<T, Errno>` with `#[repr(i32)] pub enum Errno` in `sys/sys/errno.rs`
   (includes `ERESTART = -1`, `EJUSTRETURN = -2`). No `Option` for "failed", no `-1` returns.
-- Naming: C function names verbatim (`uvm_fault`, `tsleep_nsec`), types CamelCase (`Proc`,
-  `VmMapEntry`), constants unchanged (`PAGE_SIZE`, `MAXCOMLEN`). Deviating from an OpenBSD name
-  needs the user's OK.
+- Naming: names at the ABI edge (syscalls, sysctl MIBs, ioctls, device majors, structs shared
+  with userland) are OpenBSD's and never change. Internal items keep the LZ name (which is the
+  C name) until their shape changes; a rename is a `[[module.fn]]` row of `lineage.toml`
+  (`lineage.md`), the one record of it, so the old name stays greppable. Types CamelCase
+  (`Proc`, `VmMapEntry`), constants unchanged (`PAGE_SIZE`, `MAXCOMLEN`).
 - Arch access only via `crate::machine::*`. Naming `crate::arch::amd64` or `crate::arch::arm64`
   outside `sys/arch/` and `sys/machine/` is a bug.
 - `static mut` is forbidden. Use atomics, the ported `Mutex<T>`, or `StaticCell<T>` with a
@@ -29,7 +31,11 @@ paths:
   manually managed lifetimes; raw pointers only at hardware/ABI edges. `UnsafeCell` for fields the C mutates
   behind a shared pointer, with a doc line saying which lock protects them.
 - MMIO through `read_volatile`/`write_volatile` behind the `bus_space`-shaped API, never plain derefs.
-- Idiom decisions live in `docs/C_TO_RUST.md`. Follow them; propose a new row rather than improvising.
+- LZ's idioms are in `docs/C_TO_RUST.md` (frozen, the key to reading LZ code); native idioms,
+  LZ shape -> native shape, are rows of `docs/IDIOMS.md`. Follow them; propose a new row rather
+  than improvising.
+- Every `unsafe` in a redesigned module carries a soundness argument, not a reference to the C
+  (`unsafe-budget.md`).
 - Dependencies allowed in `sys/`: `libkern`, `libz`, `bitflags`; dev-only `proptest`. The boot
   loaders' crates (M14) may also use `libsa`, `boot` and `efi` (ours, OpenBSD code); the kernel
   does not depend on them. Lists and trees
@@ -40,20 +46,23 @@ paths:
 - Every `pub` item has a doc comment (`missing_docs` is warn; `just clippy` uses `-D warnings`).
 - File layout (M15): every `.rs` under `sys/` and `tools/` is split into zones, each opened and
   closed by a comment line of its own, in this order, and nothing else sits outside them but
-  blank lines and the leading `/* $OpenBSD ... */` id lines (or a generated-file banner):
-  - `/* <LICENSES> */` ... `/* </LICENSES> */`: ported files only. The `/* $OpenBSD ... */`
-    line(s) stay above the opening marker; the license block(s) are inside (the markers only
-    mark, the licence text stays verbatim). A C file with no licence text has no zone
-    (`license = "none"` in `ports.toml`);
+  blank lines (or a generated-file banner); the RCS ident lines are gone since N0 (decision 20):
+  - `/* <LICENSES> */` ... `/* </LICENSES> */`: modules with an LZ source only. The licence
+    block(s) of every source are inside (the markers only mark, the licence text stays
+    verbatim). A module whose source has no licence text has no zone (`license = "none"` in
+    `lineage.toml`);
   - `/* <CODE> */` ... `/* </CODE> */`: everything that is not a licence or a test, in the
     section order below, one blank line between sections, empty sections omitted;
   - `/* <TESTS> */` ... `/* </TESTS> */`: only in files that have tests: the inline
     `#[cfg(test)] mod tests { .. }`, at the end, however long it is. `use super::*;` sees the
-    parent's private items. No `<name>/tests.rs` exists; `cargo xtask ports check` validates
-    the markers, their order and the licence/test rules (`ports-tracker.md`).
+    parent's private items. No `<name>/tests.rs` exists; `cargo xtask lz check` validates
+    the markers, their order and the licence/test rules (`lineage.md`).
   Read the code of a file with `sed -n '/<CODE>/,/<\/CODE>/p' file.rs`, its tests with
   `sed -n '/<TESTS>/,/<\/TESTS>/p'`. Section order inside CODE:
-  1. `//!` docs: summary, `Upstream:`, prose, `## Deviations`; inner attributes (`#![..]`);
+  1. `//!` docs: summary, the `Upstream:` line(s) of every LZ source, one `LZ: <path>@<12-hex>`
+     line per source (redesigned modules only), prose, `## Deviations` (inherited gaps),
+     `## Redesign` (what changed against LZ and why; redesigned modules only); inner
+     attributes (`#![..]`);
   2. `mod` declarations (crate roots and `mod.rs` only), then `use` lines as rustfmt orders them;
   3. constants: `const`, constant-only `pub mod` blocks (`memmap_type`), and `macro_rules!` that
      define constants or types, placed just before their first use;

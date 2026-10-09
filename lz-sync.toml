@@ -1,0 +1,14 @@
+# Triage of EmiBSD.LZ commits after the pin: one [[commit]] record per commit.
+# Schema and rules: .claude/rules/lz-sync.md.  Open commits: cargo xtask lz drift.
+#
+# [[commit]]
+# lz = "<12-hex>"                      # the LZ commit
+# subject = "..."                      # its subject, for the reader
+# modules = ["sys/..."]                # the native modules it touches (from lineage.toml)
+# status = "applied"                   # applied | not-applicable | covered-by-redesign
+# emibsd = "<12-hex>"                  # required when applied
+# reason = "..."                       # required otherwise; a security fix names the fix
+# security = true                      # never not-applicable without a reason
+
+[meta]
+lz = "f5985f1d055a380e9fe3b38837ad9d668e6d736e"

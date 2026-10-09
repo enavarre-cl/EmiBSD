@@ -3,7 +3,7 @@ paths:
   - "reference/**"
 ---
 
-# The OpenBSD reference tree is read-only
+# The reference trees are read-only
 
 `reference/openbsd-src/` is a sparse, shallow clone of https://github.com/openbsd/src, pinned at the
 commit in `reference/PINNED.md`. It holds `sys/` (the kernel: the specification the port follows)
@@ -17,20 +17,32 @@ make the ffs ramdisk image; same decision date) and `usr.sbin/pwd_mkdb` (host to
 `usr.sbin/`, `distrib/`, `share/`, `gnu/llvm` and OpenBSD's clang build glue (`gnu/usr.bin/clang`,
 `gnu/lib/{libcxx,libcxxabi,libclang_rt}`; pre-approved by the user on 2026-10-04, added 2026-10-05). No other `gnu/`, no `xenocara/`. It is the specification, not part of the product.
 Widening or narrowing the sparse set at the same pin is `git -C reference/openbsd-src
-sparse-checkout add|set ...`, a user decision recorded in `docs/ROADMAP.md`.
+sparse-checkout add|set ...`, a user decision recorded in LZ's `docs/ROADMAP.md`; this tree
+keeps the same set, at the pin LZ records at the pinned LZ commit.
+
+`reference/emibsd-lz/` is a full-history clone of https://github.com/enavarre-cl/EmiBSD.LZ,
+the faithful port this system derives from, pinned at the commit in `lz/PINNED.md`. It is the
+shape every native module started from and the history `cargo xtask lz drift` reads. It is
+gitignored, never edited, and never pushed to: LZ does not know this repository exists.
 
 - Never edit, format, rename, delete or create files under `reference/`. `.claude/settings.json`
   denies Edit/Write there as a backstop; do not work around it.
 - Never copy C verbatim into Rust and never transliterate line by line. Read, understand,
   re-express. Identifiers, constants, data layouts and the *meaning* of comments are preserved;
   the text is yours.
-- When discussing C code with the user, cite it as `reference/openbsd-src/sys/<path>:<line>`.
-- Every ported `.rs` file starts with the original `/* $OpenBSD: ... $ */` line and the complete
-  original copyright and license block, verbatim, as `/* ... */` comments. Then the `//!` docs.
+- When discussing C code with the user, cite it as `reference/openbsd-src/sys/<path>:<line>`;
+  LZ code as `reference/emibsd-lz/sys/<path>:<line>`; native code as `sys/<path>:<line>`.
+- Every file keeps the complete original copyright and licence block(s) of every LZ file it
+  derives from, verbatim, as `/* ... */` comments inside `<LICENSES>` (a redesigned module
+  carries the blocks of all its sources, `lineage.md`). The RCS ident lines are not kept
+  (decision 20: CVS keywords, not licence text; provenance is `lineage.toml` and the
+  `//! Upstream:` line). Then the `//!` docs.
   Never shorten, reword, relicense or add restrictions to license text. BSD-3 non-endorsement and
   ISC/BSD notice obligations apply to this project's distribution; `LICENSE` explains how.
 - Every licence or notice in the pinned tree is accepted, kept whole (`scope-and-stubs.md`, the
   user's rule of 2026-10-04). Only code from outside this tree needs the user's decision.
-- Updating the pin is a deliberate act (`reference/README.md`, `docs/PORTING.md`): fetch, check out,
-  run `cargo xtask ports drift`, update `PINNED.md` and `ports.toml [meta].pinned` in one commit.
-- `git log` inside the clone is useless (depth 1). Drift is detected by blob hash, not history.
+- The OpenBSD pin is LZ's; this tree follows it through `lz/PINNED.md` (`lz-sync.md`).
+  `cargo xtask lz check` asserts `reference/openbsd-src` is at the commit LZ records at the
+  pinned LZ commit. Neither pin moves without the user.
+- `git log` inside `reference/openbsd-src` is useless (depth 1). `reference/emibsd-lz` has the
+  full history: drift is detected there by `git log`, not by blob hashes.

@@ -1,77 +1,107 @@
-# Phase 2: improving the port
+# The native process
 
-**Status: draft (2026-10-05). Phase 2 has not started; nothing here applies to current work.**
-Until the user starts Phase 2, every rule of Phase 1 (`CLAUDE.md`, `.claude/rules/`) stays in
-force unchanged.
+EmiBSD is an operating system in Rust, derived from EmiBSD.LZ, the faithful file-by-file port of
+the OpenBSD kernel. LZ ports; EmiBSD redesigns. This document is the process: where the code
+comes from, what never changes, how a change is made, measured and reviewed, how LZ's later
+work is absorbed, and the decisions that shaped all of it. The design itself is in
+`docs/ARCHITECTURE.md`; the rules Claude follows are in `.claude/rules/`.
 
-## Phase 1 and Phase 2
+## Origin
 
-- **Phase 1** (current) is the faithful, as-is port. The C sources under
-  `reference/openbsd-src` are the specification: names, structure and semantics stay OpenBSD's,
-  and every deviation is written down (`docs/ARCHITECTURE.md`, each file's `## Deviations`).
-- **Phase 2** improves the port, using Phase 1 as a measured baseline. It follows the criteria of
-  DARPA's TRACTOR program (Translating All C to Rust), which judges a translation on functional
-  correctness, safety guarantees, competitive performance and long-term maintainability.
-  Phase 1 covers correctness; Phase 2 covers the rest.
+EmiBSD started as the port itself. On 2026-10-09 the port's repository became
+[EmiBSD.LZ](https://github.com/enavarre-cl/EmiBSD.LZ), with its whole history (tag `lz-origin`,
+commit `f5985f1d055a`, `docs: M16b met`), and this repository, which keeps that history up to that
+commit, became the native system from there on (milestone N0). `lz/PINNED.md` records the LZ commit EmiBSD is synced to;
+`lineage.toml` records what every module derives from; `docs/JOURNAL.md` keeps the port's
+milestones M0..M14 as the first part of this system's history. LZ never refers to this
+repository: the dependency points one way.
 
-## Entry criteria
+## What never changes
 
-- The Phase 1 milestones the user chooses as the cut-off are met, with `just ci` green.
-- The baseline is tagged `phase1-baseline`, and its metrics are recorded (below): the `unsafe`
-  counts, the smoke results and the benchmarks.
+- The system-call ABI and the behaviour OpenBSD's userland sees. The ABI equals LZ's at the
+  pin; additions arrive only through `lz-sync:` commits.
+- The same userland runs on LZ and on EmiBSD, and `just diff-openbsd` is the oracle: EmiBSD
+  against LZ against OpenBSD.
+- Every smoke stays green (`just ci`, `just ci-full`).
+- Licences: every file keeps the whole licence blocks of every LZ file it derives from (the RCS
+  ident lines are not licence text and were dropped at N0); new code is ISC; code from outside OpenBSD's tree is the user's
+  decision.
+- The `machine` contract and the two architectures.
 
 ## Goals, in priority order
 
 1. **Safety.** Fewer and smaller `unsafe` blocks, safe abstractions over the ones that remain,
-   and a soundness argument wherever `unsafe` stays.
-2. **Maintainability.** More idiomatic Rust where the Phase 1 shape exists only to mirror C:
-   `Cell`-everywhere structs, raw-pointer links, C-shaped out parameters.
-3. **Performance.** Measured improvements only, and never at the cost of 1 or 2.
+   and a soundness argument wherever `unsafe` stays (`.claude/rules/unsafe-budget.md`).
+2. **Maintainability.** Idiomatic Rust where the LZ shape exists only to mirror C:
+   `Cell`-everywhere structs, raw-pointer links, C-shaped out parameters (`docs/IDIOMS.md`).
+3. **Performance.** Measured improvements only (`just bench`), never at the cost of 1 or 2.
 
-## Rules
+These are the criteria of DARPA's TRACTOR program (functional correctness, safety guarantees,
+competitive performance, long-term maintainability); LZ covers correctness, this system the rest.
 
-- The system call ABI and the behaviour OpenBSD's userland sees never change. Every smoke test
-  stays green.
-- Every change is checked against the Phase 1 baseline, and against real OpenBSD once the
-  differential tests exist (`cargo xtask diff-openbsd`, proposed in the roadmap).
-- One improvement per commit, with before and after numbers in the message: the `unsafe` count,
-  a benchmark, or both.
-- Deviations from OpenBSD's structure are allowed, and each one is recorded in this file, as
-  Phase 1 records its deviations in `docs/ARCHITECTURE.md`.
-- Crypto, IPsec, WireGuard and softraid CRYPTO change last, and only with extra tests.
+## How a change is made
 
-## Metrics
+`.claude/rules/re-engineering.md`, in one line: pick one module of one subsystem, measure it,
+read the LZ module and the C it ported, redesign with ownership first, prove it (soundness
+arguments, tests, smokes, `diff-openbsd`), record it (`lineage.toml`, `//! LZ:`, `## Redesign`,
+`docs/IDIOMS.md`), commit one step with the numbers (`.claude/rules/git-commits.md`).
 
-- `unsafe` counts per subsystem (`kern`, `uvm`, `net`, `dev`, ...): `unsafe` blocks, `unsafe fn`,
-  `unsafe impl`, from `cargo xtask unsafe-report` (planned). The totals are recorded in
-  `docs/STATUS.md`.
-- Benchmarks: boot time, `tcpbench` between two VMs (`smoke-tcpbench` exists), and file-system
-  throughput on vioblk.
-- Clippy at a stricter level, enabled subsystem by subsystem.
+Layout (decided 2026-10-07): the subsystem directories under `sys/` are fixed, as the unit for
+metrics and lineage; inside a subsystem the module tree is free; a whole subsystem moves only
+when it is redesigned, in a `lineage:` commit. A module is `inherited` (byte for byte LZ's, modulo
+the RCS ident lines), `adapted` (only its call sites changed, because a module it uses was
+redesigned) or `redesigned`; a redesign of an item used by more than 50 modules waits for the
+LZ milestone that touches them to close (`.claude/rules/re-engineering.md`).
 
-## Open questions (the user's; not decided here)
+## How it is measured
 
-- Does Phase 2 keep the file-by-file mapping (`kern/tty.c` → `kern/tty.rs`), or may modules be
-  reorganised?
-- How are newer OpenBSD commits absorbed once the code diverges from the C?
-- Which subsystem goes first? The candidate is `libkern` and the other leaves, which are well
-  tested and low-risk.
+- `cargo xtask unsafe-report`: per subsystem, blocks, `unsafe fn`, `unsafe impl`, `unsafe
+  trait`, other, total; the baseline at `lz-origin` and the current totals in `docs/STATUS.md`;
+  the budget in `unsafe-budget.toml`, checked in `just ci`.
+- `cargo xtask lz status`: inherited and redesigned modules per subsystem.
+- `just bench`: boot time per arch, `tcpbench` between two VMs, vioblk throughput; before and
+  after in the commit (`Bench:` trailer).
+- `just diff-openbsd`: steps compared, equal, expected; the expected list never grows.
 
-## Rules that Phase 2 conflicts with (to settle before it starts)
+Baseline at `lz-origin` (`f5985f1d055a`), from the tools: the `Unsafe` line and the lineage table of
+`docs/STATUS.md`, `unsafe-budget.toml` (the per-subsystem totals, written by
+`cargo xtask unsafe-report --write`), the smoke count and the `diff-openbsd` result of the
+first `just ci` and `just diff-openbsd` in this tree (recorded in the N0 section of
+`docs/JOURNAL.md`), and the benchmarks of `just bench` once it exists (boot to `login:` per
+arch, `smoke-tcpbench`, a vioblk number; amd64 under TCG is indicative only until M17 brings
+real hardware). The blockers LZ had at `lz-origin` are inherited and listed in `docs/STATUS.md`:
+an N-milestone report is not a regression for them.
 
-These Phase 1 rules contradict the Phase 2 rules above. They are listed, not resolved. When
-Phase 2 starts, each one needs the user's decision and an edit to the file named.
+## How LZ's later work is absorbed
 
-| Phase 1 rule | Where | Conflict |
-|---|---|---|
-| "This is NOT ... a new kernel design. OpenBSD's design is the design." | `CLAUDE.md` (intro) | Phase 2 allows deviations from OpenBSD's structure |
-| One `.c` → one `.rs` with the same name in the same directory; types where the header is | `CLAUDE.md` (mapping rules), `porting-workflow.md` | the open question on reorganising modules |
-| Keep OpenBSD function names verbatim; ask before renaming away from an OpenBSD name | `porting-workflow.md`, `CLAUDE.md` ("Working with the user") | idiomatic APIs may rename or reshape functions |
-| Re-express the C's semantics; never mix a port with a refactor | `porting-workflow.md` | Phase 2 commits are refactors by definition |
-| Commit subject scopes, one port per commit, an `Upstream:` trailer per ported file | `git-commits.md` | Phase 2 commits port nothing; they need a scope and a trailer convention, plus the before/after numbers |
-| Every deviation lives in the file's `## Deviations` and in `ports.toml` `notes` | `scope-and-stubs.md`, `porting-workflow.md` | Phase 2 records deviations in this file; whether the per-file lists are kept as well needs deciding |
-| Each document has one job; never duplicate content | `docs.md` | this file and `docs/ARCHITECTURE.md` would both hold deviations; their split needs defining |
-| `ports.toml` maps each C path to its `.rs` and `ports check` validates paths and blobs | `ports-tracker.md`, `tools/xtask` | reorganised modules, or code diverged from the C, break that mapping and the drift checks |
-| Never change the reference pin without the user's explicit OK | `CLAUDE.md`, `reference-readonly.md` | not a conflict; it bounds the open question on absorbing newer OpenBSD commits |
-| A new crate needs the user's OK and an allowlist entry | `CLAUDE.md`, `rust-kernel.md` | not a conflict; safe abstractions that want a crate still go through it |
-| M15 (code and test layout; M14b until 2026-10-07) | `docs/ROADMAP.md` | it reshapes every file; it should land before `phase1-baseline` so the baseline is not moved under Phase 2 |
+`.claude/rules/lz-sync.md` and `docs/SYNC.md`: `cargo xtask lz drift` lists the LZ commits
+after the pin, the native modules they touch and (`--functions`) the items; every one gets a
+record in `lz-sync.toml` (`applied` with the EmiBSD commit and its `method`: `cherry-pick`,
+`cherry-pick-conflicts` or `reimplemented`; `not-applicable` with a reason;
+`covered-by-redesign` with the proof); security fixes are never skipped silently; the pin
+moves in a `lz: bump pin` commit. `just ci` fails on an untriaged LZ commit. The three method
+totals in each sync commit say whether the roadmap's order is costing re-implementations.
+
+## How security changes are reviewed
+
+`.claude/rules/security-review.md`: the listed areas are redesigned last in their subsystem,
+carry a `Security-Review:` trailer, and pass `just diff-openbsd` and their smokes before the
+commit; crypto, IPsec, WireGuard and softraid CRYPTO change last of all, with extra tests.
+
+## Decisions
+
+| Date | Decision |
+|---|---|
+| 2026-10-07 | Three stages: OpenBSD -> EmiBSD.LZ (the port, continuous) -> EmiBSD (native). Governance files live inside each repository. |
+| 2026-10-07 | The migration happens when M14 is complete, on the user's signal, never with agents running. |
+| 2026-10-07 | `enavarre-cl/EmiBSD` stays the public home of the native system; `enavarre-cl/EmiBSD.LZ` is public and locked down (Issues only). |
+| 2026-10-07 | LZ never names EmiBSD; EmiBSD declares LZ in `lz/PINNED.md`, `lineage.toml`, the `LZ:` trailer, this section and the README. |
+| 2026-10-07 | Layout: subsystem directories fixed, free inside. |
+| 2026-10-08 | Function-level traceability lives in `lineage.toml` (`[[module.fn]]`, exceptions only), not in the files; the RCS ident lines are dropped (decision 20). |
+| 2026-10-09 | The port's repository became EmiBSD.LZ (public, locked down); this one is native from `lz-origin` = `f5985f1d055a`; `reference/openbsd-src` kept at LZ's pin; the milestone order N1..N8 recommended, the user's call at each start. |
+| 2026-10-09 | From the external review: `adapted` as a third module status; the `method` of every applied sync; a timing rule for widely used items; `docs/SYNC.md`; the blockers inherited at `lz-origin` recorded in the baseline. |
+
+## Later
+
+Graphics (drm, nouveau, Mesa, GSP firmware) is a proposal for LZ after M17; it would reach this
+system through `lz-sync` like any other LZ work.
