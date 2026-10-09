@@ -164,7 +164,14 @@ impl DesKeySchedule {
     /// `des_set_key`: the key schedule of the 8-byte `key`. When `des_check_key` is set, an
     /// error for a key with a parity error (-1 in the C) or a weak key (-2).
     pub fn new(key: &DesCblock) -> Result<Self, Errno> {
-        if DES_CHECK_KEY.load(Ordering::Relaxed) && (!check_parity(key) || des_is_weak_key(key)) {
+        Self::new_checked(key, DES_CHECK_KEY.load(Ordering::Relaxed))
+    }
+
+    /// `des_set_key` with `des_check_key` given: `check` makes a parity error or a weak key
+    /// an error. The tests call it directly instead of flipping the global under the other
+    /// tests' feet.
+    fn new_checked(key: &DesCblock, check: bool) -> Result<Self, Errno> {
+        if check && (!check_parity(key) || des_is_weak_key(key)) {
             return Err(Errno::EINVAL);
         }
 
@@ -262,15 +269,25 @@ mod tests {
     fn des_set_key_checks_only_when_asked() {
         let weak = [0x01u8; 8];
         let bad_parity = [0x00u8; 8];
+        // `new` reads the global (false: nothing in the kernel sets it); the checked path is
+        // exercised through `new_checked`, so no test flips the global under concurrent 3DES
+        // tests.
+        assert!(!DES_CHECK_KEY.load(Ordering::Relaxed));
         assert!(DesKeySchedule::new(&weak).is_ok());
         assert!(DesKeySchedule::new(&bad_parity).is_ok());
-        DES_CHECK_KEY.store(true, Ordering::Relaxed);
+        assert!(DesKeySchedule::new_checked(&weak, false).is_ok());
         let (a, b) = (
-            DesKeySchedule::new(&weak).map(drop),
-            DesKeySchedule::new(&bad_parity).map(drop),
+            DesKeySchedule::new_checked(&weak, true).map(drop),
+            DesKeySchedule::new_checked(&bad_parity, true).map(drop),
         );
-        DES_CHECK_KEY.store(false, Ordering::Relaxed);
         assert_eq!((a, b), (Err(Errno::EINVAL), Err(Errno::EINVAL)));
+        // A good key passes the checks, with the same schedule.
+        let good = [0x13, 0x34, 0x57, 0x79, 0x9b, 0xbc, 0xdf, 0xf1];
+        let checked = DesKeySchedule::new_checked(&good, true).expect("odd parity, not weak");
+        assert_eq!(
+            checked.ks,
+            DesKeySchedule::new(&good).expect("unchecked").ks
+        );
     }
 
     #[test]

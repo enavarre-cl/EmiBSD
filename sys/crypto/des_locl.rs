@@ -108,7 +108,7 @@ pub const HALF_ITERATIONS: usize = 8;
 
 /// `des_key_schedule`: the sixteen subkeys of one key, two words each, in the order the rounds
 /// of an encryption use them. Built by `DesKeySchedule::new`; zeroed when dropped.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct DesKeySchedule {
     /// The subkeys (`ks[i].deslong` in the C).
     pub(crate) ks: [[u32; 2]; ITERATIONS],

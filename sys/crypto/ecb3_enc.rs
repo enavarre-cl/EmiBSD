@@ -201,8 +201,8 @@ mod tests {
     #[test]
     fn round_trips_over_random_keys_and_blocks() {
         let mut st = 0x9e37_79b9_7f4a_7c15u64;
-        // Keys with odd parity, so that `set_key.rs`'s test of `des_check_key` (a global it
-        // turns on for a moment) cannot reject them; a weak key is a 2^-52 event.
+        // Keys with odd parity, as real DES keys have (`des_check_key` would accept them; a
+        // weak key is a 2^-52 event).
         let key = |st: &mut u64| {
             let k = next(st).to_le_bytes().map(|b| ODD_PARITY[usize::from(b)]);
             DesKeySchedule::new(&k).expect("odd parity")
