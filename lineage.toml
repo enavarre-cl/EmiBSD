@@ -2779,6 +2779,18 @@ lz = ["sys/dev/pv/vioblkreg.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/pv/viocon.rs"
+lz = ["sys/dev/pv/viocon.rs"]
+status = "inherited"
+notes = "M16d: the whole file: virtio_console_control(_resize), viocon_ca/cd, match, attach (one port, malloc'ed sc_vqs and sc_ports), viocon_port_create (queues p0rx/p0tx, the soft interrupt, the buffers in DMA memory, the tty), tx_drain, tx_intr, rx_fill, rx_intr, rx_soft, vioconstart, vioconhwiflow, vioconparam, vioconopen/close/read/write/tty/stop/ioctl, the CTASSERT; compiled on every build; cargo feature viocon (amd64 GENERIC's commented-out line) adds viocon* at virtio? to amd64's ioconf and NVIOCON 1 to cdevsw 94 (0 without it: ENXIO, as config(8) counts it); deviations: dev2sc/dev2port return Option (ENXIO or nothing where the C would dereference a missing unit), Result returns; no smoke (in neither GENERIC)"
+
+[[module]]
+rust = "sys/dev/pv/viogpu.rs"
+lz = ["sys/dev/pv/viogpu.rs"]
+status = "inherited"
+notes = "M16d: license: BSD-3 (Red Hat), kept whole beside viogpu.c's ISC notice in viogpu.rs; the whole header: the feature bits, virtio_gpu_ctrl_type/shm_id/formats as u32 constants, every structure #[repr(C, packed)] (GpuWire: bytes to and from the command page; sizes asserted at compile time); virtio_gpu_resp_capset's flexible capset_data[] is not a member; __le* fields are native (little-endian kernels only, as the C's typedefs); M16d: the whole file but the #if 0 viogpu_fb_probe (drm): viogpu_ca/cd, accessops, match, attach (virtio 1.x only, control and cursor queues, the command page, display info, the frame buffer in DMA memory, CREATE_2D, ATTACH_BACKING, SET_SCANOUT, rasops, wsdisplay_cnattach as the C always does, the wsdisplay child), viogpu_repaint (10 ms), vq_done, rx_soft (established, never scheduled, as in C), send_cmd (generic over the wire structures, polled), get_display_info, create_2d, set_scanout, attach_backing, transfer_to_host_2d, flush_resource, wsioctl, wsmmap, alloc_screen; deviations: the error labels are one ViogpuUnwind level, bus_dmamem_unmap gets the kva where the C passes the pointer's address, Result<(), Errno> (EIO) for the 0/1 returns, wsioctl Ok(false) for -1, selftest=fb/wscons hooks under feature qemu; arm64 ioconf viogpu* at virtio? and wsdisplay* at viogpu? (merged into the simplefb wsdisplay entry); smoke-viogpu"
+
+[[module]]
 rust = "sys/dev/pv/viomb.rs"
 lz = ["sys/dev/pv/viomb.rs"]
 status = "inherited"

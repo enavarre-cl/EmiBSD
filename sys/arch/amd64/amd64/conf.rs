@@ -60,7 +60,7 @@
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmouse` (68, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
-//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `ucom` (66, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `ucom` (66, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`), `viocon` (94, M16d; `NVIOCON` 0 unless feature `viocon`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -85,6 +85,9 @@ use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty,
 use crate::dev::ic::lpt::{lptclose, lptopen, lptwrite};
 use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
 use crate::dev::midi::{NMIDI, midiclose, midiioctl, midikqfilter, midiopen, midiread, midiwrite};
+use crate::dev::pv::viocon::{
+    vioconclose, vioconioctl, vioconopen, vioconread, vioconstop, viocontty, vioconwrite,
+};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
 use crate::dev::usb::ucom::{
     NUCOM, ucomclose, ucomioctl, ucomopen, ucomread, ucomstop, ucomtty, ucomwrite,
@@ -144,6 +147,10 @@ pub const NCOM: i32 = 4;
 
 /// `NLPT`: `lpt0 at isa?` in GENERIC (M16d; `lpt* at puc?` waits for `lpt_puc.c`).
 pub const NLPT: i32 = 1;
+
+/// `NVIOCON`: GENERIC's `#viocon* at virtio?` is commented out, so 0 (the entry points answer
+/// `ENXIO`); 1 with the cargo feature `viocon`, which stands for uncommenting it (M16d).
+pub const NVIOCON: i32 = if cfg!(feature = "viocon") { 1 } else { 0 };
 
 /// `NWSDISPLAY`: `wsdisplay0 at efifb?` in GENERIC (M13; its other lines wait for vga, inteldrm, radeondrm, amdgpu and udl).
 pub const NWSDISPLAY: i32 = 1;
@@ -444,7 +451,17 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     #[cfg(not(feature = "fuse"))]
     cnotdef(), // 92: fuse (feature `fuse` off)
     cnotdef(), // 93: Ethernet network tunnel (tap: not ported)
-    cnotdef(), // 94: virtio console (viocon: not ported)
+    // 94: virtio console
+    Cell::new(cdev_tty_init(
+        NVIOCON,
+        vioconopen,
+        vioconclose,
+        vioconread,
+        vioconwrite,
+        vioconioctl,
+        vioconstop,
+        viocontty,
+    )),
     cnotdef(), // 95: pvbus(4) control interface (not ported)
     Cell::new(cdev_ipmi_init(NIPMI, ipmiopen, ipmiclose, ipmiioctl)), // 96: ipmi
     cnotdef(), // 97: was switch(4)

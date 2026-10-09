@@ -55,7 +55,8 @@
 //! `eap* at pci?`, `audio* at eap?` and `midi* at eap?` (M16d), `lpt0 at isa? port 0x378
 //! irq 7` (M16d; `#lpt1` and `#lpt2` are commented out in GENERIC),
 //! `pckbc0 at isa? flags 0x00`, `pckbd* at pckbc?` and `wskbd* at pckbd? mux 1` (M16d),
-//! `viomb* at virtio?` and `viornd* at virtio?` (M16d),
+//! `viomb* at virtio?` and `viornd* at virtio?` (M16d), and with the cargo feature `viocon`
+//! the commented-out `#viocon* at virtio?` (M16d; `docs/ARCHITECTURE.md`, "Cargo features"),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -156,6 +157,8 @@ use crate::dev::pckbc::pckbd::{PCKBD_CA, PCKBD_CD};
 use crate::dev::puc::com_puc::COM_PUC_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
+#[cfg(feature = "viocon")]
+use crate::dev::pv::viocon::{VIOCON_CA, VIOCON_CD};
 use crate::dev::pv::viomb::{VIOMB_CA, VIOMB_CD};
 use crate::dev::pv::viornd::{VIORND_CA, VIORND_CD};
 use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
@@ -402,12 +405,10 @@ const PV_PCKBD: &[i16] = &[87];
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 92 entries, 93 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
-const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    93
-} else {
-    92
-};
+/// `cfdata[]`: 92 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
+/// and one more with `viocon`.
+const NCFDATA: usize =
+    92 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
 /// (`machine::autoconf::ioconf_mut`).
@@ -1438,7 +1439,20 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 92: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 92: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
+    #[cfg(feature = "viocon")]
+    Cfdata::new(
+        &VIOCON_CA,
+        &VIOCON_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 93 (92 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
