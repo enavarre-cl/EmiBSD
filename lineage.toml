@@ -1455,13 +1455,13 @@ kind = "renamed"
 
 [[module.fn]]
 lz = "sys/crypto/rijndael.rs::rijndael_set_key_enc_only"
-native = ["RijndaelCtx::new_enc_only"]
-kind = "renamed"
+native = ["RijndaelCtx::new_enc_only", "RijndaelCtx::set_key_enc_only"]
+kind = "split"
 
 [[module.fn]]
 lz = "sys/crypto/rijndael.rs::rijndael_set_key"
-native = ["RijndaelCtx::new"]
-kind = "renamed"
+native = ["RijndaelCtx::new", "RijndaelCtx::set_key"]
+kind = "split"
 
 [[module.fn]]
 lz = "sys/crypto/rijndael.rs::rijndael_decrypt"

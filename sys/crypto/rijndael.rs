@@ -96,7 +96,10 @@
 //!   [`RijndaelCtx::new`] and [`RijndaelCtx::new_enc_only`], which return the context or
 //!   `EINVAL`; `rijndael_encrypt` and `rijndael_decrypt` are methods that return the output
 //!   block (LZ: a `&mut RijndaelCtx` filled and `Result<(), Errno>` returned, `&mut [u8; 16]`
-//!   out parameters, so `xform.c`'s in-place calls needed a copy).
+//!   out parameters, so `xform.c`'s in-place calls needed a copy). The in-place
+//!   [`RijndaelCtx::set_key`] and [`RijndaelCtx::set_key_enc_only`], which the constructors
+//!   use, stay for a caller that keys its own storage so that no moved copy of the schedule
+//!   is left behind (`softraid_crypto.rs`'s mask key).
 //! - The key size is the key slice's length (16, 24 or 32 bytes), where the C (and LZ) took
 //!   the key and, beside it, its size in bits; a caller passes exactly the key bytes
 //!   (`xform.rs` the halves of the XTS key, `softraid_crypto.rs` the 32-byte mask key). The
@@ -283,8 +286,7 @@ impl RijndaelCtx {
     /// bytes (`EINVAL` otherwise).
     pub fn new_enc_only(key: &[u8]) -> Result<Self, Errno> {
         let mut ctx = Self::default();
-        ctx.nr = rijndaelKeySetupEnc(&mut ctx.ek, key)?;
-        ctx.enc_only = true;
+        ctx.set_key_enc_only(key)?;
         Ok(ctx)
     }
 
@@ -292,13 +294,31 @@ impl RijndaelCtx {
     /// or 32 bytes (`EINVAL` otherwise).
     pub fn new(key: &[u8]) -> Result<Self, Errno> {
         let mut ctx = Self::default();
-        let rounds = rijndaelKeySetupEnc(&mut ctx.ek, key)?;
-        if rijndaelKeySetupDec(&mut ctx.dk, key)? != rounds {
+        ctx.set_key(key)?;
+        Ok(ctx)
+    }
+
+    /// `rijndael_set_key_enc_only` in place: keys this context for encryption only, writing
+    /// the schedule where it lives (no copy is left to wipe, for a caller that wipes the
+    /// context itself); `EINVAL` for a key of other than 16, 24 or 32 bytes, the context
+    /// unchanged.
+    pub fn set_key_enc_only(&mut self, key: &[u8]) -> Result<(), Errno> {
+        self.nr = rijndaelKeySetupEnc(&mut self.ek, key)?;
+        self.enc_only = true;
+        Ok(())
+    }
+
+    /// `rijndael_set_key` in place: keys this context for both directions, writing the
+    /// schedules where they live; `EINVAL` for a key of other than 16, 24 or 32 bytes, the
+    /// context unchanged.
+    pub fn set_key(&mut self, key: &[u8]) -> Result<(), Errno> {
+        let rounds = rijndaelKeySetupEnc(&mut self.ek, key)?;
+        if rijndaelKeySetupDec(&mut self.dk, key)? != rounds {
             return Err(Errno::EINVAL);
         }
-        ctx.nr = rounds;
-        ctx.enc_only = false;
-        Ok(ctx)
+        self.nr = rounds;
+        self.enc_only = false;
+        Ok(())
     }
 
     /// `rijndael_decrypt`: the decryption of `src`.
@@ -655,6 +675,27 @@ mod tests {
         keyed.zeroize();
         let _ = keyed.encrypt(&[1; 16]);
         let _ = keyed.decrypt(&[1; 16]);
+    }
+
+    #[test]
+    fn keying_in_place_matches_the_constructors() {
+        let k = key();
+        let mut ctx = RijndaelCtx::default();
+        assert_eq!(ctx.set_key(&k), Ok(()));
+        let built = RijndaelCtx::new(&k).expect("AES key size");
+        assert_eq!(
+            (ctx.ek, ctx.dk, ctx.nr, ctx.enc_only),
+            (built.ek, built.dk, built.nr, false)
+        );
+        let mut enc = RijndaelCtx::default();
+        assert_eq!(enc.set_key_enc_only(&k[..16]), Ok(()));
+        assert_eq!(
+            enc.encrypt(&hexn(PT)).to_vec(),
+            hex("69c4e0d86a7b0430d8cdb78070b4c55a")
+        );
+        // A bad size leaves the context as it was.
+        assert_eq!(enc.set_key(&k[..20]), Err(Errno::EINVAL));
+        assert_eq!((enc.nr, enc.enc_only), (10, true));
     }
 }
 /* </TESTS> */

@@ -627,10 +627,9 @@ pub fn sr_crypto_encrypt(
     let mut ctx = RijndaelCtx::default();
 
     let rv = match alg {
-        SR_CRYPTOM_AES_ECB_256 => match RijndaelCtx::new_enc_only(&key[..AES_MAXKEYBYTES]) {
+        SR_CRYPTOM_AES_ECB_256 => match ctx.set_key_enc_only(&key[..AES_MAXKEYBYTES]) {
             Err(_) => Err(Errno::EIO),
-            Ok(keyed) => {
-                ctx = keyed;
+            Ok(()) => {
                 ecb_blocks(p, c, |src, dst| *dst = ctx.encrypt(src));
                 Ok(())
             }
@@ -655,10 +654,9 @@ pub fn sr_crypto_decrypt(
     let mut ctx = RijndaelCtx::default();
 
     let rv = match alg {
-        SR_CRYPTOM_AES_ECB_256 => match RijndaelCtx::new(&key[..AES_MAXKEYBYTES]) {
+        SR_CRYPTOM_AES_ECB_256 => match ctx.set_key(&key[..AES_MAXKEYBYTES]) {
             Err(_) => Err(Errno::EIO),
-            Ok(keyed) => {
-                ctx = keyed;
+            Ok(()) => {
                 ecb_blocks(c, p, |src, dst| *dst = ctx.decrypt(src));
                 Ok(())
             }
