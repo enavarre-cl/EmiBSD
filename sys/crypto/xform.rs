@@ -92,6 +92,7 @@
 //! `xform_ipcomp.c` pick them by name.
 //!
 //! Upstream: sys/crypto/xform.h @ 3ce1f3f79392, sys/crypto/xform.c @ 3ce1f3f79392
+//! LZ: sys/crypto/xform.rs@f5985f1d055a
 //!
 //! ## Deviations
 //! - The header and the file share this module.
@@ -115,6 +116,13 @@
 //!   `deflate_compress` and `deflate_decompress` call `xform_ipcomp.c`'s `deflate_global`.
 //! - The names of the tables are the C's, in lower case (`enc_xform_aes`); the `int` returns of
 //!   the `*Update_int` functions are `Result`s.
+//!
+//! ## Redesign
+//! - N1: the call sites follow the redesigned primitives (context and key-schedule types with
+//!   methods). Of its own, the module gains zeroising `Drop`s: [`AesCtrCtx`] and [`AesXtsCtx`]
+//!   wipe their keys and their counter block and tweak, and [`AuthCtx`] wipes its hash variants
+//!   in place, so a freed session is cleared whole as `cryptosoft.c`'s `explicit_bzero` of the
+//!   context does (LZ's `wipe` stored only the enum tag). No item is renamed or dropped.
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -199,6 +207,22 @@ pub struct AesCtrCtx {
     pub ac_block: [u8; AESCTR_BLOCKSIZE],
 }
 
+impl Drop for AesCtrCtx {
+    /// Wipes the counter block (salt, IV, counter); `ac_key` wipes itself. With it the whole
+    /// context is zeroed, as `swcr_freesession`'s `explicit_bzero` of the schedule does.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl AesCtrCtx {
+    /// Zeroes the counter block and the key.
+    pub(crate) fn zeroize(&mut self) {
+        self.ac_key.zeroize();
+        libkern::explicit_bzero(&mut self.ac_block);
+    }
+}
+
 /// `struct aes_xts_ctx`: the key schedule of AES-XTS.
 #[derive(Clone, Debug, Default)]
 pub struct AesXtsCtx {
@@ -208,6 +232,23 @@ pub struct AesXtsCtx {
     pub key2: RijndaelCtx,
     /// `tweak`.
     pub tweak: [u8; AES_XTS_BLOCKSIZE],
+}
+
+impl Drop for AesXtsCtx {
+    /// Wipes the tweak (`E_k2` of the block number, derived from the key); the two keys wipe
+    /// themselves. With it the whole context is zeroed, as `swcr_freesession` does.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl AesXtsCtx {
+    /// Zeroes the tweak and the two keys.
+    pub(crate) fn zeroize(&mut self) {
+        self.key1.zeroize();
+        self.key2.zeroize();
+        libkern::explicit_bzero(&mut self.tweak);
+    }
 }
 
 /// The key schedule of a cipher (`sw_kschedule`), the variant set by `setkey`: three DES key
@@ -1440,6 +1481,34 @@ mod tests {
         assert_eq!(
             (auth_hash_gmac_aes_128.Setkey.expect("setkey"))(&mut ctx, &[0; 20]),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn the_ctr_and_xts_contexts_zero_their_counter_and_tweak() {
+        // What their `Drop`s run when a session is freed (`swcr_freesession`'s bzero).
+        let mut ks = Kschedule::None;
+        let mut material = [0x61u8; 20];
+        material[16..].copy_from_slice(&[1, 2, 3, 4]);
+        assert_eq!(aes_ctr_setkey(&mut ks, &material), Ok(()));
+        let ctr = ks.aes_ctr();
+        assert_ne!(ctr.ac_block, [0; AESCTR_BLOCKSIZE]);
+        ctr.zeroize();
+        assert_eq!(ctr.ac_block, [0; AESCTR_BLOCKSIZE]);
+        assert!(ctr.ac_key.sk.iter().all(|w| *w == 0));
+
+        assert_eq!(aes_xts_setkey(&mut ks, &[0x62u8; 32]), Ok(()));
+        aes_xts_reinit(&mut ks, &[9u8; 8]);
+        let xts = ks.aes_xts();
+        assert_ne!(xts.tweak, [0; AES_XTS_BLOCKSIZE]);
+        xts.zeroize();
+        assert_eq!(xts.tweak, [0; AES_XTS_BLOCKSIZE]);
+        assert!(
+            xts.key1
+                .ek
+                .iter()
+                .chain(xts.key2.ek.iter())
+                .all(|w| *w == 0)
         );
     }
 }

@@ -150,6 +150,14 @@ pub struct AesGmacCtx {
     pub j: [u8; GMAC_BLOCK_LEN],
 }
 
+impl Drop for AesGmacCtx {
+    /// Wipes the counter block (salt, IV) with the rest of the context: the C's
+    /// `explicit_bzero` of the authenticator contexts when a session is freed.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl AesGmacCtx {
     /// `AES_GMAC_Init`: clears the hash state and the counter block (not the key).
     pub fn init(&mut self) {
@@ -506,6 +514,18 @@ mod tests {
         let _ = ctx.finalize();
         let _ = ctx.finalize();
         let _ = AesGmacCtx::default().finalize();
+    }
+
+    #[test]
+    fn dropping_wipes_the_counter_block_too() {
+        // What `Drop` runs: the salt and IV in `J` go with the keys.
+        let mut ctx = AesGmacCtx::default();
+        ctx.init();
+        assert_eq!(ctx.setkey(&[0x44u8; 20]), Ok(()));
+        ctx.reinit(&[0x55; 8]);
+        assert_ne!(ctx.j, [0; GMAC_BLOCK_LEN]);
+        ctx.zeroize();
+        assert_eq!(ctx.j, [0; GMAC_BLOCK_LEN]);
     }
 }
 /* </TESTS> */

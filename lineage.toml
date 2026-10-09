@@ -1687,8 +1687,7 @@ status = "inherited"
 [[module]]
 rust = "sys/crypto/xform.rs"
 lz = ["sys/crypto/xform.rs"]
-status = "adapted"
-adapted_by = ["sys/crypto/md5.rs", "sys/crypto/sha1.rs", "sys/crypto/sha2.rs", "sys/crypto/rmd160.rs", "sys/crypto/des_locl.rs", "sys/crypto/set_key.rs", "sys/crypto/ecb3_enc.rs", "sys/crypto/blf.rs", "sys/crypto/cast.rs", "sys/crypto/rijndael.rs", "sys/crypto/aes.rs", "sys/crypto/gmac.rs", "sys/crypto/chachapoly.rs"]
+status = "redesigned"
 
 [[module]]
 rust = "sys/crypto/xform_ipcomp.rs"
