@@ -1550,7 +1550,8 @@ smoke-siop: (build-amd64 "--features qemu,multiprocessor")
 # <QEMU, QEMU HARDDISK, 2.5+>`, `sdM: 64MB, 512 bytes/sector, 131072 sectors, thin`). The
 # session runs fdisk(8), disklabel(8) and newfs(8) on the disk, writes a file and a copy of
 # /bin/ksh, unmounts, mounts read-only and reads both back (cmp(1)), and reads 1 MiB raw with
-# dd(1). Part of `smoke`.
+# dd(1). amd64: mpi0 at pci0 dev 4, scsibus1, sd1 (vioblk's disk is sd0); arm64 (`virt`, the
+# virtio-mmio disks attach first): mpi0 at pci0 dev 1, scsibus2, sd2. Part of `smoke`.
 smoke-mpi: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-mpi: no ramdisk image; run just userland first"; exit 1; }
@@ -1563,11 +1564,29 @@ smoke-mpi: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featur
         --send-after '# ' --send 'mount /dev/sd1a /mnt && echo m16a-mpi-$((40+2)) >/mnt/mpi.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo mpi-written-$((40+2))\n' \
         --send-after '# ' --send 'mount -r /dev/sd1a /mnt && cat /mnt/mpi.txt && cmp /bin/ksh /mnt/ksh && echo mpi-cmp-$((40+2)) && umount /mnt\n' \
         --send-after '# ' --send 'dd if=/dev/rsd1c of=/dev/null bs=64k count=16\n' \
-        --expect "mpi0 at pci0 dev "
+        --expect "mpi0 at pci0 dev 4 function 0 vendor 0x1000 product 0x0054 rev 0x00: msi" \
+        --expect "mpi0: QEMU MPT Fusion, firmware 1.50.146.0" \
+        --expect "scsibus1 at mpi0: 8 targets" \
+        --expect "sd1 at scsibus1 targ 0 lun 0: <QEMU, QEMU HARDDISK, 2.5+>" \
+        --expect "sd1: 64MB, 512 bytes/sector, 131072 sectors, thin" \
+        --expect '*3: A6' --expect '/dev/rsd1a: ' --expect "mpi-written-42" --expect "m16a-mpi-42" \
+        --expect "mpi-cmp-42" --expect "1048576 bytes transferred"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --mptsas mpi-arm64.img \
         {{disk_login}} \
-        --expect "mpi0 at pci0 dev "
+        --send-after '# ' --send 'fdisk -iy -f /dev/rsd2c sd2 && fdisk -f /dev/rsd2c sd2\n' \
+        --send-after '# ' --send 'disklabel -w -A sd2 && disklabel sd2\n' \
+        --send-after '# ' --send 'newfs sd2a\n' \
+        --send-after '# ' --send 'mount /dev/sd2a /mnt && echo m16a-mpi-$((40+2)) >/mnt/mpi.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo mpi-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/sd2a /mnt && cat /mnt/mpi.txt && cmp /bin/ksh /mnt/ksh && echo mpi-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rsd2c of=/dev/null bs=64k count=16\n' \
+        --expect "mpi0 at pci0 dev 1 function 0 vendor 0x1000 product 0x0054 rev 0x00: msi" \
+        --expect "mpi0: QEMU MPT Fusion, firmware 1.50.146.0" \
+        --expect "scsibus2 at mpi0: 8 targets" \
+        --expect "sd2 at scsibus2 targ 0 lun 0: <QEMU, QEMU HARDDISK, 2.5+>" \
+        --expect "sd2: 64MB, 512 bytes/sector, 131072 sectors, thin" \
+        --expect '*3: A6' --expect '/dev/rsd2a: ' --expect "mpi-written-42" --expect "m16a-mpi-42" \
+        --expect "mpi-cmp-42" --expect "1048576 bytes transferred"
 
 # M13: em(4), the exit criterion's "em(4) on e1000e answers the M7+ ping". `--nic e1000e`
 # (`tools/xtask/src/hwopts.rs`) puts QEMU's 82574L on the user network in vio0's place, so

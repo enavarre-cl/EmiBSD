@@ -2129,7 +2129,7 @@ status = "inherited"
 rust = "sys/dev/ic/mpi.rs"
 lz = ["sys/dev/ic/mpi.rs"]
 status = "inherited"
-notes = "M16: mpi(4); criterion: QEMU's mptsas1068 disk mounted, both archs"
+notes = "M16a: the whole driver, no stubs: mpi_attach (unwinding as a labelled block), the doorbell handshake (mpi_init, reset_soft/hard, handshake_send/recv, iocfacts, iocinit), portfacts, portenable, fwupload, manufacturing, get_raid, the ccb pool and iopool (mpi_get_ccb/put_ccb), reply frames, mpi_start/poll/wait/reply/intr, the scsibus adapter (scsi_cmd, scsi_cmd_done, load_xs with SGE chaining, scsi_probe with the virtual-volume and SAS ATAPI checks, scsi_ioctl), the configuration pages (mpi_req_cfg_header/page generic over basic and extended headers, SPI port/device, SAS iou, FC port, coalescing), events (eventnotify/ack, SAS device status, detach, FC rescan task), SPI domain validation (squash_ppr, run_ppr, ppr, inq), bio(4) (BIOCINQ/VOL/DISK, ioctl_cache for DIOCGCACHE/SCACHE) and the volume sensors. MPI_DEBUG (DPRINTF, the page-0 read in mpi_ppr) is not defined and not ported. ccb_cookie is an enum and mpi_poll's rv is ccb_poll_rv (the C leaves the address of a dead stack variable in the ccb after a timeout); C bugs kept: mpi_ioctl_cache reads action_status from the rcb (not its reply), the ccb leaks when mpi_poll fails in portenable/cfg_header/cfg_page/ioctl_cache, mpi_ioctl_vol copies 32 bytes from the 8-byte vendor, mpi_ioctl_disk's strlcpy runs on from vendor_id. Host tests: header kinds, dword views, SGE flags. QEMU (`just smoke-mpi`, both archs): mpi0 (MSI) attaches QEMU's SAS1068, scsibus 8 targets, sd1 (amd64) / sd2 (arm64) 64MB; fdisk/disklabel/newfs/mount/cmp/dd as OpenBSD 8.0 does on the same QEMU"
 
 [[module]]
 rust = "sys/dev/ic/mpireg.rs"
@@ -2550,7 +2550,7 @@ status = "inherited"
 rust = "sys/dev/pci/mpi_pci.rs"
 lz = ["sys/dev/pci/mpi_pci.rs"]
 status = "inherited"
-notes = "M16: mpi at pci"
+notes = "M16a: the whole file: struct mpi_pci_softc (repr(C), the mpi softc first; Softc), mpi_pci_ca, mpi_devices[] (22 Symbios MPT chips; their PCI_PRODUCT_SYMBIOS_* ids added to pcidevs.rs with a reference-backed test), mpi_pci_match, mpi_pci_attach (first memory BAR, ROM disabled, MSI else INTx at IPL_BIO|IPL_MPSAFE, MPI_F_SPI for the 1030), mpi_pci_detach. The __sparc64__ scsi-initiator-id walk is not ported. mpi* at pci? is cfdata[85] on amd64 and cfdata[70] on arm64 (both GENERICs have it), a parent of scsibus*"
 
 [[module]]
 rust = "sys/dev/pci/nvme_pci.rs"
