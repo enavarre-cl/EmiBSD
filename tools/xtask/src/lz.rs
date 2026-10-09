@@ -391,6 +391,13 @@ fn blank_line(line: &str, in_block: &mut bool) -> String {
     out
 }
 
+/// `sys/crypto/sha2.rs::Sha2Ctx::default` -> (`sys/crypto/sha2.rs`, `Sha2Ctx::default`): the
+/// file ends at the first `.rs::`, so an item may itself be a `Type::method` path.
+fn split_rs_item(s: &str) -> Option<(String, String)> {
+    let (file, item) = s.split_once(".rs::")?;
+    (!item.is_empty()).then(|| (format!("{file}.rs"), item.to_string()))
+}
+
 fn ident_prefix(s: &str) -> &str {
     let n = s
         .char_indices()
@@ -843,11 +850,10 @@ pub(crate) fn check(root: &Path) -> Result<()> {
         for row in &m.fns {
             n_rows += 1;
             let rtag = format!("{tag} [[module.fn]] lz = \"{}\"", row.lz);
-            let Some((file, item)) = row.lz.rsplit_once("::") else {
+            let Some((file, item)) = split_rs_item(&row.lz) else {
                 errors.push(format!("{rtag}: `lz` must be `<LZ rs path>::<item>`"));
                 continue;
             };
-            let file = file.to_string();
             if !m.lz.contains(&file) {
                 errors.push(format!("{rtag}: {file} is not in this module's lz list"));
                 continue;
@@ -881,9 +887,9 @@ pub(crate) fn check(root: &Path) -> Result<()> {
             }
             for target in &row.native {
                 let (tfile, tname) = match target.strip_prefix("sys/") {
-                    Some(_) => match target.rsplit_once("::") {
-                        Some((f, n)) if f.ends_with(".rs") => (f.to_string(), n.to_string()),
-                        _ => {
+                    Some(_) => match split_rs_item(target) {
+                        Some(found) => found,
+                        None => {
                             errors.push(format!("{rtag}: target `{target}` must be `name`, `Type::method` or `sys/<path>.rs::name`"));
                             continue;
                         }
@@ -1364,7 +1370,9 @@ pub(crate) fn trace(root: &Path, args: &[&str]) -> Result<()> {
         }
     }
     let split = |s: &str| -> Result<(String, String)> {
-        s.rsplit_once(':')
+        // A path has no `:`, so it ends at the first one and the item may be `Type::method`.
+        s.split_once(':')
+            .filter(|(_, i)| !i.is_empty())
             .map(|(f, i)| (f.to_string(), i.to_string()))
             .ok_or_else(|| format!("expected <path>:<item>, got `{s}`").into())
     };
@@ -1466,6 +1474,20 @@ mod tests {
         assert_eq!(strip_ident_lines(after_code), "a\n\nb\n");
         // The native side, already without the ident, is unchanged.
         assert_eq!(strip_ident_lines("a\n\nb\n"), "a\n\nb\n");
+    }
+
+    #[test]
+    fn row_paths_split_at_the_file() {
+        assert_eq!(
+            split_rs_item("sys/crypto/sha2.rs::Sha2Ctx::default"),
+            Some(("sys/crypto/sha2.rs".into(), "Sha2Ctx::default".into()))
+        );
+        assert_eq!(
+            split_rs_item("sys/kern/kern_sched.rs::sched_choosecpu"),
+            Some(("sys/kern/kern_sched.rs".into(), "sched_choosecpu".into()))
+        );
+        assert_eq!(split_rs_item("Type::method"), None);
+        assert_eq!(split_rs_item("sys/a.rs::"), None);
     }
 
     #[test]
