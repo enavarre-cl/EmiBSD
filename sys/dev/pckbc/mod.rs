@@ -19,11 +19,14 @@
 /* <CODE> */
 //! The devices on `pckbc(4)`'s slots: OpenBSD `sys/dev/pckbc/`: the PS/2 keyboard
 //! (`pckbd`, its commands in `pckbdreg`, its console and bell hooks in `pckbdvar`, its
-//! layouts in `wskbdmap_mfii`).
+//! layouts in `wskbdmap_mfii`) and the PS/2 mouse and touchpads (`pms`, their commands and
+//! answers in `pmsreg`).
 
 pub mod pckbd;
 pub mod pckbdreg;
 pub mod pckbdvar;
+pub mod pms;
+pub mod pmsreg;
 #[rustfmt::skip] // generated from the C, licence block verbatim
 pub mod wskbdmap_mfii;
 /* </CODE> */

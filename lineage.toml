@@ -2787,6 +2787,19 @@ license = "none"
 notes = "M16d: the two prototypes, re-exports of pckbd.rs's pckbd_cnattach and pckbd_hookup_bell (with the PckbdBellFn type)"
 
 [[module]]
+rust = "sys/dev/pckbc/pms.rs"
+lz = ["sys/dev/pckbc/pms.rs"]
+status = "inherited"
+notes = "M16d: the whole file: probe (reset on the aux slot), attach (input handler, wsmouse child, protocol lookup, disabled until opened), every protocol of pms_protocols[] (standard, IntelliMouse, Synaptics with its pass-through wsmouse, ALPS with the Dualpoint trackpoint, Elantech v1..v4 with the v4 trackpoint), the reset announcement task and timeout, pms_change_state under sc_state_lock, the ioctls, activate; the command helpers return Result<(), Errno> (ENXIO where the C returns -1 for an unaccepted answer), enable bool, sync true when in sync; sub-softcs malloced M_WAITOK|M_ZERO and freed where the C frees; None wsmouse/sub-softc/protocol arms (unreachable once attached) skip instead of dereferencing NULL; mouse_has_softbtn is acpi's flag by MACHINE_PC; DIAGNOSTIC messages follow the diagnostic feature, DEBUG ones not compiled; kept as the C has them: the Elantech v1..v3 read-back loops end on a failed command, the v1 parity table is inverted on every refill (external bugs); no stubs; host tests of the packet sync and decoding, the reset detection, the state counting, the parity table, the ioctls, and reference-backed tests of the defines and alps_models"
+
+[[module]]
+rust = "sys/dev/pckbc/pmsreg.rs"
+lz = ["sys/dev/pckbc/pmsreg.rs"]
+status = "inherited"
+license = "none"
+notes = "M16d: every define: the mouse commands and packet bits, the knock magics, the Synaptics queries, modes and capability bits, the ALPS and Elantech values and bezels; wire bytes u8, the Synaptics bit masks and limits i32, the ALPS gestures u32; the function-like macros are lower-case const fns; host tests of the macros and a reference-backed test of every define (with a completeness check)"
+
+[[module]]
 rust = "sys/dev/pckbc/wskbdmap_mfii.rs"
 lz = ["sys/dev/pckbc/wskbdmap_mfii.rs"]
 status = "inherited"
