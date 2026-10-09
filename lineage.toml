@@ -2027,6 +2027,12 @@ lz = ["sys/dev/ic/ahcivar.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ic/am79900reg.rs"
+lz = ["sys/dev/ic/am79900reg.rs"]
+status = "inherited"
+notes = "M16c: the 32-bit software model descriptors (lermd, letmd, leinit) and their bits for pcn(4); the int32_t members are u32"
+
+[[module]]
 rust = "sys/dev/ic/com.rs"
 lz = ["sys/dev/ic/com.rs"]
 status = "inherited"
@@ -2063,6 +2069,12 @@ notes = "M16c: license: kept whole; FxpSoftc, struct fxp_ctrl, the macros as met
 rust = "sys/dev/ic/i8253reg.rs"
 lz = ["sys/dev/ic/i8253reg.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/ic/lancereg.rs"
+lz = ["sys/dev/ic/lancereg.rs"]
+status = "inherited"
+notes = "M16c: CSR/BCR numbers and bits, init block mode, chip ids; function-like macros are const fns; LE_*ADDR(sc) macros (lance softc members) not ported"
 
 [[module]]
 rust = "sys/dev/ic/mc146818reg.rs"
@@ -2393,6 +2405,12 @@ rust = "sys/dev/pci/if_fxp_pci.rs"
 lz = ["sys/dev/pci/if_fxp_pci.rs"]
 status = "inherited"
 notes = "M16c: the whole file: fxp_pci_devices, fxp_pci_match, fxp_pci_attach, fxp_pci_detach, fxp_pci_activate; fxp* at pci? in the amd64 ioconf (cfdata[77]); QEMU: fxp0 at pci0 dev 2 function 0 'Intel 82559ER' rev 0x09, i82559S: apic 0 int 22, address 52:54:00:12:34:56"
+
+[[module]]
+rust = "sys/dev/pci/if_pcn.rs"
+lz = ["sys/dev/pci/if_pcn.rs"]
+status = "inherited"
+notes = "M16c: pcn(4), amd64 GENERIC only (pcn* at pci?); not MPSAFE (kernel lock, as C); address from the PROM (PCN_NO_PROM off); pcn_set_filter hash split out as pcn_hash_multi for host tests; smoke-pcn pings 10.0.2.2 on QEMU pcnet (Am79c970A, no PHY); PCI vendor/product names are not printed (the tree has no pcidevs name table), as em/re"
 
 [[module]]
 rust = "sys/dev/pci/if_re_pci.rs"

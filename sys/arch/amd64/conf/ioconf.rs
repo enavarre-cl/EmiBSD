@@ -50,7 +50,7 @@
 //! `ehci* at pci?` and `usb* at ehci?` (M16b), `uhci* at pci?` and `usb* at uhci?` (M16b),
 //! `ohci* at pci?` and `usb* at ohci?` (M16b),
 //! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?` (M16b),
-//! `fxp* at pci?` and `inphy* at mii?` (M16c),
+//! `pcn* at pci?`, `fxp* at pci?` and `inphy* at mii?` (M16c),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -63,7 +63,7 @@
 //! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
-//! (`pchb*`, `pcib*`, the network drivers but em, re and vmx (`rl* at pci?` among them: QEMU's rtl8139 is
+//! (`pchb*`, `pcib*`, the network drivers but em, re, vmx, pcn and fxp (`rl* at pci?` among them: QEMU's rtl8139 is
 //! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
 //! device at `mii?` (the other PHY drivers), every
 //! other
@@ -119,6 +119,7 @@ use crate::dev::pci::ehci_pci::EHCI_PCI_CA;
 use crate::dev::pci::ichiic::{ICHIIC_CA, ICHIIC_CD};
 use crate::dev::pci::if_em::{EM_CA, EM_CD};
 use crate::dev::pci::if_fxp_pci::FXP_PCI_CA;
+use crate::dev::pci::if_pcn::{PCN_CA, PCN_CD};
 use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
@@ -273,9 +274,10 @@ const PV_PUC: &[i16] = &[38];
 /// -1]}`).
 const LOC_PUC_UNK: &[i64] = &[-1];
 
-/// `pv[]` for children of the `mii` attribute, carried by `re*` (`cfdata[42]`) and `fxp*`
-/// (`cfdata[77]`): `config(8)` merges the `at mii?` lines of one device.
-const PV_MII: &[i16] = &[42, 77];
+/// `pv[]` for children of the `mii` attribute, carried by every device with that attribute:
+/// `re*` (`cfdata[42]`), `pcn*` (`cfdata[77]`) and `fxp*` (`cfdata[78]`): `config(8)`
+/// merges the `at mii?` lines of one device.
+const PV_MII: &[i16] = &[42, 77, 78];
 
 /// `loc[]` of an entry at `mii` with the default `phy = -1` (`conf/files`: `define mii {[phy =
 /// -1]}`).
@@ -355,11 +357,11 @@ const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 79 entries, 80 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 80 entries, 81 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    80
+    81
 } else {
-    79
+    80
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -1221,7 +1223,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_UCOMBUS,
         0,
     ),
-    // 77: fxp* at pci?
+    // 77: pcn* at pci? (M16c)
+    Cfdata::new(
+        &PCN_CA,
+        &PCN_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 78: fxp* at pci? (M16c)
     Cfdata::new(
         &FXP_PCI_CA,
         &FXP_CD,
@@ -1233,7 +1247,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 78: inphy* at mii?
+    // 79: inphy* at mii? (M16c)
     Cfdata::new(
         &INPHY_CA,
         &INPHY_CD,
@@ -1245,7 +1259,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_MII,
         0,
     ),
-    // 79: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 80: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
