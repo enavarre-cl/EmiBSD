@@ -16,3 +16,6 @@ One line per lesson, appended at the end; task state goes in HANDOFF.md
 - Dropping `Copy` from a type breaks `Cell::get` and `StaticCell::read` at the call sites, not only by-value passes: use `take`/`clone`/`set` on the Cell, `get().clone()` on the StaticCell (same unsafe count).
 - A compile-time "not Copy" check on stable without a crate: `crate::crypto::testutil::assert_not_copy!` (ambiguous impl, fails with E0283 naming the Copy type).
 - Worktree sandbox: `awk` programs, `$((..))` arithmetic and multi-statement heredoc pipelines are refused; put loops in a script file in the scratchpad and run it with paths as arguments.
+- `sys/lib/libkern/lib.rs` is a crate root AND an inherited `[[module]]` of lineage.toml (the only tracked one); `lz check` compares modules without `#[forbid(unsafe_code)]` lines on `mod x;` declarations, so the forbid ratchet there keeps it inherited.
+- Worktree sandbox: to stage many paths without variables, `git diff --name-only > <scratch>/paths.txt`, then `git add --pathspec-from-file=<scratch>/paths.txt`.
+- A file with no `unsafe` token still fails under forbid when it invokes a macro whose body has one (28 such macro_rules in sys/: byte_view!, scsi_wire!, usb_wire!, ...); scan macro bodies with a lexer and grep the invocations before trusting a sweep to the CI configurations alone.
