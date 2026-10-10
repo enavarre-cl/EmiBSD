@@ -88,14 +88,20 @@
 //! - `XSIMPLEQ_INIT` takes the cookie as an argument until `arc4random(9)` exists (milestone M5);
 //!   a head made by `new` has cookie 0 and works like a plain simple queue.
 //! - `_Q_INVALIDATE` poisons the links of a removed element under feature `diagnostic`
-//!   (OpenBSD's `option DIAGNOSTIC`), and a poisoned link that is read again fails a
-//!   `kassert!` where the C would fault on `(void *)-1`. Without `diagnostic` the same
-//!   removals clear the links instead of leaving them stale (see "Redesign").
+//!   (OpenBSD's `option DIAGNOSTIC`), and a poisoned link that is dereferenced, or read
+//!   through a reader, fails a `kassert!` where the C would fault on `(void *)-1`. Without
+//!   `diagnostic` the same removals clear the links instead of leaving them stale (see
+//!   "Redesign").
 //! - The readers are safe functions, as in LZ, so they cannot ask that the element they are
-//!   given be linked: `next`/`prev` of an element removed by an operation that does not
-//!   invalidate (`*_REMOVE_HEAD`, `*_REMOVE_AFTER`, `STAILQ_REMOVE`) still read its old
-//!   successor, as the C does, valid only while that successor stays linked. Making that a type
-//!   needs a signature change (the user's decision; N2 kept the source API).
+//!   given be in the list, and their soundness rests on the callers, as the C's macros do:
+//!   `next` of an element removed by an operation that does not invalidate (`*_REMOVE_HEAD`,
+//!   `*_REMOVE_AFTER`, `STAILQ_REMOVE`) still reads its old successor, valid only while that
+//!   successor stays linked; [`XsimpleqHead::next`] of an element of another XOR queue decodes
+//!   its link with the wrong cookie; [`TailqHead::prev`] of the first element of another tail
+//!   queue steps back from that queue's head as if it were an element. Each is a reader given
+//!   an element outside the list, which the mutators' `# Safety` sections and the readers'
+//!   docs forbid. Making it a type needs a signature change (the user's decision; N2 kept the
+//!   source API).
 //!
 //! ## Redesign
 //! - The links are typed: LZ's `Cell<*const T>` (`struct type *`) and
@@ -117,9 +123,11 @@
 //!   link, the XOR'd next link, or `tqe_prev`; the cursor holds the pending position as a raw
 //!   `NonNull` and dereferences it in one place.
 //! - What the C turns into a `NULL` dereference (removing from an empty queue, removing after
-//!   the last element, `SLIST_REMOVE` of an element that is not there, removing an element that
-//!   is in no list) is a `kassert!` under `diagnostic` and a no-op otherwise: an `Option`
-//!   cannot be dereferenced.
+//!   the last element, `SLIST_REMOVE` or `STAILQ_REMOVE` of an element that is not there,
+//!   inserting before, removing or replacing an element that is in no list, a second
+//!   `LIST_REMOVE` or `TAILQ_REMOVE` included) is an explicit kernel panic (`panic(9)`, through
+//!   `queue_panic`) in every configuration, where the C faults: an `Option` cannot be
+//!   dereferenced, so the fault becomes a message naming the operation.
 //! - `LIST_REMOVE`, `LIST_REPLACE`, `SLIST_REMOVE`, `TAILQ_REMOVE` and `TAILQ_REPLACE` clear the
 //!   removed element's links (`None`) when `diagnostic` is off, where LZ and the C leave them
 //!   stale: a stale link would name an element that may be freed, and the readers are safe.
@@ -217,10 +225,15 @@ impl<P> Link<P> {
         #[cfg(feature = "diagnostic")]
         crate::kassert!(p.addr().get() != Q_INVALID);
         // SAFETY: by the type's invariant a `Some` link of a head or of a linked element names
-        // a live `P` (the mutators' callers keep linked elements valid and in place until they
-        // are unlinked, and the heads the links point back at in place while not empty); every
-        // call site in this module reads a head's link or a linked element's, and the public
-        // readers hand the reference out only for as long as the borrow they were given. The
+        // a live `P`: the mutators' callers keep linked elements valid and in place until they
+        // are unlinked, and the list and tail queue heads the back links name in place while
+        // not empty. The mutators read the head's links and the links of the elements their
+        // `# Safety` sections require to be linked. The safe readers (`next`, the iterators'
+        // steps) read the link of the element their caller passes, and that element must be in
+        // the list, or never linked (its links are `None`): an obligation on the callers, as
+        // with the C's macros, which the safe signatures cannot carry (module docs,
+        // "Deviations"; the mutators that leave a removed element's link stale say so in their
+        // `# Safety`). The reference lives as long as the borrow the reader was given. The
         // poison is never dereferenced: the assertion above stops it under `diagnostic`, the
         // only configuration that writes it. `P` is only read through `&` (its links are
         // `Cell`s).
@@ -322,7 +335,8 @@ impl<A: SlistAdapter> SlistHead<A> {
         self.slh_first.is_null()
     }
 
-    /// `SLIST_NEXT`: the element after `elem`.
+    /// `SLIST_NEXT`: the element after `elem`, which must be in the list or never linked
+    /// (module docs, "Deviations").
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
         A::entry(elem).sle_next.target()
     }
@@ -358,14 +372,15 @@ impl<A: SlistAdapter> SlistHead<A> {
     ///
     /// # Safety
     ///
-    /// The list is not empty (an empty list is left as it is, and fails a `kassert!` under
-    /// `diagnostic`).
+    /// The list is not empty (otherwise the kernel panics, where the C dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove_head(&self) {
-        #[cfg(feature = "diagnostic")]
-        crate::kassert!(!self.is_empty());
-        if let Some(first) = self.slh_first.target() {
-            self.slh_first.set(A::entry(first).sle_next.get());
-        }
+        let Some(first) = self.slh_first.target() else {
+            queue_panic("SLIST_REMOVE_HEAD: empty");
+        };
+        self.slh_first.set(A::entry(first).sle_next.get());
     }
 
     /// `SLIST_REMOVE_AFTER`: unlinks the element after `elem`. Its link still names its
@@ -373,15 +388,17 @@ impl<A: SlistAdapter> SlistHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is linked and has a successor (otherwise nothing changes, and a `kassert!` fails
-    /// under `diagnostic`).
+    /// `elem` is linked and has a successor (otherwise the kernel panics, where the C
+    /// dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove_after(elem: &A::Elem) {
         let link = &A::entry(elem).sle_next;
-        #[cfg(feature = "diagnostic")]
-        crate::kassert!(!link.is_null());
-        if let Some(next) = link.target() {
-            link.set(A::entry(next).sle_next.get());
-        }
+        let Some(next) = link.target() else {
+            queue_panic("SLIST_REMOVE_AFTER: no successor");
+        };
+        link.set(A::entry(next).sle_next.get());
     }
 
     /// `SLIST_REMOVE`: unlinks `elem`, walking the list to find its predecessor (O(n)), and
@@ -389,8 +406,8 @@ impl<A: SlistAdapter> SlistHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in this list (otherwise the list is left as it is, and a `kassert!` fails
-    /// under `diagnostic`).
+    /// `elem` is in this list (otherwise the walk ends in a kernel panic, where the C
+    /// dereferences `NULL`).
     pub unsafe fn remove(&self, elem: &A::Elem) {
         let next = A::entry(elem).sle_next.get();
         let mut link = &self.slh_first;
@@ -401,11 +418,7 @@ impl<A: SlistAdapter> SlistHead<A> {
             }
             match link.target() {
                 Some(cur) => link = &A::entry(cur).sle_next,
-                None => {
-                    #[cfg(feature = "diagnostic")]
-                    crate::kassert!(false);
-                    return;
-                }
+                None => queue_panic("SLIST_REMOVE: element not in the list"),
             }
         }
         invalidate(&A::entry(elem).sle_next);
@@ -502,7 +515,8 @@ impl<A: ListAdapter> ListHead<A> {
         self.lh_first.is_null()
     }
 
-    /// `LIST_NEXT`: the element after `elem`.
+    /// `LIST_NEXT`: the element after `elem`, which must be in the list or never linked
+    /// (module docs, "Deviations").
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
         A::entry(elem).le_next.target()
     }
@@ -555,9 +569,7 @@ impl<A: ListAdapter> ListHead<A> {
         let before = A::entry(listelm);
         let entry = A::entry(elem);
         let Some(prev) = before.le_prev.target() else {
-            #[cfg(feature = "diagnostic")]
-            crate::kassert!(false);
-            return;
+            queue_panic("LIST_INSERT_BEFORE: listelm not linked");
         };
         entry.le_prev.set(before.le_prev.get());
         entry.le_next.set_ref(listelm);
@@ -569,14 +581,12 @@ impl<A: ListAdapter> ListHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in a list of `A` (an element in no list is left as it is, and fails a
-    /// `kassert!` under `diagnostic`).
+    /// `elem` is in a list of `A`. An element in no list, one already removed included,
+    /// panics the kernel, where the C dereferences `NULL` (or `_Q_INVALID`).
     pub unsafe fn remove(elem: &A::Elem) {
         let entry = A::entry(elem);
         let Some(prev) = entry.le_prev.target() else {
-            #[cfg(feature = "diagnostic")]
-            crate::kassert!(false);
-            return;
+            queue_panic("LIST_REMOVE: element not linked");
         };
         if let Some(next) = entry.le_next.target() {
             A::entry(next).le_prev.set(entry.le_prev.get());
@@ -596,9 +606,7 @@ impl<A: ListAdapter> ListHead<A> {
         let old = A::entry(elem);
         let new = A::entry(elem2);
         let Some(prev) = old.le_prev.target() else {
-            #[cfg(feature = "diagnostic")]
-            crate::kassert!(false);
-            return;
+            queue_panic("LIST_REPLACE: element not linked");
         };
         new.le_next.set(old.le_next.get());
         if let Some(next) = new.le_next.target() {
@@ -687,7 +695,8 @@ impl<A: SimpleqAdapter> SimpleqHead<A> {
         self.sqh_first.is_null()
     }
 
-    /// `SIMPLEQ_NEXT`: the element after `elem`.
+    /// `SIMPLEQ_NEXT`: the element after `elem`, which must be in the queue or never linked
+    /// (module docs, "Deviations").
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
         A::entry(elem).sqe_next.target()
     }
@@ -747,16 +756,17 @@ impl<A: SimpleqAdapter> SimpleqHead<A> {
     ///
     /// # Safety
     ///
-    /// The queue is not empty (an empty queue is left as it is, and fails a `kassert!` under
-    /// `diagnostic`).
+    /// The queue is not empty (otherwise the kernel panics, where the C dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove_head(&self) {
-        #[cfg(feature = "diagnostic")]
-        crate::kassert!(!self.is_empty());
-        if let Some(first) = self.sqh_first.target() {
-            self.sqh_first.set(A::entry(first).sqe_next.get());
-            if self.sqh_first.is_null() {
-                self.sqh_last.set(None);
-            }
+        let Some(first) = self.sqh_first.target() else {
+            queue_panic("SIMPLEQ_REMOVE_HEAD: empty");
+        };
+        self.sqh_first.set(A::entry(first).sqe_next.get());
+        if self.sqh_first.is_null() {
+            self.sqh_last.set(None);
         }
     }
 
@@ -765,17 +775,19 @@ impl<A: SimpleqAdapter> SimpleqHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue and has a successor (otherwise nothing changes, and a `kassert!`
-    /// fails under `diagnostic`).
+    /// `elem` is in this queue and has a successor (otherwise the kernel panics, where the C
+    /// dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove_after(&self, elem: &A::Elem) {
         let link = &A::entry(elem).sqe_next;
-        #[cfg(feature = "diagnostic")]
-        crate::kassert!(!link.is_null());
-        if let Some(next) = link.target() {
-            link.set(A::entry(next).sqe_next.get());
-            if link.is_null() {
-                self.sqh_last.set(Some(link_of::<A>(elem)));
-            }
+        let Some(next) = link.target() else {
+            queue_panic("SIMPLEQ_REMOVE_AFTER: no successor");
+        };
+        link.set(A::entry(next).sqe_next.get());
+        if link.is_null() {
+            self.sqh_last.set(Some(link_of::<A>(elem)));
         }
     }
 
@@ -885,13 +897,17 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
         let p = NonNull::new(ptr::with_exposed_provenance_mut::<P>(
             self.sqx_cookie.get() ^ v,
         ))?;
-        // SAFETY: every encoded value this module stores in the head or in a linked element is
-        // `xor` of a reference to a live object (an element linked into this queue, or the
-        // `sqx_next` inside one), whose provenance `xor` exposed; the callers keep linked
-        // elements valid and in place until they are unlinked, and the call sites decode only
-        // the head's links and linked elements' with the cookie that encoded them.
-        // `with_exposed_provenance_mut` picks up that exposed provenance, and the reference
-        // only reads (the links are `Cell`s).
+        // SAFETY: every encoded value this module stores in the head or in an element linked
+        // into this queue is `xor`, with this head's cookie, of a reference to a live object
+        // (an element linked into this queue, or the `sqx_next` inside one), whose provenance
+        // `xor` exposed; the callers keep linked elements valid and in place until they are
+        // unlinked. The mutators decode the head's links and the links of the elements their
+        // `# Safety` sections require to be in this queue. `next` and the iterator's step
+        // decode the link of the element their caller passes, which must be in this queue: an
+        // element of another XOR queue would decode with the wrong cookie. That obligation is
+        // the caller's, as with the C's macro, and the safe signature cannot carry it (module
+        // docs, "Deviations"). `with_exposed_provenance_mut` picks up the exposed provenance,
+        // and the reference only reads (the links are `Cell`s).
         Some(unsafe { p.as_ref() })
     }
 
@@ -905,7 +921,8 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
         self.sqx_first.get() == self.end()
     }
 
-    /// `XSIMPLEQ_NEXT`: the element after `elem`.
+    /// `XSIMPLEQ_NEXT`: the element after `elem`, which must be in this queue
+    /// (module docs, "Deviations").
     pub fn next<'a>(&self, elem: &'a A::Elem) -> Option<&'a A::Elem> {
         self.decode(A::entry(elem).sqx_next.get())
     }
@@ -968,17 +985,18 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
     ///
     /// # Safety
     ///
-    /// The queue is not empty (an empty queue is left as it is, and fails a `kassert!` under
-    /// `diagnostic`).
+    /// The queue is not empty (otherwise the kernel panics, where the C dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove_head(&self) {
-        #[cfg(feature = "diagnostic")]
-        crate::kassert!(!self.is_empty());
-        if let Some(first) = self.first() {
-            let next = A::entry(first).sqx_next.get();
-            self.sqx_first.set(next);
-            if next == self.end() {
-                self.sqx_last.set(self.xor(ptr::null::<Cell<usize>>()));
-            }
+        let Some(first) = self.first() else {
+            queue_panic("XSIMPLEQ_REMOVE_HEAD: empty");
+        };
+        let next = A::entry(first).sqx_next.get();
+        self.sqx_first.set(next);
+        if next == self.end() {
+            self.sqx_last.set(self.xor(ptr::null::<Cell<usize>>()));
         }
     }
 
@@ -986,18 +1004,20 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue and has a successor (otherwise nothing changes, and a `kassert!`
-    /// fails under `diagnostic`).
+    /// `elem` is in this queue and has a successor (otherwise the kernel panics, where the C
+    /// dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove_after(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        #[cfg(feature = "diagnostic")]
-        crate::kassert!(entry.sqx_next.get() != self.end());
-        if let Some(next) = self.decode::<A::Elem>(entry.sqx_next.get()) {
-            let after_next = A::entry(next).sqx_next.get();
-            entry.sqx_next.set(after_next);
-            if after_next == self.end() {
-                self.sqx_last.set(self.xor(&entry.sqx_next));
-            }
+        let Some(next) = self.decode::<A::Elem>(entry.sqx_next.get()) else {
+            queue_panic("XSIMPLEQ_REMOVE_AFTER: no successor");
+        };
+        let after_next = A::entry(next).sqx_next.get();
+        entry.sqx_next.set(after_next);
+        if after_next == self.end() {
+            self.sqx_last.set(self.xor(&entry.sqx_next));
         }
     }
 }
@@ -1121,22 +1141,27 @@ impl<A: TailqAdapter> TailqHead<A> {
         self.tqh_first.is_null()
     }
 
-    /// `TAILQ_NEXT`: the element after `elem`.
+    /// `TAILQ_NEXT`: the element after `elem`, which must be in the queue or never linked
+    /// (module docs, "Deviations").
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
         A::entry(elem).tqe_next.target()
     }
 
-    /// `TAILQ_PREV`: the element before `elem`, which must be in this queue.
+    /// `TAILQ_PREV`: the element before `elem`, which must be in this queue (module docs,
+    /// "Deviations").
     pub fn prev<'a>(&self, elem: &'a A::Elem) -> Option<&'a A::Elem> {
         let prev = A::entry(elem).tqe_prev.get()?;
         if prev == NonNull::from(&self.tqh_first) {
             return None;
         }
         let elem = container_of::<A>(prev)?;
-        // SAFETY: a linked element's `tqe_prev` names the head's `tqh_first` (excluded above)
-        // or, made by `link_of`, the `tqe_next` of the previous element with that element's
-        // provenance; `container_of` steps back by the entry's offset to it, and it is linked,
-        // so live. An element in no queue has `None` (never linked, or cleared by `remove`).
+        // SAFETY: `elem` must be in this queue (the caller's obligation, which the safe
+        // signature cannot carry: module docs, "Deviations"; the first element of another
+        // tail queue would name that head's `tqh_first`, which is not excluded here). Then its
+        // `tqe_prev` names this head's `tqh_first` (excluded above) or, made by `link_of`, the
+        // `tqe_next` of the previous element with that element's provenance; `container_of`
+        // steps back by the entry's offset to it, and it is linked, so live. An element in no
+        // queue has `None` (never linked, or cleared by `remove`).
         Some(unsafe { elem.as_ref() })
     }
 
@@ -1230,9 +1255,7 @@ impl<A: TailqAdapter> TailqHead<A> {
         let before = A::entry(listelm);
         let entry = A::entry(elem);
         let Some(prev) = before.tqe_prev.target() else {
-            #[cfg(feature = "diagnostic")]
-            crate::kassert!(false);
-            return;
+            queue_panic("TAILQ_INSERT_BEFORE: listelm not linked");
         };
         entry.tqe_prev.set(before.tqe_prev.get());
         entry.tqe_next.set_ref(listelm);
@@ -1244,14 +1267,12 @@ impl<A: TailqAdapter> TailqHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue (an element in no queue is left as it is, and fails a
-    /// `kassert!` under `diagnostic`).
+    /// `elem` is in this queue. An element in no queue, one already removed included, panics
+    /// the kernel, where the C dereferences `NULL` (or `_Q_INVALID`).
     pub unsafe fn remove(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
         let Some(prev) = entry.tqe_prev.target() else {
-            #[cfg(feature = "diagnostic")]
-            crate::kassert!(false);
-            return;
+            queue_panic("TAILQ_REMOVE: element not linked");
         };
         match entry.tqe_next.target() {
             Some(next) => A::entry(next).tqe_prev.set(entry.tqe_prev.get()),
@@ -1272,9 +1293,7 @@ impl<A: TailqAdapter> TailqHead<A> {
         let old = A::entry(elem);
         let new = A::entry(elem2);
         let Some(prev) = old.tqe_prev.target() else {
-            #[cfg(feature = "diagnostic")]
-            crate::kassert!(false);
-            return;
+            queue_panic("TAILQ_REPLACE: element not linked");
         };
         new.tqe_next.set(old.tqe_next.get());
         match new.tqe_next.target() {
@@ -1398,7 +1417,8 @@ impl<A: StailqAdapter> StailqHead<A> {
         self.stqh_first.is_null()
     }
 
-    /// `STAILQ_NEXT`: the element after `elem`.
+    /// `STAILQ_NEXT`: the element after `elem`, which must be in the queue or never linked
+    /// (module docs, "Deviations").
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
         A::entry(elem).stqe_next.target()
     }
@@ -1458,16 +1478,17 @@ impl<A: StailqAdapter> StailqHead<A> {
     ///
     /// # Safety
     ///
-    /// The queue is not empty (an empty queue is left as it is, and fails a `kassert!` under
-    /// `diagnostic`).
+    /// The queue is not empty (otherwise the kernel panics, where the C dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove_head(&self) {
-        #[cfg(feature = "diagnostic")]
-        crate::kassert!(!self.is_empty());
-        if let Some(first) = self.stqh_first.target() {
-            self.stqh_first.set(A::entry(first).stqe_next.get());
-            if self.stqh_first.is_null() {
-                self.stqh_last.set(None);
-            }
+        let Some(first) = self.stqh_first.target() else {
+            queue_panic("STAILQ_REMOVE_HEAD: empty");
+        };
+        self.stqh_first.set(A::entry(first).stqe_next.get());
+        if self.stqh_first.is_null() {
+            self.stqh_last.set(None);
         }
     }
 
@@ -1476,17 +1497,19 @@ impl<A: StailqAdapter> StailqHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue and has a successor (otherwise nothing changes, and a `kassert!`
-    /// fails under `diagnostic`).
+    /// `elem` is in this queue and has a successor (otherwise the kernel panics, where the C
+    /// dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove_after(&self, elem: &A::Elem) {
         let link = &A::entry(elem).stqe_next;
-        #[cfg(feature = "diagnostic")]
-        crate::kassert!(!link.is_null());
-        if let Some(next) = link.target() {
-            link.set(A::entry(next).stqe_next.get());
-            if link.is_null() {
-                self.stqh_last.set(Some(link_of::<A>(elem)));
-            }
+        let Some(next) = link.target() else {
+            queue_panic("STAILQ_REMOVE_AFTER: no successor");
+        };
+        link.set(A::entry(next).stqe_next.get());
+        if link.is_null() {
+            self.stqh_last.set(Some(link_of::<A>(elem)));
         }
     }
 
@@ -1495,8 +1518,11 @@ impl<A: StailqAdapter> StailqHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue (otherwise the queue is left as it is, and a `kassert!` fails
-    /// under `diagnostic`).
+    /// `elem` is in this queue (otherwise the walk ends in a kernel panic, where the C
+    /// dereferences `NULL`).
+    /// The removed element's link still names its old successor, as in C: the caller does not
+    /// pass the removed element to [`next`](Self::next) once that successor is unlinked and
+    /// freed, until the element is inserted again (the safe reader cannot check it).
     pub unsafe fn remove(&self, elem: &A::Elem) {
         let next = A::entry(elem).stqe_next.get();
         // The element whose `stqe_next` names `elem`, `None` for the head's `stqh_first`.
@@ -1515,11 +1541,7 @@ impl<A: StailqAdapter> StailqHead<A> {
                     before = Some(cur);
                     link = &A::entry(cur).stqe_next;
                 }
-                None => {
-                    #[cfg(feature = "diagnostic")]
-                    crate::kassert!(false);
-                    return;
-                }
+                None => queue_panic("STAILQ_REMOVE: element not in the queue"),
             }
         }
     }
@@ -1665,6 +1687,23 @@ impl<A: TailqAdapter> Step<A::Elem> for &TailqHead<A> {
     fn step(&self, elem: &A::Elem) -> Option<NonNull<A::Elem>> {
         self.prev(elem).map(NonNull::from)
     }
+}
+
+/// What the C does by dereferencing `NULL` when a caller breaks an operation's precondition
+/// (`what` names the operation and the broken condition): a kernel panic, in every
+/// configuration.
+#[cold]
+#[cfg(not(test))]
+fn queue_panic(what: &str) -> ! {
+    crate::kern::subr_prf::panic(format_args!("{what}"))
+}
+
+/// The host tests' `queue_panic`: an unwinding panic, so that `#[should_panic]` sees it (the
+/// host's `panic(9)` ends the test process through `boot`).
+#[cold]
+#[cfg(test)]
+fn queue_panic(what: &str) -> ! {
+    std::panic!("{what}")
 }
 
 /// `_Q_INVALIDATE`: under feature `diagnostic`, poisons a link of a removed element so that a
@@ -2366,43 +2405,204 @@ mod tests {
         assert_eq!(ids(li.iter()), [3, 2]);
     }
 
+    // What the C turns into a NULL dereference is a kernel panic in every configuration
+    // (`queue_panic`; the host tests' version unwinds, so `should_panic` sees it).
+
+    #[test]
+    #[should_panic(expected = "SLIST_REMOVE_HEAD: empty")]
+    fn slist_remove_head_of_an_empty_list_panics() {
+        let h = SlistHead::<Sl>::new();
+        // SAFETY: the precondition is broken on purpose; the panic comes before any change.
+        unsafe { h.remove_head() };
+    }
+
+    #[test]
+    #[should_panic(expected = "SIMPLEQ_REMOVE_HEAD: empty")]
+    fn simpleq_remove_head_of_an_empty_queue_panics() {
+        let h = SimpleqHead::<Sq>::new();
+        // SAFETY: as above.
+        unsafe { h.remove_head() };
+    }
+
+    #[test]
+    #[should_panic(expected = "XSIMPLEQ_REMOVE_HEAD: empty")]
+    fn xsimpleq_remove_head_of_an_empty_queue_panics() {
+        let h = XsimpleqHead::<Xq>::new();
+        h.init(0x1234_5678);
+        // SAFETY: as above.
+        unsafe { h.remove_head() };
+    }
+
+    #[test]
+    #[should_panic(expected = "STAILQ_REMOVE_HEAD: empty")]
+    fn stailq_remove_head_of_an_empty_queue_panics() {
+        let h = StailqHead::<St>::new();
+        // SAFETY: as above.
+        unsafe { h.remove_head() };
+    }
+
+    #[test]
+    #[should_panic(expected = "SLIST_REMOVE_AFTER: no successor")]
+    fn slist_remove_after_the_last_panics() {
+        let n = nodes::<1>();
+        let h = SlistHead::<Sl>::new();
+        // SAFETY: `n` outlives the head; the second call breaks its precondition on purpose.
+        unsafe {
+            h.insert_head(&n[0]);
+            SlistHead::<Sl>::remove_after(&n[0]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "SIMPLEQ_REMOVE_AFTER: no successor")]
+    fn simpleq_remove_after_the_last_panics() {
+        let n = nodes::<1>();
+        let h = SimpleqHead::<Sq>::new();
+        // SAFETY: as above.
+        unsafe {
+            h.insert_tail(&n[0]);
+            h.remove_after(&n[0]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "XSIMPLEQ_REMOVE_AFTER: no successor")]
+    fn xsimpleq_remove_after_the_last_panics() {
+        let n = nodes::<1>();
+        let h = XsimpleqHead::<Xq>::new();
+        h.init(0x1234_5678);
+        // SAFETY: as above.
+        unsafe {
+            h.insert_tail(&n[0]);
+            h.remove_after(&n[0]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "STAILQ_REMOVE_AFTER: no successor")]
+    fn stailq_remove_after_the_last_panics() {
+        let n = nodes::<1>();
+        let h = StailqHead::<St>::new();
+        // SAFETY: as above.
+        unsafe {
+            h.insert_tail(&n[0]);
+            h.remove_after(&n[0]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "SLIST_REMOVE: element not in the list")]
+    fn slist_remove_of_an_absent_element_panics() {
+        let n = nodes::<2>();
+        let h = SlistHead::<Sl>::new();
+        // SAFETY: as above; `n[1]` was never inserted.
+        unsafe {
+            h.insert_head(&n[0]);
+            h.remove(&n[1]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "STAILQ_REMOVE: element not in the queue")]
+    fn stailq_remove_of_an_absent_element_panics() {
+        let n = nodes::<2>();
+        let h = StailqHead::<St>::new();
+        // SAFETY: as above.
+        unsafe {
+            h.insert_tail(&n[0]);
+            h.remove(&n[1]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "LIST_REMOVE: element not linked")]
+    fn list_remove_of_an_unlinked_element_panics() {
+        let n = Node::new(1);
+        // SAFETY: `n` was never inserted: the precondition is broken on purpose.
+        unsafe { ListHead::<Li>::remove(&n) };
+    }
+
+    #[test]
+    #[should_panic(expected = "TAILQ_REMOVE: element not linked")]
+    fn tailq_remove_of_an_unlinked_element_panics() {
+        let n = Node::new(1);
+        let h = TailqHead::<Tq>::new();
+        // SAFETY: as above.
+        unsafe { h.remove(&n) };
+    }
+
+    // A second removal reads the links the first one cleared; under `diagnostic` they are
+    // poisoned instead, and the kernel's `kassert!` (which ends the host test process) fires.
     #[cfg(not(feature = "diagnostic"))]
     #[test]
-    fn broken_preconditions_change_nothing() {
-        // What the C turns into a NULL dereference is a no-op without `diagnostic`.
+    #[should_panic(expected = "LIST_REMOVE: element not linked")]
+    fn list_double_remove_panics() {
         let n = nodes::<2>();
-        let sl = SlistHead::<Sl>::new();
-        let sq = SimpleqHead::<Sq>::new();
-        let st = StailqHead::<St>::new();
-        let xq = XsimpleqHead::<Xq>::new();
-        let tq = TailqHead::<Tq>::new();
-        // SAFETY: violating these preconditions is defined (and tested) behaviour now; the
-        // nodes outlive the heads.
+        let h = ListHead::<Li>::new();
+        // SAFETY: the nodes outlive the head; the second removal is the broken precondition.
         unsafe {
-            sl.remove_head();
-            sq.remove_head();
-            st.remove_head();
-            xq.remove_head();
-            sl.insert_head(&n[0]);
-            sl.remove(&n[1]); // not there
-            SlistHead::<Sl>::remove_after(&n[0]); // no successor
-            sq.insert_tail(&n[0]);
-            sq.remove_after(&n[0]);
-            st.insert_tail(&n[0]);
-            st.remove_after(&n[0]);
-            st.remove(&n[1]);
-            xq.insert_tail(&n[0]);
-            xq.remove_after(&n[0]);
-            ListHead::<Li>::remove(&n[1]); // in no list
-            tq.remove(&n[1]);
+            h.insert_head(&n[0]);
+            h.insert_head(&n[1]);
+            ListHead::<Li>::remove(&n[0]);
+            ListHead::<Li>::remove(&n[0]);
         }
-        assert_eq!(ids(sl.iter()), [1]);
-        assert_eq!(ids(sq.iter()), [1]);
-        assert_eq!(ids(st.iter()), [1]);
-        assert_eq!(id(st.last()), Some(1));
-        assert_eq!(ids(xq.iter()), [1]);
-        assert!(tq.is_empty());
-        assert_eq!(id(tq.prev(&n[1])), None); // never linked
+    }
+
+    #[cfg(not(feature = "diagnostic"))]
+    #[test]
+    #[should_panic(expected = "TAILQ_REMOVE: element not linked")]
+    fn tailq_double_remove_panics() {
+        let n = nodes::<2>();
+        let h = TailqHead::<Tq>::new();
+        // SAFETY: as above.
+        unsafe {
+            h.insert_tail(&n[0]);
+            h.insert_tail(&n[1]);
+            h.remove(&n[1]);
+            h.remove(&n[1]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "LIST_INSERT_BEFORE: listelm not linked")]
+    fn list_insert_before_an_unlinked_element_panics() {
+        let n = nodes::<2>();
+        // SAFETY: `n[0]` was never inserted: the precondition is broken on purpose.
+        unsafe { ListHead::<Li>::insert_before(&n[0], &n[1]) };
+    }
+
+    #[test]
+    #[should_panic(expected = "TAILQ_INSERT_BEFORE: listelm not linked")]
+    fn tailq_insert_before_an_unlinked_element_panics() {
+        let n = nodes::<2>();
+        // SAFETY: as above.
+        unsafe { TailqHead::<Tq>::insert_before(&n[0], &n[1]) };
+    }
+
+    #[test]
+    #[should_panic(expected = "LIST_REPLACE: element not linked")]
+    fn list_replace_of_an_unlinked_element_panics() {
+        let n = nodes::<2>();
+        // SAFETY: as above.
+        unsafe { ListHead::<Li>::replace(&n[0], &n[1]) };
+    }
+
+    #[test]
+    #[should_panic(expected = "TAILQ_REPLACE: element not linked")]
+    fn tailq_replace_of_an_unlinked_element_panics() {
+        let n = nodes::<2>();
+        let h = TailqHead::<Tq>::new();
+        // SAFETY: as above.
+        unsafe { h.replace(&n[0], &n[1]) };
+    }
+
+    #[test]
+    fn prev_of_a_never_linked_element_is_none() {
+        let n = Node::new(1);
+        let h = TailqHead::<Tq>::new();
+        assert_eq!(id(h.prev(&n)), None);
+        assert_eq!(id(TailqHead::<Tq>::next(&n)), None);
+        assert_eq!(id(ListHead::<Li>::next(&n)), None);
     }
 
     /// A model of a doubly-linked queue: the ids in order.
