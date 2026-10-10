@@ -408,3 +408,19 @@ modules = ["sys/dev/pci/pcidevs.rs", "sys/dev/pci/sdhc_pci.rs"]
 status = "applied"
 emibsd = "7aa6c65357ec"
 method = "cherry-pick"
+
+[[commit]]
+lz = "1b566a71e2d8"
+subject = "dev/pci: port pciide's register headers and the Cypress 82C693 glue"
+modules = ["sys/arch/amd64/pci/pciide_machdep.rs", "sys/dev/pci/cy82c693.rs", "sys/dev/pci/cy82c693reg.rs", "sys/dev/pci/cy82c693var.rs", "sys/dev/pci/pcidevs.rs", "sys/dev/pci/pciide_acard_reg.rs", "sys/dev/pci/pciide_acer_reg.rs", "sys/dev/pci/pciide_amd_reg.rs", "sys/dev/pci/pciide_apollo_reg.rs", "sys/dev/pci/pciide_cmd_reg.rs", "sys/dev/pci/pciide_cy693_reg.rs", "sys/dev/pci/pciide_hpt_reg.rs", "sys/dev/pci/pciide_ite_reg.rs", "sys/dev/pci/pciide_ixp_reg.rs", "sys/dev/pci/pciide_jmicron_reg.rs", "sys/dev/pci/pciide_natsemi_reg.rs", "sys/dev/pci/pciide_nforce_reg.rs", "sys/dev/pci/pciide_piix_reg.rs", "sys/dev/pci/pciide_rdc_reg.rs", "sys/dev/pci/pciide_sis_reg.rs", "sys/dev/pci/pciidereg.rs"]
+status = "applied"
+emibsd = "9c1bf5a2dc9c"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "f344ed85971b"
+subject = "dev/pci: port pciide(4) with every chip of its table"
+modules = ["sys/dev/pci/pciide.rs", "sys/dev/pci/pciide_pdc202xx_reg.rs", "sys/dev/pci/pciide_sii3112_reg.rs", "sys/dev/pci/pciide_svwsata_reg.rs", "sys/dev/pci/pciidevar.rs"]
+status = "applied"
+emibsd = "cf73a489dc6e"
+method = "cherry-pick-conflicts"
