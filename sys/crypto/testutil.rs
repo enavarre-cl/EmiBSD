@@ -138,4 +138,23 @@ pub(crate) fn serial() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// Fails to compile when one of the types is `Copy`: a hash or keyed context wipes itself when
+/// dropped, and a `Copy` derive would let a by-value pass leave a copy nobody wipes
+/// (`docs/IDIOMS.md`, "a hash context"). Stable Rust has no negative bound, so the check is an
+/// ambiguous impl: every type implements `AmbiguousIfCopy<()>`, a `Copy` type also
+/// `AmbiguousIfCopy<IsCopy>`, and naming the trait's item with its parameter left to inference
+/// compiles only when exactly one of the two applies.
+macro_rules! assert_not_copy {
+    ($($t:ty),+ $(,)?) => {{
+        trait AmbiguousIfCopy<A> {
+            fn some_item() {}
+        }
+        impl<T: ?Sized> AmbiguousIfCopy<()> for T {}
+        enum IsCopy {}
+        impl<T: ?Sized + Copy> AmbiguousIfCopy<IsCopy> for T {}
+        $(let _ = <$t as AmbiguousIfCopy<_>>::some_item;)+
+    }};
+}
+pub(crate) use assert_not_copy;
 /* </CODE> */

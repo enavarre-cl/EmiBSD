@@ -90,6 +90,10 @@
 //! - `blake2s_compress(state, block, nblocks, inc)` takes whole blocks
 //!   (`&[[u8; BLAKE2S_BLOCK_SIZE]]`), so `nblocks` is their count and no block can be short;
 //!   its `KASSERT` on `inc` is kept. `buflen` is a `usize`.
+//! - A keyed state holds key-derived material (the chained value after the key block, and
+//!   the key block itself in `buf` until the next block arrives), so the state is not `Copy`
+//!   and zeroes itself when dropped (`docs/IDIOMS.md`, "a hash context"): a by-value pass or
+//!   a state dropped before `finalize` leaves no copy of it.
 
 use libkern::explicit_bzero;
 
@@ -127,7 +131,8 @@ const BLAKE2S_SIGMA: [[u8; 16]; 10] = [
 /// [`Blake2sState::new_keyed`] to [`Blake2sState::finalize`].
 ///
 /// `Default` is the wiped, all-zero state `finalize` leaves behind, not the start of a hash.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Not `Copy`: dropping a state wipes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Blake2sState<const N: usize> {
     /// `h`: the chained value.
     h: [u32; 8],
@@ -153,7 +158,23 @@ impl<const N: usize> Default for Blake2sState<N> {
     }
 }
 
+impl<const N: usize> Drop for Blake2sState<N> {
+    /// Wipes the state, as `finalize` does, on every path that frees it.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl<const N: usize> Blake2sState<N> {
+    /// Zeroes every field in place: the state becomes the `Default` (wiped) value.
+    pub(crate) fn zeroize(&mut self) {
+        wipe(&mut self.h);
+        wipe(&mut self.t);
+        wipe(&mut self.f);
+        explicit_bzero(&mut self.buf);
+        wipe(&mut self.buflen);
+    }
+
     /// `blake2s_set_lastblock`.
     fn set_lastblock(&mut self) {
         self.f[0] = u32::MAX;
@@ -302,7 +323,7 @@ impl<const N: usize> Blake2sState<N> {
         let mut digest = [0u8; N];
         digest.copy_from_slice(&full[..N]);
         explicit_bzero(&mut full);
-        wipe(self);
+        self.zeroize();
         digest
     }
 }
@@ -611,6 +632,39 @@ mod tests {
             .map(|b| u64::from(*b))
             .collect();
         assert_eq!(c_table(f, "blake2s_sigma"), sigma);
+    }
+
+    #[test]
+    fn the_state_is_not_copy() {
+        crate::crypto::testutil::assert_not_copy!(Blake2sState<32>, Blake2sState<16>);
+    }
+
+    #[test]
+    fn zeroize_leaves_the_wiped_state() {
+        // What `Drop` runs on a state freed before `finalize`. A keyed state holds the key
+        // block itself until the next block arrives, so this is key material.
+        let mut st = Blake2sState::<32>::new_keyed(&key());
+        assert_eq!(st.buf[..32], key());
+        st.zeroize();
+        assert_eq!(st, Blake2sState::default());
+
+        let mut st = Blake2sState::<32>::new();
+        st.update(&data());
+        assert_ne!(st, Blake2sState::default());
+        st.zeroize();
+        assert_eq!(st, Blake2sState::default());
+    }
+
+    #[test]
+    fn a_clone_forks_the_hash() {
+        let mut st = Blake2sState::<32>::new_keyed(&key());
+        st.update(&data()[..100]);
+        let mut fork = st.clone();
+        fork.update(&data()[100..]);
+        assert_eq!(fork.finalize().to_vec(), hash::<32>(&data(), &key()));
+        assert_eq!(fork, Blake2sState::default());
+        assert_ne!(st, Blake2sState::default());
+        assert_eq!(st.finalize().to_vec(), hash::<32>(&data()[..100], &key()));
     }
 }
 /* </TESTS> */

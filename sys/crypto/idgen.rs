@@ -55,7 +55,14 @@
 //!   are set up on first use.
 //! - The round counter of the permutation is a `u16` and the halves are taken with
 //!   `to_be_bytes`, so the `as` casts of the C's arithmetic go; the values are the same.
+//! - The context holds the permutation key, so it is not `Copy` and zeroes itself when
+//!   dropped (`docs/IDIOMS.md`, "a hash context"): no by-value copy of the key can be made by
+//!   accident, and `init` wipes the old key as it replaces the context. The generators live
+//!   in `static`s, which are never dropped, as the C's never freed `static` contexts.
 
+use libkern::explicit_bzero;
+
+use super::wipe;
 use crate::dev::rnd::{arc4random, arc4random_buf};
 use crate::kern::kern_tc::getuptime;
 use crate::sys::types::Time;
@@ -69,8 +76,9 @@ pub const IDGEN32_REKEY_LIMIT: u32 = 0x6000_0000;
 /// `IDGEN32_REKEY_TIME`: seconds a key lives at most.
 pub const IDGEN32_REKEY_TIME: Time = 600;
 
-/// `struct idgen32_ctx`: the state of one generator.
-#[derive(Clone, Copy, Default)]
+/// `struct idgen32_ctx`: the state of one generator. Not `Copy` (it holds the key): dropping
+/// a context wipes it.
+#[derive(Default)]
 pub struct Idgen32Ctx {
     /// `id32_counter`: identifiers handed out under the current key.
     pub id32_counter: u32,
@@ -84,7 +92,23 @@ pub struct Idgen32Ctx {
     pub id32_rekey_time: Time,
 }
 
+impl Drop for Idgen32Ctx {
+    /// Wipes the key and the counter state on every path that frees or replaces a context.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl Idgen32Ctx {
+    /// Zeroes every field in place: the context becomes [`Idgen32Ctx::zeroed`].
+    pub(crate) fn zeroize(&mut self) {
+        wipe(&mut self.id32_counter);
+        wipe(&mut self.id32_offset);
+        wipe(&mut self.id32_hibit);
+        explicit_bzero(&mut self.id32_key);
+        wipe(&mut self.id32_rekey_time);
+    }
+
     /// An all-zero context (a C `static struct idgen32_ctx`), to be set up by
     /// [`Idgen32Ctx::init`].
     pub const fn zeroed() -> Self {
@@ -262,6 +286,26 @@ mod tests {
             assert_eq!(ins.len(), outs.len());
             assert!(outs.iter().all(|o| *o < 0x8000_0000));
         }
+    }
+
+    #[test]
+    fn the_context_is_not_copy() {
+        crate::crypto::testutil::assert_not_copy!(Idgen32Ctx);
+    }
+
+    #[test]
+    fn zeroize_wipes_the_key_and_the_counters() {
+        // What `Drop` runs, and what `init` runs on the context it replaces.
+        let mut ctx = Idgen32Ctx::zeroed();
+        ctx.init();
+        ctx.generate();
+        assert_ne!(ctx.id32_key, [0; IDGEN32_KEYLEN]);
+        ctx.zeroize();
+        assert_eq!(ctx.id32_counter, 0);
+        assert_eq!(ctx.id32_offset, 0);
+        assert_eq!(ctx.id32_hibit, 0);
+        assert_eq!(ctx.id32_key, [0; IDGEN32_KEYLEN]);
+        assert_eq!(ctx.id32_rekey_time, 0);
     }
 }
 /* </TESTS> */
