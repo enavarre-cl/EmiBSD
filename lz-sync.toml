@@ -276,3 +276,26 @@ subject = "docs: log the OpenBSD C slips the ports found"
 modules = []
 status = "not-applicable"
 reason = "LZ's external bugs log (docs/EXTERNAL_BUGS.md: the OpenBSD C slips LZ's ports found, EXT-9 on); native keeps no such log, the slips reach the user through the sync's report (.claude/rules/subagents.md)"
+
+[[commit]]
+lz = "5ac46f5ffe9e"
+subject = "dev/pci: port vmwpvs(4), VMware's paravirtual SCSI adapter"
+modules = ["sys/dev/pci/pcidevs.rs", "sys/dev/pci/vmwpvs.rs"]
+status = "applied"
+emibsd = "7b0e4fbabec0"
+method = "cherry-pick"
+
+[[commit]]
+lz = "5c2fb5d410a8"
+subject = "xtask: put --floppy's image in drive B, where OpenBSD 8.0 finds fd0"
+modules = []
+status = "applied"
+emibsd = "1c104a1bb5bd"
+method = "cherry-pick"
+
+[[commit]]
+lz = "bfd607a37106"
+subject = "Merge branch 'main' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
