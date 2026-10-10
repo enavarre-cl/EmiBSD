@@ -105,7 +105,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 use libkern::StaticCell;
 
 use crate::dev::consfile::consfile_attach;
-use crate::dev::rnd::arc4random;
+use crate::dev::rnd::{arc4random, random_start};
 use crate::kern::kern_clock::initclocks;
 use crate::kern::kern_clockintr::clockqueue_init;
 use crate::kern::kern_descrip::{fdinit, filedesc_init};
@@ -159,7 +159,7 @@ use crate::sys::mount::{MNT_ROOTFS, VFS_ROOT};
 use crate::sys::namei::{FOLLOW, LOOKUP, NiDirp};
 use crate::sys::param::{NZERO, PAGE_SIZE, PVM, PWAIT};
 use crate::sys::proc::{FORK_FORK, P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONPROC, Session};
-use crate::sys::reboot::RB_SINGLE;
+use crate::sys::reboot::{RB_GOODRANDOM, RB_SINGLE};
 use crate::sys::resourcevar::Plimit;
 use crate::sys::signalvar::Sigacts;
 use crate::sys::systm::{INFSLP, MOUNTROOT, SysArgs, kernel_lock, kernel_lock_init, kernel_unlock};
@@ -190,6 +190,12 @@ pub static DB_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static NCPUS: AtomicI32 = AtomicI32::new(1);
 /// `ncpusfound`: number of CPUs we find.
 pub static NCPUSFOUND: AtomicI32 = AtomicI32::new(1);
+/// `__guard_local`: the stack protector's guard word, in `.openbsd.randomdata` so boot(8)
+/// fills it; `random_start` reads it (volatile: the loader, not the program, wrote it) to see
+/// whether the boot loader supplied entropy. Rust code has no stack protector of its own.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".openbsd.randomdata"))]
+#[unsafe(export_name = "__guard_local")]
+pub static GUARD_LOCAL: i64 = 0;
 /// `pdevinit_done` (`DIAGNOSTIC`): the pseudo-devices are attached; `if_clone_attach` checks
 /// it.
 pub static PDEVINIT_DONE: AtomicBool = AtomicBool::new(false);
@@ -298,7 +304,7 @@ pub fn main() -> ! {
         crate::kern::selftest::pager_map();
     }
 
-    let _ = unported!("random_start"); // Start the flow
+    random_start(BOOTHOWTO.load(Ordering::Relaxed) & RB_GOODRANDOM != 0); // Start the flow
 
     // Initialize mbuf's. Do this now because we might attempt to allocate mbufs or mbuf
     // clusters during autoconfiguration.

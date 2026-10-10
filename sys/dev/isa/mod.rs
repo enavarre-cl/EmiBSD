@@ -18,12 +18,20 @@
 
 /* <CODE> */
 //! The ISA bus: OpenBSD `sys/dev/isa/`: the bus itself (`isa.c`, `isavar.h`), the register
-//! map amd64's timer code needs (`isareg.h`) and `com(4)`'s attachment (`com_isa.c`).
+//! map amd64's timer code needs (`isareg.h`) and `com(4)`'s attachment (`com_isa.c`),
+//! `pckbc(4)`'s (`pckbc_isa.c`).
 
 pub mod com_isa;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/isa/isa.c
 pub mod isa;
 pub mod isareg;
 pub mod isavar;
+pub mod lpt_isa;
+pub mod pckbc_isa;
+pub mod pcppi;
+pub mod pcppireg;
+pub mod pcppivar;
+pub mod spkr;
+pub mod spkrio;
 pub mod vga_isa;
 /* </CODE> */

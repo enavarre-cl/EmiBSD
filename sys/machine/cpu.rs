@@ -33,7 +33,8 @@
 //! `ci_cpuid`, `CPU_IS_RUNNING`, `intr_disable`/`intr_restore` (the kernel lock and the
 //! mutex's parking lots), `cpu_boot_secondary_processors` and the application processor's
 //! entry from the boot glue, `cpu_hatch`; and `ci_cputype`, `ci_smt_id`
-//! (`__HAVE_CPU_TOPOLOGY`, with defaults for machines without a topology probe).
+//! (`__HAVE_CPU_TOPOLOGY`, with defaults for machines without a topology probe). M16d adds
+//! `cpu_rnd_messybits` and the linker script's `etext`, both read by `dev/rnd.c`.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -90,6 +91,10 @@ pub trait Cpu {
 
     /// `CPU_SSE` (`<machine/cpu.h>`): the `machdep` sysctl i386's libm reads, where defined.
     const CPU_SSE: Option<i32> = None;
+
+    /// `defined(__i386__) || defined(__amd64__)`: the machine is a PC, whose PS/2 keyboard
+    /// controller may be a legacy-free emulation (`pckbc(4)`, `pckbd(4)`, `pms(4)` test it).
+    const MACHINE_PC: bool = false;
 
     /// `CPU_ID_AA64ISAR0` (`<machine/cpu.h>`): arm64's instruction set attribute register 0
     /// sysctl, where defined.
@@ -177,6 +182,14 @@ pub trait Cpu {
 
     /// `proc0paddr`: the u-area of `proc0` (`locore` reserves it in C).
     fn proc0paddr() -> &'static User;
+
+    /// `cpu_rnd_messybits()` (`<machine/cpu.h>`): a cheap, fast-changing counter value (the
+    /// time stamp counter, the virtual counter) that `dev/rnd.c` adds to each entropy event.
+    fn cpu_rnd_messybits() -> u32;
+
+    /// `etext` (the linker script's symbol): the address of the end of the kernel text.
+    /// `random_start` hashes the 8 KB that start 128 KB before it.
+    fn etext() -> usize;
 
     /// `ci->ci_idepth`: the interrupt nesting depth.
     fn ci_idepth(ci: &Self::CpuInfo) -> u32;
@@ -388,6 +401,9 @@ pub const CPU_CHR2BLK: Option<i32> = <Machine as Cpu>::CPU_CHR2BLK;
 /// `CPU_SSE` on the selected machine (`None`: not defined there).
 pub const CPU_SSE: Option<i32> = <Machine as Cpu>::CPU_SSE;
 
+/// `MACHINE_PC` of the selected machine: `defined(__i386__) || defined(__amd64__)`.
+pub const MACHINE_PC: bool = <Machine as Cpu>::MACHINE_PC;
+
 /// `CPU_ID_AA64ISAR0` on the selected machine (`None`: not defined there).
 pub const CPU_ID_AA64ISAR0: Option<i32> = <Machine as Cpu>::CPU_ID_AA64ISAR0;
 
@@ -397,6 +413,16 @@ pub const CPU_ID_AA64ISAR1: Option<i32> = <Machine as Cpu>::CPU_ID_AA64ISAR1;
 /// `curcpu()` on the selected machine.
 pub fn curcpu() -> &'static CpuInfo {
     Machine::curcpu()
+}
+
+/// `cpu_rnd_messybits()` on the selected machine.
+pub fn cpu_rnd_messybits() -> u32 {
+    Machine::cpu_rnd_messybits()
+}
+
+/// `etext` on the selected machine: the end of the kernel text.
+pub fn etext() -> usize {
+    Machine::etext()
 }
 
 /// `kbd_reset` on the selected machine (`None` but on amd64).

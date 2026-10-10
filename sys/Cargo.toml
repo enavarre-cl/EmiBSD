@@ -54,6 +54,7 @@ wsemul_dumb = []  # OpenBSD `option WSEMUL_DUMB` -> wsemulconf offers the dumb t
 wsemul_no_vt100 = [] # OpenBSD `option WSEMUL_NO_VT100` -> wsemulconf does not offer the vt100 emulation (compiled on every build for its host tests)
 wsdisplay_compat_usl = [] # OpenBSD `option WSDISPLAY_COMPAT_USL` -> wsdisplay(4)'s VT_*/KD* ioctls and process-controlled screen switching (dev/wscons/wsdisplay_compat_usl.rs, compiled on every build); default (both GENERICs have it)
 wsdisplay_compat_rawkbd = [] # OpenBSD `option WSDISPLAY_COMPAT_RAWKBD` -> raw scancodes through wsdisplay (WSKBDIO_SETMODE per screen), needed for X11; default (both GENERICs have it)
+viocon = []       # amd64 GENERIC's commented-out `#viocon* at virtio?`, uncommented -> viocon(4) in amd64's ioconf.rs and cdevsw 94 (NVIOCON 1); dev/pv/viocon.rs compiles on every build (M16d)
 
 [dependencies]
 libkern.workspace = true

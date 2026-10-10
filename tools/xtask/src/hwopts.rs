@@ -110,7 +110,8 @@
 //!   (ArmVirtQemu's QemuRamfbDxe gives a linear GOP frame buffer in guest RAM; a
 //!   `virtio-gpu` GOP is blit-only, which Limine cannot use). `ramfb` is not a PCI device,
 //!   so nothing on the buses moves.
-//! - `--screenshot-after LINE` (`smoke`, M13, implies `--fb`): QEMU gets a human monitor on a
+//! - `--screenshot-after LINE` (`smoke`, M13, implies `--fb` unless `--virtio-gpu` is given,
+//!   M16d: then the GPU is the display and the picture is its scanout): QEMU gets a human monitor on a
 //!   Unix socket in the run directory (`monitor.sock`, instead of `-monitor none`; named
 //!   relative to the checkout, or in the temporary directory, to fit macOS's 104-byte
 //!   `sun_path`: [`monitor_sock`]); when a
@@ -593,7 +594,10 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
         let _ = FB.set(());
     }
     if let Some(line) = opt_path(args, "--screenshot-after")? {
-        let _ = FB.set(());
+        // With `--virtio-gpu` the GPU is the display (M16d): no ramfb beside it on arm64.
+        if !args.contains(&"--virtio-gpu") {
+            let _ = FB.set(());
+        }
         let _ = SCREENSHOT.set((line.to_string(), boot::run_dir(root)));
     }
     let pairs = parse_sendkeys(args)?;

@@ -158,6 +158,12 @@ and `#[unsafe(link_section)]` are stable; `core` and `alloc` ship precompiled fo
 from 0 and the entry at `_start`'s offset, from M14; amd64: OpenBSD's layout from
 M14, `KERNTEXTOFF` with physical addresses from `0x1000000`, "Boot loaders"),
 `PHDRS` text/rodata/data, Limine request sections kept, `.eh_frame`/`.note` discarded.
+M16d: both scripts add OpenBSD's `openbsd_randomize` header (`PT_OPENBSD_RANDOMIZE`) over
+`.openbsd.randomdata`, page-aligned inside the rodata segment, which boot(8)'s loadfile fills
+with its seed (`dev/rnd.c`'s `entropy_pool0`/`rs_buf0`, `__guard_local`); Limine fills nothing
+there, so a Limine boot starts the generator from a zero seed and says so (`random_start`'s
+"warning: no entropy supplied by boot loader", the boot glue's `unported:` line). arm64's
+script provides `etext` too.
 `sys/build.rs` passes it with `cargo:rustc-link-arg-bins` only when `target_os = "none"`.
 
 Per-target rustflags in `.cargo/config.toml`: `relocation-model=static` (non-PIE higher-half kernel)
@@ -180,6 +186,7 @@ the default and `cargo test` just works.
 | `multiprocessor` | `option MULTIPROCESSOR` | off by default, so the uniprocessor kernel stays the plain build; `just build` and `just clippy` also build it, and since M11e every `just smoke` recipe boots it except `smoke-up` (the user's decision of 2026-10-03), since 2026-10-07 with `-smp 2` but for the `smp4` group ("Parallel smokes"). M11a: `MAXCPUS` 255/256, the kernel lock and the spinning mutex (`kern_lock.c`), the Limine MP request and the application processors' start (see "Deviations"); `just smoke-mp` boots it with `-smp 4`. M11d: `NET_TASKQ` 8 softnet queues, `softnet_percpu` keeps one per CPU; `just smoke-net-mp` runs both VMs of the two-VM smokes on it |
 | `ntfs` | `option NTFS` | the read-only NTFS file system (`sys/ntfs`) and its `vfsconflist[]` entry; default, but compiled only where the architecture's GENERIC has it (amd64): see below |
 | `fuse` | `option FUSE` | FUSE (`sys/miscfs/fuse`), its `vfsconflist[]` entry, `cdevsw[]` 92 (`/dev/fuse0`) and `fuseattach` in `pdevinit[]`; default, as in GENERIC |
+| `viocon` | amd64 GENERIC's commented-out `#viocon* at virtio?` | viocon(4) (M16d) in neither GENERIC: the feature stands for uncommenting the line, so amd64's `ioconf.rs` gets the `viocon* at virtio?` entry and `cdevsw[]` 94 its entry points (`NVIOCON` 1, 0 without the feature as `config(8)` counts it: `ENXIO`); arm64's GENERIC has no such line, so nothing changes there. `dev/pv/viocon.rs` compiles on every build, so `just clippy` and the host tests cover it either way; off by default |
 
 More appear as they are needed (`small_kernel`, ...), one per `option(4)`.
 
@@ -693,7 +700,7 @@ its `/etc/rc` run: the programs `userland` does not build (`sort`, `head`, `cut`
 `find`, `install`, `printf`, `swapctl`, `ttyflags`, `kvm_mkdb`, `dev_mkdb`, `savecore`,
 `ssh-keygen`, `openssl`, `mail`, ...), so the rc.d daemons (`syslogd`, `pflogd`, `ntpd`,
 `smtpd`, `sndiod`, `cron`) say `(failed)`: rc.subr accepts base's `/bin/ksh`, the full build
-(`install-boot` fails on `wrong shell`); `/dev/random` (`random` is not a driver yet);
+(`install-boot` fails on `wrong shell`); `/dev/random` (`random` was not a driver yet; rnd(4) and `/dev/random` came with M16d);
 `/dev/ttyC*` (wscons is not ported); installboot cannot add its UEFI boot entry (`/dev/efi`,
 efi(4), is not ported), so the firmware boots the ESP's fallback `\EFI\BOOT\BOOTX64.EFI`
 (`BOOTAA64.EFI`). On arm64 the installed kernel has `rd0` with no image; it once took the
@@ -1758,9 +1765,9 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   with their locks reduced to assertion flags (M5), no sleeping (`PR_WAITOK`/`M_WAITOK` fail
   where the C would wait), no idle-page timestamps (`getnsecuptime` is in `kern_tc.c`, whose
   beerware licence needs the user's decision) and the freelist poison (`subr_poison.c`) reported.
-  `dev/rnd.rs` is a placeholder stream (SplitMix64, constant seed, NOT random) behind
-  `arc4random`, which pools and `XSIMPLEQ` need for their cookies, until the entropy pool and
-  ChaCha20 land (M5). `kern/rust_alloc.rs` is the Rust `GlobalAlloc` over `malloc(9)`
+  `dev/rnd.rs` was a placeholder stream (SplitMix64, constant seed, NOT random) behind
+  `arc4random`, which pools and `XSIMPLEQ` need for their cookies, until M16d ported `rnd.c`
+  whole (the entropy pool, ChaCha20, `random_start`, `/dev/random`). `kern/rust_alloc.rs` is the Rust `GlobalAlloc` over `malloc(9)`
   (`M_TEMP`, `M_NOWAIT`); feature `alloc` is on by default. `physmem` lives in `sys/systm.rs`
   (the C defines it per arch) and `<machine/intr.h>`'s `IPL_*` are the `machine::Intr` contract.
 - `uvmexp` is a static of atomics (exported under its C name so the amd64 interrupt stubs can

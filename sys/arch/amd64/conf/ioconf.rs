@@ -52,6 +52,13 @@
 //! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?` (M16b),
 //! `pcn* at pci?`, `ne* at pci?`, `fxp* at pci?`, `inphy* at mii?`, `dc* at pci?`,
 //! `lxtphy* at mii?` and `dcphy* at mii?` (M16c),
+//! `eap* at pci?`, `audio* at eap?` and `midi* at eap?` (M16d), `lpt0 at isa? port 0x378
+//! irq 7` (M16d; `#lpt1` and `#lpt2` are commented out in GENERIC),
+//! `pckbc0 at isa? flags 0x00`, `pckbd* at pckbc?`, `pms* at pckbc?`, `wskbd* at pckbd? mux 1`
+//! and `wsmouse* at pms? mux 0` (M16d),
+//! `pcppi0 at isa?` and `spkr0 at pcppi?` (M16d),
+//! `viomb* at virtio?` and `viornd* at virtio?` (M16d), and with the cargo feature `viocon`
+//! the commented-out `#viocon* at virtio?` (M16d; `docs/ARCHITECTURE.md`, "Cargo features"),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -59,18 +66,20 @@
 //! loop`, `pseudo-device wg`, `pseudo-device pfsync`, `pseudo-device pflow`.
 //! GENERIC lines left out until their drivers exist: `vmm0` and `pvbus0`
 //! at mainbus, and everything below them; `efi0` and `mpbios0` at bios0, and
-//! every other device at `acpi?` (`acpiec*`, `acpitz*`, ...); every device at `iic?` (`spdmem*`,
+//! every other device at `acpi?` (`acpiec*`, `acpitz*`, `pckbc*`: OpenBSD 8.0 attaches
+//! pckbc at isa on q35, `pckbc_acpi.c` is not ported, ...); every device at `iic?` (`spdmem*`,
 //! `lm*`, ... are not ported: the scan prints what it finds as not configured), the other
 //! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
-//! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
-//! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
+//! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`,
+//! `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re, vmx, pcn, ne, fxp and dc (`rl* at pci?` among them: QEMU's rtl8139 is
 //! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
 //! device at `mii?` (the other PHY drivers), every
 //! other
-//! `audio*` (at `eap?`, `envy?`, ...), `pci*` at
-//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*`, `cdce*`, `uftdi*` and `ugen*`, every device
-//! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*` but the one at `ukbd?`, every
+//! `audio*` (at `envy?`, ...), every other `midi*` (at `umidi?`, `envy?`, `mpu?`), `pci*` at
+//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*`, `viomb*`, `viornd*` and `vioscsi*`; every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*`, `cdce*`, `uftdi*` and `ugen*`, every device
+//! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*` but the
+//! ones at `ukbd?` and `pckbd?`, every
 //! `wsmouse*` but the ones at `ums?` and `uwacom?`, every `ucom*` but the one at `uftdi?`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
@@ -102,15 +111,22 @@ use crate::dev::ic::ahci::AHCI_CD;
 use crate::dev::ic::com::COM_CD;
 use crate::dev::ic::dc::DC_CD;
 use crate::dev::ic::fxp::FXP_CD;
+use crate::dev::ic::lpt::LPT_CD;
 use crate::dev::ic::ne2000::NE_CD;
 use crate::dev::ic::nvme::NVME_CD;
+use crate::dev::ic::pckbc::PCKBC_CD;
 use crate::dev::ic::re::RE_CD;
 use crate::dev::ic::siop::SIOP_CD;
 use crate::dev::ic::vga::VGA_CD;
 use crate::dev::ipmi::{IPMI_CA, IPMI_CD};
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
+use crate::dev::isa::lpt_isa::LPT_ISA_CA;
+use crate::dev::isa::pckbc_isa::PCKBC_ISA_CA;
+use crate::dev::isa::pcppi::{PCPPI_CA, PCPPI_CD};
+use crate::dev::isa::spkr::{SPKR_CA, SPKR_CD};
 use crate::dev::isa::vga_isa::VGA_ISA_CA;
+use crate::dev::midi::{MIDI_CA, MIDI_CD};
 use crate::dev::mii::dcphy::{DCPHY_CA, DCPHY_CD};
 use crate::dev::mii::inphy::{INPHY_CA, INPHY_CD};
 use crate::dev::mii::lxtphy::{LXTPHY_CA, LXTPHY_CD};
@@ -120,6 +136,7 @@ use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
 use crate::dev::pci::ahci_pci::AHCI_PCI_CA;
 use crate::dev::pci::auich::{AUICH_CA, AUICH_CD};
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
+use crate::dev::pci::eap::{EAP_CA, EAP_CD};
 use crate::dev::pci::ehci_pci::EHCI_PCI_CA;
 use crate::dev::pci::ichiic::{ICHIIC_CA, ICHIIC_CD};
 use crate::dev::pci::if_dc_pci::DC_PCI_CA;
@@ -140,9 +157,15 @@ use crate::dev::pci::uhci_pci::UHCI_PCI_CA;
 use crate::dev::pci::vga_pci::VGA_PCI_CA;
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
+use crate::dev::pckbc::pckbd::{PCKBD_CA, PCKBD_CD};
+use crate::dev::pckbc::pms::{PMS_CA, PMS_CD};
 use crate::dev::puc::com_puc::COM_PUC_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
+#[cfg(feature = "viocon")]
+use crate::dev::pv::viocon::{VIOCON_CA, VIOCON_CD};
+use crate::dev::pv::viomb::{VIOMB_CA, VIOMB_CD};
+use crate::dev::pv::viornd::{VIORND_CA, VIORND_CD};
 use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
@@ -235,6 +258,8 @@ const LOC_COM1: &[i64] = &[0x2f8, 0, -1, 0, 3, -1, -1];
 const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 /// `loc[]` of `com3 at isa? disable port 0x2e8 irq 9`.
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
+/// `loc[]` of `lpt0 at isa? port 0x378 irq 7` (M16d).
+const LOC_LPT0: &[i64] = &[0x378, 0, -1, 0, 7, -1, -1];
 
 /// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[14]`), `ehci*`
 /// (`cfdata[71]`), `uhci*` (`cfdata[72]`) and `ohci*` (`cfdata[73]`): `usb* at xhci?`, `usb* at ehci?`, `usb* at
@@ -263,10 +288,14 @@ const LOC_UHIDBUS_UNK: &[i64] = &[-1];
 /// `pv[]` for children of `auich*` (`cfdata[18]`).
 const PV_AUICH: &[i16] = &[18];
 
-/// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[20]`) and
-/// `uaudio*` (`cfdata[69]`): `config(8)` merges `audio* at azalia?` and `audio* at
-/// uaudio?` into one entry.
-const PV_AZALIA: &[i16] = &[20, 69];
+/// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[20]`),
+/// `uaudio*` (`cfdata[69]`) and `eap*` (`cfdata[84]`): `config(8)` merges `audio* at
+/// azalia?`, `audio* at uaudio?` and `audio* at eap?` into one entry.
+const PV_AZALIA: &[i16] = &[20, 69, 84];
+
+/// `pv[]` for children of `eap*` (`cfdata[84]`) through the `midibus` attribute: `midi*
+/// at eap?` (M16d).
+const PV_EAP: &[i16] = &[84];
 
 /// `pv[]` for children of `bios0` (`cfdata[30]`).
 const PV_BIOS: &[i16] = &[30];
@@ -361,15 +390,39 @@ const PV_UFTDI: &[i16] = &[75];
 /// `loc[]` of an entry at `ucombus` with the default `portno = -1`.
 const LOC_UCOMBUS_UNK: &[i64] = &[-1];
 
+/// `loc[]` of `pckbc0 at isa? flags 0x00`: every `isa` locator at its default, as for
+/// `vga0 at isa?`.
+const LOC_PCKBC_ISA: &[i64] = &[-1, 0, -1, 0, -1, -1, -1];
+
+/// `pv[]` for children of `pckbc0` (`cfdata[86]`): the `pckbcslot` attribute.
+const PV_PCKBC: &[i16] = &[86];
+
+/// `loc[]` of an entry at `pckbcslot` with the default `slot = -1` (`conf/files`: `define
+/// pckbcslot {[slot = -1]}`).
+const LOC_PCKBCSLOT_UNK: &[i64] = &[-1];
+
+/// `cf_locnames` of an entry at `pckbcslot`: `slot`.
+const LN_PCKBCSLOT: i32 = 41;
+
+/// `pv[]` for children of `pckbd*` (`cfdata[87]`): the `wskbddev` attribute.
+const PV_PCKBD: &[i16] = &[87];
+
+/// `loc[]` of `pcppi0 at isa?`: every `isa` locator at its default (M16d).
+const LOC_PCPPI_ISA: &[i64] = &[-1, 0, -1, 0, -1, -1, -1];
+
+/// `pv[]` for children of `pcppi0` (`cfdata[91]`): `spkr0 at pcppi?` (M16d).
+const PV_PCPPI: &[i16] = &[91];
+
+/// `pv[]` for children of `pms*` (`cfdata[88]`): the `wsmousedev` attribute.
+const PV_PMS: &[i16] = &[88];
+
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 84 entries, 85 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
-const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    85
-} else {
-    84
-};
+/// `cfdata[]`: 96 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
+/// and one more with `viocon`.
+const NCFDATA: usize =
+    96 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
 /// (`machine::autoconf::ioconf_mut`).
@@ -587,7 +640,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 21: audio* at azalia?, audio* at uaudio?
+    // 21: audio* at azalia?, audio* at uaudio?, audio* at eap?
     Cfdata::new(
         &AUDIO_CA,
         &AUDIO_CD,
@@ -1314,7 +1367,154 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_MII,
         0,
     ),
-    // 84: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 84: eap* at pci? (M16d)
+    Cfdata::new(
+        &EAP_CA,
+        &EAP_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 85: midi* at eap? (M16d)
+    Cfdata::new(&MIDI_CA, &MIDI_CD, 0, FSTATE_STAR, &[], 0, PV_EAP, 0, 0),
+    // 86: pckbc0 at isa? flags 0x00 (M16d)
+    Cfdata::new(
+        &PCKBC_ISA_CA,
+        &PCKBC_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_PCKBC_ISA,
+        0x00,
+        PV_ISA,
+        LN_ISA,
+        0,
+    ),
+    // 87: pckbd* at pckbc? (M16d)
+    Cfdata::new(
+        &PCKBD_CA,
+        &PCKBD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCKBCSLOT_UNK,
+        0,
+        PV_PCKBC,
+        LN_PCKBCSLOT,
+        0,
+    ),
+    // 88: pms* at pckbc? (M16d)
+    Cfdata::new(
+        &PMS_CA,
+        &PMS_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCKBCSLOT_UNK,
+        0,
+        PV_PCKBC,
+        LN_PCKBCSLOT,
+        0,
+    ),
+    // 89: wskbd* at pckbd? mux 1 (M16d)
+    Cfdata::new(
+        &WSKBD_CA,
+        &WSKBD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_WSKBDDEV_MUX1,
+        0,
+        PV_PCKBD,
+        LN_WSKBDDEV,
+        0,
+    ),
+    // 90: wsmouse* at pms? mux 0 (M16d)
+    Cfdata::new(
+        &WSMOUSE_CA,
+        &WSMOUSE_CD,
+        0,
+        FSTATE_STAR,
+        LOC_WSMOUSEDEV_MUX0,
+        0,
+        PV_PMS,
+        LN_WSMOUSEDEV,
+        0,
+    ),
+    // 91: pcppi0 at isa? (M16d)
+    Cfdata::new(
+        &PCPPI_CA,
+        &PCPPI_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_PCPPI_ISA,
+        0,
+        PV_ISA,
+        LN_ISA,
+        0,
+    ),
+    // 92: spkr0 at pcppi? (M16d)
+    Cfdata::new(
+        &SPKR_CA,
+        &SPKR_CD,
+        0,
+        FSTATE_NOTFOUND,
+        &[],
+        0,
+        PV_PCPPI,
+        0,
+        0,
+    ),
+    // 93: lpt0 at isa? port 0x378 irq 7 (M16d)
+    Cfdata::new(
+        &LPT_ISA_CA,
+        &LPT_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_LPT0,
+        0,
+        PV_ISA,
+        LN_ISA,
+        0,
+    ),
+    // 94: viomb* at virtio? (M16d)
+    Cfdata::new(
+        &VIOMB_CA,
+        &VIOMB_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 95: viornd* at virtio? (M16d)
+    Cfdata::new(
+        &VIORND_CA,
+        &VIORND_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 96: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
+    #[cfg(feature = "viocon")]
+    Cfdata::new(
+        &VIOCON_CA,
+        &VIOCON_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 97 (96 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
@@ -1423,7 +1623,7 @@ pub static PDEVNAMES: [&[u8]; NPDEVINIT] = [
 ];
 
 /// `locnames[]`: every locator name of the entries above, once.
-pub static LOCNAMES: [&[u8]; 23] = [
+pub static LOCNAMES: [&[u8]; 24] = [
     b"bus",
     b"dev",
     b"function",
@@ -1447,12 +1647,13 @@ pub static LOCNAMES: [&[u8]; 23] = [
     b"primary",
     b"mux",
     b"portno",
+    b"slot",
 ];
 
 /// `locnamp[]`: one run of indices into `LOCNAMES` per locator attribute, each ended by `-1`
 /// (`config(8)` writes one per parent device; `mkioconf.c`'s XXX asks for this compression).
-pub static LOCNAMP: [i16; 41] = [
+pub static LOCNAMP: [i16; 43] = [
     -1, 0, -1, 1, 2, -1, 3, 4, 5, 6, 7, 8, 9, -1, 10, 11, -1, 3, 12, 13, 14, 15, 16, -1, 17, -1, 3,
-    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1,
+    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1, 23, -1,
 ];
 /* </CODE> */

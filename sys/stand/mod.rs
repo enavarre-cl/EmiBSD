@@ -189,6 +189,11 @@ fn limine_banner(boot: &BootInfo) {
         boot.memmap.len(),
         boot.memmap.usable_bytes() >> 20
     );
+    // boot(8) fills the kernel's PT_OPENBSD_RANDOMIZE segment (`.openbsd.randomdata`: rnd.c's
+    // seed and `__guard_local`) from /etc/random.seed and the machine's and firmware's random
+    // sources (loadfile_elf); the Limine protocol has no such service, so the seed stays zero
+    // and `random_start` warns that the boot loader supplied no entropy.
+    let _ = bsd::unported!("boot seed (Limine fills no PT_OPENBSD_RANDOMIZE segment)");
 }
 
 /// What both entries do with their [`BootInfo`]: `boothowto`, boot(8)'s DUID, the machine's

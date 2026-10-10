@@ -118,7 +118,10 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   the call-out nodes `cuaU0`..`cuaU3`, minor `unit + 128` (`UCOMCUA_MASK`), mode 0660,
 ///   group `dialer` (`MAKEDEV`'s `ttyU*`).
 ///
-/// `/dev/random` (major 45) is left out: the kernel has no `random` driver yet.
+/// - `random` is major 45 (`cdev_random_init(1,random)`, M16d; 223 / 173): `urandom`, minor 0,
+///   mode 0644, and `random` a symbolic link to it (`MAKEDEV`'s `rnd`: `M urandom c 45 0 644`,
+///   `ln -s urandom random`; `DEV_LINKS`).
+///
 /// (name, kind, major, minor, mode, group)
 const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("console", 'c', 0, 0, 0o600, "wheel"),
@@ -128,6 +131,7 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("null", 'c', 2, 2, 0o666, "wheel"),
     ("zero", 'c', 2, 12, 0o666, "wheel"),
     ("klog", 'c', 7, 0, 0o600, "wheel"),
+    ("urandom", 'c', 45, 0, 0o644, "wheel"),
     ("tty00", 'c', 8, 0, 0o600, "wheel"),
     ("bpf", 'c', 23, 0, 0o600, "wheel"),
     ("rd0a", 'b', 17, 0, 0o640, "operator"),
@@ -146,6 +150,11 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     // M12: audio(4) (`MAKEDEV`'s `audio*`) and the first USB bus (`usb*`).
     ("audio0", 'c', 42, 0, 0o660, "_sndiop"),
     ("audioctl0", 'c', 42, 192, 0o660, "_sndiop"),
+    // M16d: lpt(4)'s first port (`MAKEDEV`'s `lpt*`: `M lpt$U c 16 $U 600`; amd64's cdevsw 16,
+    // which arm64's leaves unconfigured).
+    ("lpt0", 'c', 16, 0, 0o600, "wheel"),
+    // M16d: spkr(4) (`MAKEDEV`'s `speaker`: `M speaker c 27 0 600`; amd64's cdevsw 27).
+    ("speaker", 'c', 27, 0, 0o600, "wheel"),
     ("usb0", 'c', 61, 0, 0o640, "wheel"),
     // M16b: `uhid` 62 (`MAKEDEV`'s `_mcdev(uhid, uhid*, uhid, {-major_uhid_c-}, 600)`, whose
     // target lists units 0 to 7). `ugen` 63 is made by `devices()`.
@@ -334,8 +343,12 @@ pub(crate) fn check_devices(image: &Path) -> Result<()> {
 pub(super) const FD_NODES: u32 = 64;
 
 /// `/dev/stdin` and friends, as `MAKEDEV` links them: (name, target).
-pub(super) const DEV_LINKS: &[(&str, &str)] =
-    &[("stdin", "fd/0"), ("stdout", "fd/1"), ("stderr", "fd/2")];
+pub(super) const DEV_LINKS: &[(&str, &str)] = &[
+    ("stdin", "fd/0"),
+    ("stdout", "fd/1"),
+    ("stderr", "fd/2"),
+    ("random", "urandom"),
+];
 
 /// A user of `/etc/master.passwd`: (name, uid, gid, class, gecos, home, shell). OpenBSD's
 /// `root`, `daemon` and `nobody` (the lines of its stock `master.passwd`), and tcpdump(8)'s

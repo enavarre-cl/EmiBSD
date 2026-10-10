@@ -106,7 +106,8 @@
 //! - `cpu_sysctl` (M13, `machine::cpu::cpu_sysctl`) is ported with these gaps: `CPU_BIOS` is
 //!   `EOPNOTSUPP` as in the C without `BAPIV_VECTOR` (Limine passes no boot arguments, so
 //!   `bios_sysctl`'s `BIOS_DEV`, `BIOS_DISKINFO` and `BIOS_CKSUMLEN` cannot be reached);
-//!   `CPU_FORCEUKBD` is compiled out as in C without `pckbc(4)` (not ported); `allowaperture`
+//!   `CPU_FORCEUKBD` is there since pckbc(4) (M16d; it was compiled out, as in C without
+//!   it); `allowaperture`
 //!   is the `#else` (`APERTURE` is not configured); `cpu_sev_guestmode` (SEV probe),
 //!   `amd64_has_xcrypt` (`via_nano_setup`) and `need_retpoline` (`codepatch_replace`) keep
 //!   their initial values because the code that changes them is not ported.
@@ -208,9 +209,9 @@ use crate::arch::amd64::include::biosvar::{
 };
 use crate::arch::amd64::include::cpu::{
     CPU_ALLOWAPERTURE, CPU_BIOS, CPU_CHR2BLK, CPU_CONSDEV, CPU_CPUFEATURE, CPU_CPUID,
-    CPU_CPUVENDOR, CPU_HIBERNATEDELAY, CPU_INVARIANTTSC, CPU_KBDRESET, CPU_LIDACTION,
-    CPU_PWRACTION, CPU_RETPOLINE, CPU_TSCFREQ, CPU_VMMODE, CPU_XCRYPT, CPUPF_USERSEGS,
-    CPUPF_USERXSTATE, CpuInfo, CpuVendor, cpu_info_primary, curcpu,
+    CPU_CPUVENDOR, CPU_FORCEUKBD, CPU_HIBERNATEDELAY, CPU_INVARIANTTSC, CPU_KBDRESET,
+    CPU_LIDACTION, CPU_PWRACTION, CPU_RETPOLINE, CPU_TSCFREQ, CPU_VMMODE, CPU_XCRYPT,
+    CPUPF_USERSEGS, CPUPF_USERXSTATE, CpuInfo, CpuVendor, cpu_info_primary, curcpu,
 };
 use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr, rcr3};
 use crate::arch::amd64::include::fpu::{
@@ -250,7 +251,7 @@ use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_sig::{sigexit, sigonstack};
 use crate::kern::kern_softintr::softintr_init;
 use crate::kern::kern_sysctl::{
-    sysctl_bounded_arr, sysctl_rdint, sysctl_rdquad, sysctl_rdstring, sysctl_rdstruct,
+    sysctl_bounded_arr, sysctl_int, sysctl_rdint, sysctl_rdquad, sysctl_rdstring, sysctl_rdstruct,
     sysctl_securelevel_int,
 };
 use crate::kern::subr_log::init_static_msgbuf;
@@ -317,6 +318,8 @@ pub static LID_ACTION: AtomicI32 = AtomicI32::new(1);
 pub static PWR_ACTION: AtomicI32 = AtomicI32::new(1);
 /// `kbd_reset`: keyboard reset under pcvt (`machdep.kbdreset`).
 pub static KBD_RESET: AtomicI32 = AtomicI32::new(0);
+/// `forceukbd`: force ukbd(4) as console keyboard (`machdep.forceukbd`); once set, it stays.
+pub static FORCEUKBD: AtomicI32 = AtomicI32::new(0);
 /// `hibernate_delay`: hibernate delay after suspend (`machdep.hibernatedelay`).
 pub static HIBERNATE_DELAY: AtomicI32 = AtomicI32::new(0);
 /// `bios_efiinfo->config_acpi`: the physical address of the ACPI RSDP the firmware gave
@@ -412,6 +415,15 @@ pub static PROC0_UAREA: Uarea = Uarea::new();
 /// `proc0paddr`: proc0's `struct user`, at the bottom of its u-area.
 pub fn proc0paddr() -> &'static User {
     &PROC0_UAREA.u
+}
+
+/// `etext` (`conf/kernel.ld`): the address of the end of the kernel text.
+pub fn etext() -> usize {
+    unsafe extern "C" {
+        /// `etext` (`conf/kernel.ld`, `PROVIDE(etext = .)` after `.text`).
+        static etext: [u8; 0];
+    }
+    core::ptr::addr_of!(etext) as usize
 }
 /// `cpu_set_vendor`: records `ci`'s cpuid level and maps the vendor string to an integer.
 pub fn cpu_set_vendor(ci: &CpuInfo, level: u32, vendor: &[u8]) {
@@ -2180,8 +2192,19 @@ pub fn cpu_sysctl(
             // APERTURE is not configured: the C's #else.
             sysctl_rdint(oldp, oldlenp, newp, 0)
         }
-        // CPU_FORCEUKBD: `NPCKBC > 0 && NUKBD > 0` is false (pckbc(4) is not ported), so
-        // the case is compiled out as in C and falls to the table, which does not have it.
+        // NPCKBC > 0 && NUKBD > 0
+        CPU_FORCEUKBD => {
+            let forceukbd = FORCEUKBD.load(Ordering::Relaxed);
+            if forceukbd != 0 {
+                return sysctl_rdint(oldp, oldlenp, newp, forceukbd);
+            }
+
+            let error = sysctl_int(oldp, oldlenp, newp, newlen, &FORCEUKBD);
+            if FORCEUKBD.load(Ordering::Relaxed) != 0 {
+                crate::dev::ic::pckbc::pckbc_release_console();
+            }
+            error
+        }
         CPU_TSCFREQ => sysctl_rdquad(
             oldp,
             oldlenp,

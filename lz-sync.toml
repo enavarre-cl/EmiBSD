@@ -276,3 +276,240 @@ subject = "docs: log the OpenBSD C slips the ports found"
 modules = []
 status = "not-applicable"
 reason = "LZ's external bugs log (docs/EXTERNAL_BUGS.md: the OpenBSD C slips LZ's ports found, EXT-9 on); native keeps no such log, the slips reach the user through the sync's report (.claude/rules/subagents.md)"
+
+[[commit]]
+lz = "03d704b5706c"
+subject = "dev/pci: port eap(4) with midi(4)"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/arch/arm64/arm64/conf.rs", "sys/dev/midi.rs", "sys/dev/midi_if.rs", "sys/dev/midivar.rs", "sys/dev/pci/eap.rs", "sys/dev/pci/eapreg.rs", "sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "38c949de09fa"
+method = "cherry-pick"
+
+[[commit]]
+lz = "f8f126447693"
+subject = "build: add smoke-eap, eap(4) on QEMU's ES1370 plays the tone"
+modules = []
+status = "applied"
+emibsd = "8e986f260782"
+method = "cherry-pick"
+
+[[commit]]
+lz = "33038a92748f"
+subject = "dev/ic: port lpt(4) with its ISA attachment"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/arch/arm64/arm64/conf.rs", "sys/dev/ic/lpt.rs", "sys/dev/ic/lptreg.rs", "sys/dev/ic/lptvar.rs", "sys/dev/isa/lpt_isa.rs"]
+status = "applied"
+emibsd = "db98bccb1855"
+method = "cherry-pick"
+
+[[commit]]
+lz = "13b06dfcd47d"
+subject = "Merge main (EXTERNAL_BUGS, EDK2 UhciDxe retry) into the M16d coordinator branch"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "13922032f7bf"
+subject = "build: add smoke-lpt, bytes written to /dev/lpt0 reach QEMU's port"
+modules = []
+status = "applied"
+emibsd = "ed69c13606a3"
+method = "cherry-pick"
+
+[[commit]]
+lz = "e0a4a28bc1c9"
+subject = "dev: port pckbc(4) and pckbd(4), the PS/2 keyboard"
+modules = ["sys/arch/amd64/amd64/machdep.rs", "sys/dev/ic/i8042reg.rs", "sys/dev/ic/pckbc.rs", "sys/dev/ic/pckbcvar.rs", "sys/dev/isa/isareg.rs", "sys/dev/isa/pckbc_isa.rs", "sys/dev/pckbc/pckbd.rs", "sys/dev/pckbc/pckbdreg.rs", "sys/dev/pckbc/pckbdvar.rs", "sys/dev/pckbc/wskbdmap_mfii.rs"]
+status = "applied"
+emibsd = "e4673001babf"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "6c1941c14ba2"
+subject = "build: add smoke-pckbc, the PS/2 keyboard on amd64"
+modules = []
+status = "applied"
+emibsd = "1955105d9342"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "bb6431b66deb"
+subject = "Merge pckbc(4) and pckbd(4) (M16d agent A, early: pcppi needs pckbd_hookup_bell)"
+modules = []
+status = "not-applicable"
+reason = "merge commit of the pckbc branch into the M16d branch; its resolution (the amd64 ioconf.rs numbering, sys/dev/isa/mod.rs, the justfile's smokes list, none of them a [[module]]) arrived with the hand-resolved applies of e0a4a28b and 6c1941c1, so the tree equals LZ at this merge"
+
+[[commit]]
+lz = "602141098d1d"
+subject = "dev/pv: port viornd.c, viomb.c and dma_alloc.c"
+modules = ["sys/dev/pv/viomb.rs", "sys/dev/pv/viornd.rs", "sys/kern/dma_alloc.rs", "sys/uvm/uvm_init.rs"]
+status = "applied"
+emibsd = "d8368cdc9122"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "cf3843849639"
+subject = "dev/pv: port viogpu.c, viogpu.h and viocon.c"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/dev/pv/viocon.rs", "sys/dev/pv/viogpu.rs"]
+status = "applied"
+emibsd = "4040f445aa97"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "486e0e43209d"
+subject = "Merge viornd(4), viomb(4), viogpu(4), viocon(4) and dma_alloc (M16d agent B)"
+modules = ["sys/arch/amd64/amd64/conf.rs"]
+status = "applied"
+emibsd = "4040f445aa97"
+method = "cherry-pick-conflicts"
+reason = "merge commit of the virtio branch (viornd, viomb, viogpu, viocon, dma_alloc) into the M16d branch; its resolution (the amd64 conf.rs, the amd64 ioconf.rs numbering, the justfile's smokes list) arrived with the hand-resolved applies of its second parent's commits 60214109 and cf384384, so the tree equals LZ at this merge and lz check compares the amd64 conf.rs with it"
+
+[[commit]]
+lz = "1b590ccc1d14"
+subject = "dev/isa: port pcppi(4) and spkr(4), the PC speaker"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/dev/isa/isareg.rs", "sys/dev/isa/pcppi.rs", "sys/dev/isa/pcppireg.rs", "sys/dev/isa/pcppivar.rs", "sys/dev/isa/spkr.rs", "sys/dev/isa/spkrio.rs"]
+status = "applied"
+emibsd = "140246d8a704"
+method = "cherry-pick"
+
+[[commit]]
+lz = "924b9fc95baa"
+subject = "dev/pckbc: name the KBC_ENABLE polling race in pckbd's docs"
+modules = ["sys/dev/pckbc/pckbd.rs"]
+status = "applied"
+emibsd = "f4a9f42dcfcf"
+method = "cherry-pick"
+
+[[commit]]
+lz = "9a6ca6765f9f"
+subject = "Merge branch 'worktree-agent-aa21042b44fed554c' into worktree-agent-aea5c23f44813def9"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits (3bf642a1 in chunk A, e0a4a28b)"
+
+[[commit]]
+lz = "b3e993f57c6f"
+subject = "dev: port pms(4), the PS/2 mouse and touchpads"
+modules = ["sys/dev/pckbc/pms.rs", "sys/dev/pckbc/pmsreg.rs"]
+status = "applied"
+emibsd = "277fe176e148"
+method = "cherry-pick"
+
+[[commit]]
+lz = "c15fec6a0b1f"
+subject = "Merge branch 'worktree-agent-aea5c23f44813def9' into worktree-agent-aa21042b44fed554c"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits (924b9fc9, b3e993f5), and the tree equals LZ at it"
+
+[[commit]]
+lz = "c693c60a52be"
+subject = "arch/amd64: attach pms(4) and its wsmouse; smoke the PS/2 mouse"
+modules = []
+status = "applied"
+emibsd = "f1c524902048"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "a4e31939039e"
+subject = "Merge pms(4) and wsmouse at pms (M16d agent A)"
+modules = []
+status = "not-applicable"
+reason = "merge commit of the pms branch into the M16d branch; its resolution (the amd64 ioconf.rs numbering, an [[extra]]) arrived with the hand-resolved apply of c693c60a, and every file it changes equals LZ at it"
+
+[[commit]]
+lz = "3b33cb5219bd"
+subject = "build: smoke-bell rings with ksh's print, the ramdisk has no printf"
+modules = []
+status = "applied"
+emibsd = "640d48717058"
+method = "cherry-pick"
+
+[[commit]]
+lz = "0e99151d330e"
+subject = "Merge main (the OpenBSD C slips logged) into the M16d coordinator branch"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits (388f3139, not-applicable in chunk A)"
+
+[[commit]]
+lz = "6d1d70e04501"
+subject = "docs: log M16d's external bugs (EXT-181 to EXT-191)"
+modules = []
+status = "not-applicable"
+reason = "LZ's external bugs log (docs/EXTERNAL_BUGS.md, EXT-181 to EXT-191: the OpenBSD C slips M16d's ports found in pckbd, spkr, pms, eap, viomb and viogpu); native keeps no such log, the slips reach the user through the sync's report (.claude/rules/subagents.md)"
+
+[[commit]]
+lz = "3feb0258b021"
+subject = "dev: port rnd.c (entropy pool, ChaCha20 generator, /dev/random)"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/arch/amd64/amd64/machdep.rs", "sys/arch/amd64/include/cpu.rs", "sys/arch/arm64/arm64/conf.rs", "sys/arch/arm64/arm64/machdep.rs", "sys/arch/arm64/arm64/pmap.rs", "sys/arch/arm64/include/cpu.rs", "sys/dev/pv/viornd.rs", "sys/dev/rnd.rs", "sys/kern/init_main.rs"]
+status = "applied"
+emibsd = "4749ab3c1452"
+method = "cherry-pick-conflicts"
+reason = "security-review.md area; cherry-pick-conflicts at the crypto call sites only (rnd.rs adapted by the N1 crypto redesign); reviewed before integration"
+security = true
+
+[[commit]]
+lz = "9428f1b851b0"
+subject = "kern: use arc4random_ctx in vmcmd_randomize, as exec_subr.c does"
+modules = ["sys/kern/exec_subr.rs"]
+status = "applied"
+emibsd = "da44b81942d9"
+method = "cherry-pick"
+reason = "security-review.md area (exec_*); applied as LZ wrote it, reviewed before integration"
+security = true
+
+[[commit]]
+lz = "23655493599b"
+subject = "xtask: add /dev/urandom and /dev/random, check rnd(4) in smokes"
+modules = []
+status = "applied"
+emibsd = "69dc4d56acf1"
+method = "cherry-pick"
+
+[[commit]]
+lz = "77ff921ce13b"
+subject = "arch/amd64: port the rdrand entropy timeout"
+modules = ["sys/arch/amd64/amd64/autoconf.rs", "sys/arch/amd64/amd64/cpu.rs", "sys/arch/amd64/amd64/identcpu.rs", "sys/arch/amd64/include/specialreg.rs"]
+status = "applied"
+emibsd = "694d2bbe85da"
+method = "cherry-pick"
+
+[[commit]]
+lz = "3664677f12db"
+subject = "Merge rnd(4): the entropy pool, the ChaCha20 generator and /dev/random (M16d agent C)"
+modules = ["sys/arch/amd64/amd64/conf.rs"]
+status = "applied"
+emibsd = "694d2bbe85da"
+method = "cherry-pick-conflicts"
+reason = "merge commit of the rnd branch into the M16d branch; its resolution (the amd64 conf.rs, cdevsw 45 random beside spkr and the mouse; the ramdisk's devices; the justfile) arrived with the hand-resolved apply of 3feb0258 and the applies after it, so the tree equals LZ at this merge (rnd.rs aside, adapted) and lz check compares the amd64 conf.rs with it"
+
+[[commit]]
+lz = "2c85ee510914"
+subject = "dev/pv: drop viocon's duplicate Write import in its tests"
+modules = ["sys/dev/pv/viocon.rs"]
+status = "applied"
+emibsd = "d2a18e1d13d2"
+method = "cherry-pick"
+
+[[commit]]
+lz = "8482cb76fa72"
+subject = "rules: kernel.ld carries the randomize header; ARCHITECTURE's random note"
+modules = []
+status = "applied"
+emibsd = "92ab64dfd47c"
+method = "cherry-pick"
+
+[[commit]]
+lz = "d87bf29973b3"
+subject = "docs: M16d met (console, virtio and legacy devices)"
+modules = []
+status = "not-applicable"
+reason = "LZ's M16d close (README, docs/JOURNAL.md, PORTING.md, ROADMAP.md, STATUS.md); native keeps its own docs and milestones"
+
+[[commit]]
+lz = "8fe7508289c6"
+subject = "rules: defer a driver whose QEMU device OpenBSD itself fails on"
+modules = []
+status = "not-applicable"
+reason = "LZ's porting rule (.claude/rules/scope-and-stubs.md: defer a driver whose QEMU device OpenBSD itself fails on), about which OpenBSD drivers LZ ports next; native ports nothing, it takes LZ's ports through this sync"

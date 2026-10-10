@@ -120,8 +120,9 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
-    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom"
+    "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm smoke-virtio smoke-viogpu " + \
+    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom " + \
+    "smoke-pckbc smoke-eap smoke-lpt smoke-bell"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -1751,8 +1752,11 @@ re_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' -
 # loads /bsd into its 64 MB block and enters locore0.S's _start with the tree (x2): the kernel
 # builds its bootstrap tables, takes /chosen's bootargs, DUID, UEFI memory map and system table
 # (getbootinfo), starts the other processors by PSCI CPU_ON (cpu_hatch_secondary) and finds its
-# root by the DUID (sd1a: the boot image is the virtio disk after the blank one). `machine dtb` is
-# arm64's machine command (it has no `machine memory`). Part of `smoke`.
+# root by the DUID (sd1a: the boot image is the virtio disk after the blank one). M16d: boot(8)
+# fills the kernel's PT_OPENBSD_RANDOMIZE segment from /etc/random.seed (RB_GOODRANDOM), so
+# random_start says "random: good seed from bootblocks" and not the Limine boot's no-entropy
+# warning. `machine dtb` is arm64's machine command (it has no `machine memory`). Part of
+# `smoke`.
 smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") efiboot-amd64 efiboot-arm64
     @test -x target/userland/amd64/host/bin/makefs -a -f target/userland/amd64/ramdisk-root/etc/fstab || \
         { echo "smoke-efiboot: no makefs or staged root; run just userland first"; exit 1; }
@@ -1774,6 +1778,7 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fe
         --expect "booting hd0a:/bsd: " --expect "]=0x" --expect "entry point at 0x1000000" \
         --expect "bsd: booted on amd64 by boot(8) efiboot" --expect "bsd: boot(8) bootarg protocol, " \
         --expect "bsd: {{ncpu}} processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
+        --expect "random: good seed from bootblocks" --reject "warning: no entropy supplied by boot loader" \
         --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
         --expect "cpu1 at mainbus0: apid 1 (application processor)" \
         --expect "cpu{{aps}} at mainbus0: apid {{aps}} (application processor)" \
@@ -1795,6 +1800,7 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fe
         --expect "-r-xr-xr-x 0,0" --expect "booting sd0a:/bsd: " --expect "]=0x" \
         --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "bsd: boot(8) bootarg protocol, " \
         --expect "bsd: {{ncpu}} processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
+        --expect "random: good seed from bootblocks" --reject "warning: no entropy supplied by boot loader" \
         --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" --expect "cpu{{aps}} at mainbus0 mpidr {{aps}}: ARM Cortex-A72" \
         --expect "cpu: {{aps}} of {{aps}} application processors running" \
         --expect "root on sd1a (454649424f4f5430.a) swap on sd1b dump on sd1b" \
@@ -2221,6 +2227,61 @@ smoke-audio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --expect 'ac97: codec id 0x83847600 (SigmaTel STAC9700)' \
         --expect 'audio0 at auich0' --expect 'name=auich0' --expect 'outputs.master=255,255'
 
+# M16d: eap(4) on QEMU's `ES1370` (`--audio es1370`, devices.rs), amd64 (the only GENERIC with
+# eap). As `smoke-audio`: audioctl(8) and mixerctl(8) show the device and the AK4531 mixer
+# eap_attach sets up (master at VOL_0DB, 200, as OpenBSD 8.0 shows on the same machine),
+# aucat(1) plays `/root/tone.wav` through /dev/audio0 (DAC2's DMA and block interrupts), and
+# `--expect-tone` finds the tone in QEMU's `wav` file. The chip's MIDI UART attaches as midi0
+# (midi(4)); QEMU's ES1370 has no device behind it, so nothing is played through it. Part of
+# `smoke`.
+smoke-eap: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-eap: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --audio es1370 --expect-tone {{audio_play}} \
+        --expect 'eap0 at pci0 dev 4 function 0 vendor 0x1274 product 0x5000 rev 0x00' \
+        --expect 'audio0 at eap0' --expect 'midi0 at eap0: <AudioPCI MIDI UART>' \
+        --expect 'name=eap0' --expect 'outputs.master=200,200' --expect 'inputs.mic.preamp=off' \
+        --expect 'record.source=mic' --expect 'inputs.source=mic,cd,line,fmsynth,aux,dac'
+
+# M16d: lpt(4), amd64 (the only GENERIC with lpt). QEMU's first parallel port (`--parallel
+# lpt.txt`, hwopts.rs: `-parallel file:`, the `isa-parallel` at 0x378, IRQ 7) is GENERIC's
+# `lpt0 at isa? port 0x378 irq 7`: lpt_isa_probe's walking-bit tests on the data port pass and
+# lpt0 attaches. After login the shell writes a line to /dev/lpt0: lptopen primes the printer
+# and waits for it to be ready, lptwrite pushes the bytes through lptintr (the interrupt and
+# the quarter-second tick), each strobed onto the port, and `--expect-parallel` finds the line
+# in QEMU's file, as OpenBSD 8.0 writes it on the same machine. Part of `smoke`.
+lpt_session := 'echo lpt-hello-$((40+2)) > /dev/lpt0; echo lpt-rc-$?\n'
+smoke-lpt: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-lpt: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --parallel lpt.txt --expect-parallel 'lpt-hello-42' \
+        {{disk_login}} --send-after '# ' --send '{{lpt_session}}' \
+        --expect 'lpt0 at isa0 port 0x378/4 irq 7' --expect 'lpt-rc-0'
+
+# M16d: pcppi(4) and spkr(4), amd64 (the only GENERIC with them). QEMU's PC speaker is heard
+# through the `wav` backend (`--pcspk`, devices.rs: `-machine pcspk-audiodev`). First boot: the
+# shell writes BEL to /dev/ttyC0 (ksh's `print`; the ramdisk has no printf(1)); wsdisplay's bell goes to the keyboard on its mux, pckbd(4),
+# whose bell pcppi hooked up (pcppi_kbd_bell): counter 2 of the i8254 at the bell's pitch, gated
+# to the speaker for its period (400 Hz, 100 ms), and `--expect-tone` finds it in the file, as
+# OpenBSD 8.0 does on the same machine (diff-openbsd probe: 8170 loud samples). Second boot:
+# spkr(4) plays a scale written to /dev/speaker (`cdefgab`), each note pcppi_bell slept through.
+# QEMU's `wav` backend writes through a 16 kB stdio buffer and the smoke kills QEMU once the
+# lines are seen, so the shell rings the bell ten times, 0.2 s apart, to have more than a buffer
+# of it in the file. Part of `smoke`.
+bell_session := 'for i in 1 2 3 4 5 6 7 8 9 10; do print -n "\\a" > /dev/ttyC0; sleep 0.2; done; sleep 1; echo bell-$((40+2))\n'
+spkr_session := 'echo cdefgab > /dev/speaker; echo spkr-rc-$?; sleep 1; echo spkr-$((40+2))\n'
+smoke-bell: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-bell: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --pcspk --expect-tone {{disk_login}} --send-after '# ' --send '{{bell_session}}' \
+        --expect 'pcppi0 at isa0 port 0x61' --expect 'spkr0 at pcppi0' --expect 'bell-42'
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --pcspk --expect-tone {{disk_login}} --send-after '# ' --send '{{spkr_session}}' \
+        --expect 'spkr0 at pcppi0' --expect 'spkr-rc-0' --expect 'spkr-42'
+
 # `smoke-audio`'s session: the parameters and the mixer, then the tone.
 audio_play := disk_login + " " + \
     "--send-after '# ' --send 'audioctl -f /dev/audioctl0; mixerctl -f /dev/audioctl0\\n' " + \
@@ -2470,28 +2531,65 @@ smoke-vga: (build-amd64 "--features qemu,multiprocessor")
 # wsdisplay_kbdinput and the tty's line discipline bring "hi" to the reader, which echoes it
 # on the serial line. Then dd(1) reads two events from /dev/wskbd0 (which takes the keyboard
 # out of the mux into event mode, wsevent.c) while `a` is typed: a key down and a key up,
-# 48 bytes. Part of `smoke`.
+# 48 bytes. On amd64 (M16d) the PS/2 keyboard attaches first, wskbd0 at pckbd0, so the USB
+# keyboard is wskbd1 (WSKBD below), as on OpenBSD 8.0 with the same devices (diff-openbsd
+# probe). Part of `smoke`.
 kbd_tty := 'exec 3</dev/ttyC0; echo kbd-ready-$((40+2)); read line <&3; echo "kbd-got-[$line]"\n'
-kbd_ev := '(sleep 2; echo ev-ready-$((40+2))) & n=$(dd if=/dev/wskbd0 bs=24 count=2 2>/dev/null | wc -c); echo ev-bytes-$((n))\n'
+kbd_ev := '(sleep 2; echo ev-ready-$((40+2))) & n=$(dd if=/dev/WSKBD bs=24 count=2 2>/dev/null | wc -c); echo ev-bytes-$((n))\n'
 kbd_check := "--fb --usb --expect-ramdisk --until-seen " + \
     "--sendkey-after 'kbd-ready-42' --sendkeys 'h i ret' --sendkey-after 'ev-ready-42' --sendkeys 'a' " + \
     disk_login + " --send-after '# ' --send '" + kbd_tty + "' --send-after 'kbd-got-[hi]' --send '" + kbd_ev + "' " + \
-    "--expect 'ukbd0 at uhidev0' --expect 'wskbd0 at ukbd0 mux 1' " + \
-    "--expect 'wskbd0: connecting to wsdisplay0' --expect 'kbd-got-[hi]' " + \
-    "--expect 'wskbd0: disconnecting from wsdisplay0' --expect 'ev-bytes-48'"
+    "--expect 'ukbd0 at uhidev0' --expect 'WSKBD at ukbd0 mux 1' " + \
+    "--expect 'WSKBD: connecting to wsdisplay0' --expect 'kbd-got-[hi]' " + \
+    "--expect 'WSKBD: disconnecting from wsdisplay0' --expect 'ev-bytes-48'"
 smoke-kbd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-kbd: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{kbd_check}} \
-        --expect 'wsdisplay0 at efifb0 mux 1'
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{kbd_check}} \
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{replace(kbd_check, "WSKBD", "wskbd1")}} \
+        --expect 'wskbd0 at pckbd0 mux 1' --expect 'wsdisplay0 at efifb0 mux 1'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{replace(kbd_check, "WSKBD", "wskbd0")}} \
         --expect 'wsdisplay0 at simplefb0 mux 1'
+
+# M16d: pckbc(4), pckbd(4) and pms(4), amd64 only (arm64's GENERIC has no pckbc). q35 always has the
+# i8042: pckbc0 attaches at isa0 (as on OpenBSD 8.0, which has `pckbc* at acpi?` too but takes
+# the isa line on q35), pckbd0 on its keyboard slot answers the reset, gets XT translation from
+# the controller and offers wskbd0 on mux 1, which connects to wsdisplay0. Without `--usb`
+# QEMU's `sendkey` goes to the PS/2 keyboard: after login the shell reads a line from
+# /dev/ttyC0 while `h`, `i` and Return are typed (pckbcintr, pckbd_input, wskbd_input and the
+# US layout of wskbdmap_mfii.rs bring "hi" to the reader), then dd(1) reads two events from
+# /dev/wskbd0 while `a` is typed. pms0 on the aux slot finds QEMU's PS/2 mouse an IntelliMouse
+# and offers wsmouse0 on mux 0; dd(1) reads two events from /dev/wsmouse0 while QEMU's monitor
+# moves it (`mouse_move 5 3`: the PS/2 mouse is the machine's only one, #2 in `info mice`).
+# The lines are the ones OpenBSD 8.0 prints on the same machine
+# (diff-openbsd probe, M16d). The open of /dev/wskbd0 is retried until dd(1) blocks in its
+# read: pckbd_enable sends KBC_ENABLE with pckbc_poll_cmd while the keyboard's interrupt is
+# live, and QEMU answers at once, so when dd runs on the CPU that takes IRQ1 (cpu0) pckbcintr
+# eats the ACK, the poll times out and the open fails with EIO ("pckbd_enable: command
+# error"). That race is OpenBSD's (pckbd.c:499-507, pckbc.c:1041 at the pin), kept as is:
+# OpenBSD 8.0 on the same machine fails 4 of 8 such opens the same way (diff-openbsd probe F,
+# M16d). Up to eight opens are tried. Part of `smoke`.
+pckbc_ev := 'i=0; while [ $i -lt 8 ]; do rm -f /tmp/ev; (dd if=/dev/wskbd0 bs=24 count=2 2>/dev/null | wc -c >/tmp/ev) & sleep 2; [ -s /tmp/ev ] || break; i=$((i+1)); done; echo ev-open-retries-$i; echo ev-ready-$((40+2)); wait; echo ev-bytes-$(($(cat /tmp/ev)))\n'
+pckbc_mouse := '(sleep 2; echo pms-ready-$((40+2))) & n=$(dd if=/dev/wsmouse0 bs=24 count=2 2>/dev/null | wc -c); echo mouse-bytes-$((n))\n'
+pckbc_check := "--expect-ramdisk --until-seen " + \
+    "--sendkey-after 'kbd-ready-42' --sendkeys 'h i ret' --sendkey-after 'ev-ready-42' --sendkeys 'a' " + \
+    disk_login + " --send-after '# ' --send '" + kbd_tty + "' --send-after 'kbd-got-[hi]' --send '" + \
+    pckbc_ev + "' --send-after 'ev-bytes-48' --send '" + pckbc_mouse + "' " + \
+    "--monitor-after 'pms-ready-42' --monitor 'mouse_move 5 3' " + \
+    "--expect 'pckbc0 at isa0 port 0x60/5 irq 1 irq 12' --expect 'pckbd0 at pckbc0 (kbd slot)' " + \
+    "--expect 'wskbd0 at pckbd0 mux 1' --expect 'pms0 at pckbc0 (aux slot)' " + \
+    "--expect 'wsmouse0 at pms0 mux 0' --expect 'wskbd0: connecting to wsdisplay0' " + \
+    "--expect 'kbd-got-[hi]' --expect 'wskbd0: disconnecting from wsdisplay0' --expect 'ev-bytes-48' " + \
+    "--expect 'mouse-bytes-48'"
+smoke-pckbc: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-pckbc: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{pckbc_check}}
 
 # M16b: USB pointers, both archs. QEMU's `usb-mouse`, `usb-tablet` and `usb-wacom-tablet` on a
 # `qemu-xhci` (`--usb-mouse --usb-tablet --usb-wacom-tablet`, devices.rs): uhidev(4) takes each,
 # ums(4) attaches to all three (`uwacom(4)` matches only the four Wacom products of its table,
 # not QEMU's PenPartner, product 0x0000) and offers a wsmouse child on mux 0. After login the
-# shell reads two events (dd(1), 24 bytes each) from /dev/wsmouse0, 1 and 2 at once, and
+# shell reads two events (dd(1), 24 bytes each) from the three USB pointers' wsmouse at once, and
 # QEMU's monitor (`--monitor-after`, hwopts.rs) injects the pointer events: `mouse_set N` picks
 # the device `info mice` numbers N, `mouse_move` moves the relative usb-mouse (a delta and the
 # sync event), `mouse_button` presses and releases the tablet's button (QEMU's monitor cannot
@@ -2499,31 +2597,34 @@ smoke-kbd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featur
 # sync event). The PenPartner sends its reports without the report ID byte its descriptor
 # declares (QEMU's HID mode), so the first byte (the buttons) selects the report ID: with the
 # left button down it is 1, ums2's, and the move that follows makes it a report of three
-# bytes. wsmouse2 gets its two events from those. The monitor's numbering follows the
+# bytes. ums2's wsmouse gets its two events from those. The monitor's numbering follows the
 # machine: on amd64 the PS/2 mouse is #2 and the HID ones #3, #4 and #5; arm64 has #1, #2
 # and #3. The PenPartner's other report IDs (2, 3 and 99, vendor collections) are left to
 # uhid(4), which attaches to each (`uhid0` to `uhid2`).
-mouse_dd := 'for i in 0 1 2; do (n=$(dd if=/dev/wsmouse$i bs=24 count=2 2>/dev/null | wc -c); echo mouse$i-bytes-$((n))) & done; sleep 2; echo mouse-ready-$((40+2))\n'
+mouse_dd := 'for i in MICELIST; do (n=$(dd if=/dev/wsmouse$i bs=24 count=2 2>/dev/null | wc -c); echo mouse$i-bytes-$((n))) & done; sleep 2; echo mouse-ready-$((40+2))\n'
 mouse_check := "--usb-mouse --usb-tablet --usb-wacom-tablet --expect-ramdisk --until-seen " + \
     disk_login + " --send-after '# ' --send '" + mouse_dd + "' " + \
     "--monitor-after 'mouse-ready-42' --monitor 'info mice' " + \
     "--monitor-after 'mouse-ready-42' --monitor 'mouse_set MOUSE' --monitor-after 'mouse-ready-42' --monitor 'mouse_move 5 3' " + \
     "--monitor-after 'mouse-ready-42' --monitor 'mouse_set TABLET' --monitor-after 'mouse-ready-42' --monitor 'mouse_button 1' --monitor-after 'mouse-ready-42' --monitor 'mouse_button 0' " + \
     "--monitor-after 'mouse-ready-42' --monitor 'mouse_set WACOM' --monitor-after 'mouse-ready-42' --monitor 'mouse_button 1' --monitor-after 'mouse-ready-42' --monitor 'mouse_move 5 3' --monitor-after 'mouse-ready-42' --monitor 'mouse_button 0' " + \
-    "--expect 'ums0 at uhidev0: 5 buttons, Z dir' --expect 'wsmouse0 at ums0 mux 0' " + \
-    "--expect 'ums1 at uhidev1: 5 buttons, Z dir' --expect 'wsmouse1 at ums1 mux 0' " + \
-    "--expect 'ums2 at uhidev2 reportid 1: 3 buttons, Z dir' --expect 'wsmouse2 at ums2 mux 0' " + \
+    "--expect 'ums0 at uhidev0: 5 buttons, Z dir' --expect 'wsmouseWSMN0 at ums0 mux 0' " + \
+    "--expect 'ums1 at uhidev1: 5 buttons, Z dir' --expect 'wsmouseWSMN1 at ums1 mux 0' " + \
+    "--expect 'ums2 at uhidev2 reportid 1: 3 buttons, Z dir' --expect 'wsmouseWSMN2 at ums2 mux 0' " + \
     "--expect 'uhid0 at uhidev2 reportid 2: input=7, output=0, feature=1' " + \
     "--expect 'uhid1 at uhidev2 reportid 3: input=0, output=0, feature=1' " + \
     "--expect 'uhid2 at uhidev2 reportid 99: input=7, output=0, feature=0' " + \
-    "--expect 'mouse0-bytes-48' --expect 'mouse1-bytes-48' --expect 'mouse2-bytes-48'"
+    "--expect 'mouseWSMN0-bytes-48' --expect 'mouseWSMN1-bytes-48' --expect 'mouseWSMN2-bytes-48'"
+# The units: on amd64 (M16d) pms0 takes wsmouse0, so the USB pointers are wsmouse1 to 3, as on
+# OpenBSD 8.0 with the same devices (diff-openbsd probe E); arm64 has no PS/2 mouse.
+mouse_amd64 := replace(replace(replace(replace(replace(replace(replace(mouse_check, "MOUSE", "3"), "TABLET", "4"), "WACOM", "5"), "MICELIST", "1 2 3"), "WSMN0", "1"), "WSMN1", "2"), "WSMN2", "3")
+mouse_arm64 := replace(replace(replace(replace(replace(replace(replace(mouse_check, "MOUSE", "1"), "TABLET", "2"), "WACOM", "3"), "MICELIST", "0 1 2"), "WSMN0", "0"), "WSMN1", "1"), "WSMN2", "2")
 smoke-mouse: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-mouse: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd \
-        {{replace(replace(replace(mouse_check, "MOUSE", "3"), "TABLET", "4"), "WACOM", "5")}}
-    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
-        {{replace(replace(replace(mouse_check, "MOUSE", "1"), "TABLET", "2"), "WACOM", "3")}}
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{mouse_amd64}} \
+        --expect 'wsmouse0 at pms0 mux 0'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{mouse_arm64}}
 
 # M16b: ugen(4), both archs. QEMU's `usb-ccid` smart card reader (`--usb-ccid`, devices.rs) on a
 # `qemu-xhci`: no driver takes a CCID interface (class 0x0b), so usbd_probe_and_attach offers the
@@ -2789,6 +2890,65 @@ smoke-tpm: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --tpm crb {{tpm_check}} \
         --expect 'tpm0 at acpi0 TPM_ 2.0 (CRB) addr 0xfed40000/0x1000, device 0x00000000 rev 0x0'
 
+# M16d: viornd(4) and viomb(4), both archs: QEMU's virtio entropy device and memory balloon
+# (`--virtio-rng --balloon`, hwopts.rs; virtio-*-pci on amd64, virtio-mmio on arm64, found
+# there before the disks, so the virtioN numbers differ per arch). viornd asks for 16 bytes one
+# tick after its attach and gets one interrupt (as OpenBSD 8.0: `irq69/viornd0:1 1` on amd64;
+# the next request is 15 << 5 s away); its words go to enqueue_randomness, rnd(4)'s entropy
+# input ring (dev/rnd.rs; OpenBSD shows no count of them to userland); the shell reads 8 KB of
+# /dev/random (rnd(4)'s randomread, past 2048 bytes from a ChaCha20 context of its own). The
+# balloon is driven from QEMU's monitor (`--monitor-after`): `balloon 384` of the smokes'
+# 512 MB, then `balloon 512`; ten seconds after each,
+# hw.sensors.viomb0 shows what OpenBSD 8.0 shows on the same machine (the C's sensors lag the
+# last 1 MB request: 128 MB desired, 127 MB current; then 0 and 1 MB), and `vmstat -s`'s
+# pages free drop by at least the 32768 pages the balloon took and come back. Part of `smoke`.
+virtio_check := "--virtio-rng --balloon --expect-ramdisk --until-seen " + disk_login + " " + \
+    "--send-after '# ' --send 'pf() { vmstat -s | while read n a b; do [ $a$b = pagesfree ] && echo $n; done; }; " + \
+    "f0=$(pf); echo m16d-inflate-$((40+1))\\n' " + \
+    "--monitor-after 'm16d-inflate-41' --monitor 'balloon 384' " + \
+    "--send-after 'm16d-inflate-41' --send 'sleep 10; f1=$(pf); " + \
+    "echo inflated: $(sysctl -n hw.sensors.viomb0.raw0) / $(sysctl -n hw.sensors.viomb0.raw1); " + \
+    "[ $((f0-f1)) -ge 32768 ] && echo m16d-took-$((32000+768)); echo m16d-deflate-$((40+2))\\n' " + \
+    "--monitor-after 'm16d-deflate-42' --monitor 'balloon 512' " + \
+    "--send-after 'm16d-deflate-42' --send 'sleep 10; f2=$(pf); " + \
+    "echo deflated: $(sysctl -n hw.sensors.viomb0.raw0) / $(sysctl -n hw.sensors.viomb0.raw1); " + \
+    "[ $((f2-f1)) -ge 32512 ] && echo m16d-gave-$((32000+512)); " + \
+    "dd if=/dev/random of=/dev/null bs=4096 count=2; " + \
+    "vmstat -i | while read n t r; do echo intr $n $t; done; echo m16d-done-$((40+3))\\n' " + \
+    "--expect 'inflated: 134217728 (desired) / 133169152 (current)' --expect 'm16d-took-32768' " + \
+    "--expect 'deflated: 0 (desired) / 1048576 (current)' --expect 'm16d-gave-32512' " + \
+    "--expect '2+0 records in' --expect 'm16d-done-43'"
+
+smoke-virtio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-virtio: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{virtio_check}} \
+        --expect 'viornd0 at virtio2' --expect 'virtio2: msix per-VQ' \
+        --expect 'viomb0 at virtio3' --expect 'virtio3: msix shared' --expect 'intr irq69/viornd0:1 1'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{virtio_check}} \
+        --expect 'virtio27 at mainbus0: Virtio Memory Balloon Device' --expect 'viomb0 at virtio27' \
+        --expect 'virtio28 at mainbus0: Virtio Entropy Device' --expect 'viornd0 at virtio28' \
+        --expect 'intr irq76/virtio28 1'
+
+# M16d: viogpu(4), arm64 only (amd64's GENERIC has it commented out). QEMU's virtio-gpu-pci
+# (`--virtio-gpu`; the virtio-mmio GPU is legacy, which viogpu refuses as OpenBSD 8.0 does) is
+# the only display: `--screenshot-after` adds no ramfb with it, so there is no simplefb, as on
+# OpenBSD 8.0. viogpu takes the console as the C does (`wsdisplay_cnattach`), so the kernel's
+# later messages go to the screen and the shell reads them from dmesg(8); the login stays on
+# the serial line (/dev/console is still pluart0's). The shell clears screen 0 of
+# /dev/ttyC0 and writes a line at its top, as the OpenBSD 8.0 probe did; `--screen-text` finds
+# it in QEMU's screendump of the GPU's scanout. Part of `smoke`.
+viogpu_line := 'dmesg | grep -e viogpu -e wsdisplay0 -e selftest..wscons; x=wrote; print "\033[2J\033[HVIOGPU-TEXT-42" > /dev/ttyC0 && echo viogpu-$x\n'
+smoke-viogpu: (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-viogpu: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --virtio-gpu --cmdline "selftest=wscons" \
+        --screenshot-after 'viogpu-wrote' --screen-text '0:0:VIOGPU-TEXT-42' --until-seen --expect 'rc: multi-user' \
+        {{disk_login}} --send-after "# " --send '{{viogpu_line}}' \
+        --expect ': 1280x800, 32bpp' --expect 'wsdisplay0 at viogpu0 mux 1: console (std, vt100 emulation)' \
+        --expect 'wsdisplay0: screen 1-5 added (std, vt100 emulation)' --expect 'viogpu-wrote' \
+        --expect 'viogpu0 at virtio32virtio32: msix per-VQ' --expect 'selftest: wscons grid x=0 y=0 cw=12 ch=24 cols=106 rows=33 on viogpu0'
+
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
     cargo xtask symbolize --arch {{arch}}
@@ -2885,12 +3045,14 @@ test-ref:
     OPENBSD_SRC={{justfile_directory()}}/reference/openbsd-src cargo test -p libkern -p libz -p bsd -- --ignored
     OPENBSD_SRC={{justfile_directory()}}/reference/openbsd-src cargo test -p efiboot-arm64 -- --ignored
 
-# bare targets with `--features qemu`: a superset of the plain build, which `just build` covers
+# bare targets with `--features qemu`: a superset of the plain build, which `just build` covers;
+# amd64 also with `viocon` (M16d), whose ioconf and cdevsw entries only that feature compiles
 clippy:
     cargo clippy -p bsd --target {{amd64}} --features qemu -- -D warnings
     cargo clippy -p bsd --target {{arm64}} --features qemu -- -D warnings
     cargo clippy -p bsd --target {{amd64}} --features qemu,multiprocessor -- -D warnings
     cargo clippy -p bsd --target {{arm64}} --features qemu,multiprocessor -- -D warnings
+    cargo clippy -p bsd --target {{amd64}} --features qemu,multiprocessor,viocon -- -D warnings
     cargo clippy -p init --target {{amd64}} -- -D warnings
     cargo clippy -p init --target {{arm64}} -- -D warnings
     cargo clippy -p libkern -p libz -p bsd -p xtask -- -D warnings

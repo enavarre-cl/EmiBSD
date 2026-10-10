@@ -57,7 +57,8 @@
 //!
 //! Status: `wip`. Milestone M2 needs the timer and RTC ports for `delay(9)`; M7b the ISA
 //! memory hole (`bus_space_map`); the ISA bus (M8) adds the DMA controllers' ports
-//! (`isaattach` maps the delay port among the page registers). The other port assignments
+//! (`isaattach` maps the delay port among the page registers); `pckbc(4)` (M16d) the
+//! keyboard controller's `IO_KBD`. The other port assignments
 //! and the IRQ names come with their drivers.
 
 /// `IO_DMA1`: 8237A DMA Controller #1.
@@ -70,6 +71,10 @@ pub const IO_ICU2: u16 = 0x0a0;
 pub const IO_ICUSIZE: u16 = 16;
 /// 8253 Timer #1.
 pub const IO_TIMER1: u16 = 0x040;
+/// `IO_KBD`: 8042 Keyboard.
+pub const IO_KBD: u16 = 0x060;
+/// `IO_PPI`: Programmable Peripheral Interface.
+pub const IO_PPI: u16 = 0x061;
 /// RTC.
 pub const IO_RTC: u16 = 0x070;
 /// NMI Control.
@@ -102,6 +107,8 @@ mod tests {
         );
         assert_eq!(crate::reftest::int(&defs, "IO_ICU1"), Some(IO_ICU1 as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_ICU2"), Some(IO_ICU2 as i64));
+        assert_eq!(crate::reftest::int(&defs, "IO_KBD"), Some(IO_KBD as i64));
+        assert_eq!(crate::reftest::int(&defs, "IO_PPI"), Some(IO_PPI as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_RTC"), Some(IO_RTC as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_NMI"), Some(IO_NMI as i64));
         assert_eq!(

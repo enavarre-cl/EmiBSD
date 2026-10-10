@@ -94,7 +94,9 @@
 //! `cpu_hatch`, `cpu_init`'s `CPUF_RUNNING` and `wbinvd_on_all_cpus`. `patinit`, the
 //! MDS/`cpu_fix_msrs` work and `cpu_debug_dump` (ddb, M11c) come later. M16e ports
 //! `cpu_init_mwait` and `cpu_idle_mwait_cycle` (with `cpu_mwait_size`/`cpu_mwait_states`),
-//! for acpicpu(4)'s idle states.
+//! for acpicpu(4)'s idle states. M16d ports `rdrand` and `rdrand_tmo`, the entropy source
+//! `cpu_configure` starts (the C's uninitialised sample is 0 where the CPU has neither
+//! `RDSEED` nor `RDRAND`).
 //!
 //! ## Deviations
 //! - `cpu_attach` reports what it cannot do yet: `cpu_fix_msrs`,
@@ -139,6 +141,7 @@
 //! - `cpu_enter_pages` sets up the TSS stacks only: `pmap_enter_special` (the u-k mappings of
 //!   the Meltdown mitigation) waits for M6.
 
+use core::arch::asm;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
@@ -147,7 +150,7 @@ use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use libkern::StaticCell;
 
 use crate::arch::amd64::amd64::fpu::XSAVE_MASK;
-use crate::arch::amd64::amd64::identcpu::identifycpu;
+use crate::arch::amd64::amd64::identcpu::{HAS_RDRAND, HAS_RDSEED, identifycpu};
 use crate::arch::amd64::amd64::intr::cpu_intr_init;
 use crate::arch::amd64::amd64::lapic::{lapic_calibrate_timer, lapic_enable};
 use crate::arch::amd64::amd64::locore::Xsyscall;
@@ -158,7 +161,9 @@ use crate::arch::amd64::include::cpu::{
 use crate::arch::amd64::include::cpu_full::{
     CpuInfoFull, DBLFLT_STACK_WORDS, NMI_STACK_WORDS, TRAMP_STACK_WORDS,
 };
-use crate::arch::amd64::include::cpufunc::{lcr4, monitor, mwait, rcr4, rdmsr, read_rflags, wrmsr};
+use crate::arch::amd64::include::cpufunc::{
+    lcr4, monitor, mwait, rcr4, rdmsr, rdtsc, read_rflags, wrmsr,
+};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_AP, CPU_ROLE_BP, CPU_ROLE_SP, CpuAttachArgs};
 use crate::arch::amd64::include::fpu::{
     INITIAL_MXCSR, INITIAL_NPXCW, Savefpu, fpu_cleandata, fpureset, fpusave, xrstor_user,
@@ -172,9 +177,12 @@ use crate::arch::amd64::include::specialreg::{
     MSR_KERNELGSBASE, MSR_LSTAR, MSR_SFMASK, MSR_STAR, cpuid,
 };
 use crate::arch::amd64::include::tss::X86_64Tss;
+use crate::dev::rnd::enqueue_randomness;
+use crate::kern::kern_timeout::timeout_add_msec;
 use crate::kern::subr_prf::{Str, panic, printf};
 use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
 use crate::sys::sched::cpu_is_idle;
+use crate::sys::timeout::Timeout;
 use crate::unported;
 
 #[cfg(all(feature = "multiprocessor", feature = "qemu"))]
@@ -319,6 +327,9 @@ static MADT_NCPUS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicU
 /// (`cpu_suspend_primary`, `SUSPEND`, not ported: nothing sets it yet); an ACPI wake event
 /// clears it (`acpi.c`, through `machine::cpu_suspended`).
 pub static CPU_SUSPENDED: AtomicI32 = AtomicI32::new(0);
+/// `rdrand_tmo`: runs [`rdrand`] every 10 ms (`cpu_configure` sets it with itself as the
+/// argument).
+pub static RDRAND_TMO: Timeout = Timeout::new(rdrand, ptr::null_mut());
 
 /// `cpu_info_list`: the CPUs, the primary first.
 pub fn cpu_info_list() -> &'static CpuInfo {
@@ -1235,6 +1246,46 @@ pub unsafe fn cpu_enter_pages(cif: &CpuInfoFull) {
 
     // an empty iomap, by setting its offset to the TSS limit
     tss.tss_iobase = size_of::<X86_64Tss>() as u16;
+}
+
+/// `rdrand`: feeds the time stamp counter, mixed with an `RDSEED` (or, failing that, an
+/// `RDRAND`) sample where the CPU has them, into the entropy pool; again in 10 ms when `v`
+/// is the timeout ([`RDRAND_TMO`]), as `cpu_configure` starts it.
+pub fn rdrand(v: *mut c_void) {
+    let has_rdrand = HAS_RDRAND.load(Ordering::Relaxed);
+    let has_rdseed = HAS_RDSEED.load(Ordering::Relaxed);
+    let mut r: u64 = 0;
+    let mut valid: u8 = 0;
+
+    let tsc = rdtsc();
+    if has_rdseed {
+        // SAFETY: the CPU has RDSEED (identifycpu); it writes the register and CF only.
+        unsafe {
+            asm!("rdseed {r}", "setc {v}", r = out(reg) r, v = out(reg_byte) valid,
+                options(nomem, nostack));
+        }
+    }
+    if has_rdrand && (!has_rdseed || valid == 0) {
+        // SAFETY: the CPU has RDRAND (identifycpu); it writes the register and CF only.
+        unsafe {
+            asm!("rdrand {r}", "setc {v}", r = out(reg) r, v = out(reg_byte) valid,
+                options(nomem, nostack));
+        }
+    }
+
+    let mut t = tsc ^ r;
+    t ^= u64::from(valid); // potential rdrand empty
+    if has_rdrand {
+        t = t.wrapping_add(rdtsc()); // potential vmexit latency
+    }
+
+    enqueue_randomness(t as u32);
+    enqueue_randomness((t >> 32) as u32);
+
+    // SAFETY: cpu_configure passes RDRAND_TMO itself (a static) or nothing.
+    if let Some(tmo) = unsafe { v.cast::<Timeout>().as_ref() } {
+        timeout_add_msec(tmo, 10);
+    }
 }
 
 /// `wbinvd_on_all_cpus` (`MULTIPROCESSOR`): every other running CPU writes back and

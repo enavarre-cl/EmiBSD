@@ -79,7 +79,7 @@
 //!   (`pcpuid*`, `print_perf_cpuid`, `pbitdiff`), leaf 7's `%ecx`/`%edx` and sub-leaf 2,
 //!   leaf 6's `%ecx` (leaf 6's `%eax` is `ci_feature_tpmflags`, M16e), leaf 0xd sub-leaf 1, the speculation-control and SEV
 //!   leaves, `replacemeltdown`, `x86_print_cacheinfo` (`cacheinfo.c`), `setperf_setup`
-//!   (`k8_powernow_init`, `k1x_init`, `est_init`), `has_rdrand`/`has_rdseed`,
+//!   (`k8_powernow_init`, `k1x_init`, `est_init`),
 //!   `replacesmap`, the sensors (`intelcore_update_sensor`, `via_update_sensor`,
 //!   `cpu_hz_update_sensor`), `via_nano_setup`, `cpu_topology`, `mask_width` and
 //!   `cpu_check_vmm_cap` (`NVMM`).
@@ -87,7 +87,7 @@
 //! - `cpu_model` and the brand are byte arrays; `hw.model` still reports itself unported in
 //!   `kern_sysctl.rs`.
 
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libkern::StaticCell;
 
@@ -101,10 +101,10 @@ use crate::arch::amd64::include::cpu::{
 };
 use crate::arch::amd64::include::cpufunc::{rdmsr, rdtsc, wrmsr};
 use crate::arch::amd64::include::specialreg::{
-    CPUID_NXE, CPUID_TSC, CPUIDEAX_VERID, CPUIDECX_HV, CPUIDEDX_ITSC, MSR_BIOS_SIGN,
-    MSR_PATCH_LEVEL, MSR_PERF_FIXED_CTR_CTRL, MSR_PERF_FIXED_CTR_FC_1, MSR_PERF_FIXED_CTR_FC_MASK,
-    MSR_PERF_FIXED_CTR1, MSR_PERF_GLOBAL_CTR1_EN, MSR_PERF_GLOBAL_CTRL, TPM_ARAT, cpuid,
-    cpuid_leaf, cpuidedx_num_fc, msr_perf_fixed_ctr_fc,
+    CPUID_NXE, CPUID_TSC, CPUIDEAX_VERID, CPUIDECX_HV, CPUIDECX_RDRAND, CPUIDEDX_ITSC,
+    MSR_BIOS_SIGN, MSR_PATCH_LEVEL, MSR_PERF_FIXED_CTR_CTRL, MSR_PERF_FIXED_CTR_FC_1,
+    MSR_PERF_FIXED_CTR_FC_MASK, MSR_PERF_FIXED_CTR1, MSR_PERF_GLOBAL_CTR1_EN, MSR_PERF_GLOBAL_CTRL,
+    SEFF0EBX_RDSEED, TPM_ARAT, cpuid, cpuid_leaf, cpuidedx_num_fc, msr_perf_fixed_ctr_fc,
 };
 use crate::kern::kern_sysctl::CPU_CPUSPEED;
 use crate::kern::subr_prf::{Str, printf};
@@ -119,6 +119,10 @@ pub static CPU_MODEL: StaticCell<[u8; 48]> = StaticCell::new([0; 48]);
 pub static AMD64_HAS_XCRYPT: AtomicI32 = AtomicI32::new(0);
 /// `cpuspeed`: the primary CPU's frequency in MHz.
 pub static CPUSPEED: AtomicI32 = AtomicI32::new(0);
+/// `has_rdrand`: the CPU has `RDRAND` (`cpu.c`'s `rdrand` timeout uses it).
+pub static HAS_RDRAND: AtomicBool = AtomicBool::new(false);
+/// `has_rdseed`: the CPU has `RDSEED`.
+pub static HAS_RDSEED: AtomicBool = AtomicBool::new(false);
 
 /// `cpu_amd64speed`: `hw.cpuspeed`'s reader.
 pub fn cpu_amd64speed(freq: &mut i32) -> Result<(), Errno> {
@@ -408,6 +412,16 @@ pub fn identifycpu(ci: &CpuInfo) {
         "identifycpu: cpuid 0xd/0x80000008/0x8000001f, pcpuid, replacemeltdown, \
          x86_print_cacheinfo, setperf_setup"
     );
+
+    if cpu_is_primary(ci) {
+        if CPU_ECXFEATURE.load(Ordering::Relaxed) & CPUIDECX_RDRAND != 0 {
+            HAS_RDRAND.store(true, Ordering::Relaxed);
+        }
+
+        if ci.ci_feature_sefflags_ebx.get() & SEFF0EBX_RDSEED != 0 {
+            HAS_RDSEED.store(true, Ordering::Relaxed);
+        }
+    }
 
     tsc_timecounter_init(ci, freq);
 

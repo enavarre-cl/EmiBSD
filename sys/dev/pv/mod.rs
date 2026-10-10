@@ -23,11 +23,18 @@
 //! (`dev/pci/virtio_pci.rs`, `dev/fdt/virtio_mmio.rs`) and the device drivers share;
 //! `if_vio` is the network driver, `vio(4)`; `vioblk` the block driver, `vioblk(4)` (a SCSI
 //! adapter), with its header `vioblkreg`, and `vioscsi` the SCSI host adapter driver,
-//! `vioscsi(4)`, with `vioscsireg`.
+//! `vioscsi(4)`, with `vioscsireg`; `viornd` the entropy source, `viornd(4)`, and `viomb`
+//! the memory balloon, `viomb(4)`; `viogpu` the GPU frame buffer, `viogpu(4)`, with its header;
+//! `viocon` the console, `viocon(4)`, compiled on every build but configured only with the
+//! cargo feature `viocon` (amd64 GENERIC's commented-out line).
 
 pub mod if_vio;
 pub mod vioblk;
 pub mod vioblkreg;
+pub mod viocon;
+pub mod viogpu;
+pub mod viomb;
+pub mod viornd;
 pub mod vioscsi;
 pub mod vioscsireg;
 pub mod virtio;

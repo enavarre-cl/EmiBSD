@@ -60,8 +60,8 @@
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmouse` (68, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
-//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `ucom` (66, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
-//!   `logkqfilter`, `random` (45) for `rnd.c`.
+//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `ucom` (66, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`), `viocon` (94, M16d; `NVIOCON` 0 unless feature `viocon`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   `logkqfilter`. M16d: `random` (45, `rnd.c`).
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
 //! - `findblkmajor`/`dev_rawpart` (the boot disk heuristics) and `constab[]` (the `cninit`
@@ -82,8 +82,17 @@ use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnw
 use crate::dev::diskmap::{diskmapclose, diskmapioctl, diskmapopen, diskmapread, diskmapwrite};
 use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
+use crate::dev::ic::lpt::{lptclose, lptopen, lptwrite};
 use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
+use crate::dev::isa::spkr::{spkrclose, spkrioctl, spkropen, spkrwrite};
+use crate::dev::midi::{NMIDI, midiclose, midiioctl, midikqfilter, midiopen, midiread, midiwrite};
+use crate::dev::pv::viocon::{
+    vioconclose, vioconioctl, vioconopen, vioconread, vioconstop, viocontty, vioconwrite,
+};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
+use crate::dev::rnd::{
+    randomclose, randomioctl, randomkqfilter, randomopen, randomread, randomwrite,
+};
 use crate::dev::usb::ucom::{
     NUCOM, ucomclose, ucomioctl, ucomopen, ucomread, ucomstop, ucomtty, ucomwrite,
 };
@@ -130,14 +139,25 @@ use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
     cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_gpio_init, cdev_ipmi_init,
-    cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init,
-    cdev_tty_init, cdev_usb_init, cdev_usbdev_init, cdev_wsdisplay_init,
+    cdev_lpt_init, cdev_midi_init, cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init,
+    cdev_ptc_init, cdev_ptm_init, cdev_random_init, cdev_spkr_init, cdev_tty_init, cdev_usb_init,
+    cdev_usbdev_init, cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
 
 /// `NCOM`: `com0` to `com3` at `isa?` in GENERIC.
 pub const NCOM: i32 = 4;
+
+/// `NLPT`: `lpt0 at isa?` in GENERIC (M16d; `lpt* at puc?` waits for `lpt_puc.c`).
+pub const NLPT: i32 = 1;
+
+/// `NSPKR`: `spkr0 at pcppi?` in GENERIC (M16d).
+pub const NSPKR: i32 = 1;
+
+/// `NVIOCON`: GENERIC's `#viocon* at virtio?` is commented out, so 0 (the entry points answer
+/// `ENXIO`); 1 with the cargo feature `viocon`, which stands for uncommenting it (M16d).
+pub const NVIOCON: i32 = if cfg!(feature = "viocon") { 1 } else { 0 };
 
 /// `NWSDISPLAY`: `wsdisplay0 at efifb?` in GENERIC (M13; its other lines wait for vga, inteldrm, radeondrm, amdgpu and udl).
 pub const NWSDISPLAY: i32 = 1;
@@ -260,7 +280,8 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     Cell::new(cdev_disk_init(
         NCD, cdopen, cdclose, cdread, cdwrite, cdioctl,
     )),
-    cnotdef(), // 16: parallel printer (lpt: not ported)
+    // 16: parallel printer
+    Cell::new(cdev_lpt_init(NLPT, lptopen, lptclose, lptwrite)),
     cnotdef(), // 17: SCSI autochanger (ch: not ported)
     cnotdef(), // 18: kexec (not ported)
     cnotdef(), // 19: kcov (not ported)
@@ -280,7 +301,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 24
     cnotdef(), // 25
     cnotdef(), // 26
-    cnotdef(), // 27: PC speaker (spkr: not ported)
+    // 27: PC speaker
+    Cell::new(cdev_spkr_init(
+        NSPKR, spkropen, spkrclose, spkrwrite, spkrioctl,
+    )),
     cnotdef(), // 28 was LKM
     cnotdef(), // 29
     cnotdef(), // 30: dynamic tracer (dt: not ported)
@@ -310,7 +334,15 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     )),
     cnotdef(), // 43
     cnotdef(), // 44: generic video I/O (video: not ported)
-    cnotdef(), // 45: random data source (random: rnd.c's randomopen .., not ported)
+    Cell::new(cdev_random_init(
+        1,
+        randomopen,
+        randomclose,
+        randomread,
+        randomwrite,
+        randomioctl,
+        randomkqfilter,
+    )), // 45: random data source
     cnotdef(), // 46: performance counters (pctr: not ported)
     // 47: ram disk driver
     Cell::new(cdev_disk_init(
@@ -320,7 +352,16 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 49: Bt848 video capture device (bktr: not ported)
     cnotdef(), // 50: Kernel symbols device (ksyms: not ported)
     cnotdef(), // 51: Kernel statistics (kstat: not ported)
-    cnotdef(), // 52: MIDI I/O (midi: not ported)
+    // 52: MIDI I/O
+    Cell::new(cdev_midi_init(
+        NMIDI,
+        midiopen,
+        midiclose,
+        midiread,
+        midiwrite,
+        midiioctl,
+        midikqfilter,
+    )),
     cnotdef(), // 53 was: sequencer I/O
     cnotdef(), // 54 was: RAIDframe disk driver
     cnotdef(), // 55:
@@ -428,7 +469,17 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     #[cfg(not(feature = "fuse"))]
     cnotdef(), // 92: fuse (feature `fuse` off)
     cnotdef(), // 93: Ethernet network tunnel (tap: not ported)
-    cnotdef(), // 94: virtio console (viocon: not ported)
+    // 94: virtio console
+    Cell::new(cdev_tty_init(
+        NVIOCON,
+        vioconopen,
+        vioconclose,
+        vioconread,
+        vioconwrite,
+        vioconioctl,
+        vioconstop,
+        viocontty,
+    )),
     cnotdef(), // 95: pvbus(4) control interface (not ported)
     Cell::new(cdev_ipmi_init(NIPMI, ipmiopen, ipmiclose, ipmiioctl)), // 96: ipmi
     cnotdef(), // 97: was switch(4)

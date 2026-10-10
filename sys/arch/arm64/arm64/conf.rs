@@ -61,7 +61,7 @@
 //!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmouse` (68, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
 //!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `ucom` (66, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
-//!   `logkqfilter`, `random` (45) for `rnd.c`.
+//!   `logkqfilter`. M16d: `random` (45, `rnd.c`).
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
 //! - `findblkmajor`/`dev_rawpart` (the boot disk heuristics) are not here: `dk_mountroot`
@@ -82,8 +82,13 @@ use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnw
 use crate::dev::diskmap::{diskmapclose, diskmapioctl, diskmapopen, diskmapread, diskmapwrite};
 use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
+use crate::dev::ic::lpt::{lptclose, lptopen, lptwrite};
 use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
+use crate::dev::midi::{NMIDI, midiclose, midiioctl, midikqfilter, midiopen, midiread, midiwrite};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
+use crate::dev::rnd::{
+    randomclose, randomioctl, randomkqfilter, randomopen, randomread, randomwrite,
+};
 use crate::dev::usb::ucom::{
     NUCOM, ucomclose, ucomioctl, ucomopen, ucomread, ucomstop, ucomtty, ucomwrite,
 };
@@ -130,11 +135,15 @@ use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
     cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_gpio_init, cdev_ipmi_init,
-    cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init,
-    cdev_tty_init, cdev_usb_init, cdev_usbdev_init, cdev_wsdisplay_init,
+    cdev_lpt_init, cdev_midi_init, cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init,
+    cdev_ptc_init, cdev_ptm_init, cdev_random_init, cdev_tty_init, cdev_usb_init, cdev_usbdev_init,
+    cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
+
+/// `NLPT`: arm64's GENERIC has no `lpt` (M16d).
+pub const NLPT: i32 = 0;
 
 /// `NCOM`: `com* at fdt?` and `com* at acpi?` in GENERIC.
 pub const NCOM: i32 = 1;
@@ -259,7 +268,8 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
     Cell::new(cdev_disk_init(
         NCD, cdopen, cdclose, cdread, cdwrite, cdioctl,
     )),
-    cnotdef(), // 16: parallel printer (lpt: not ported)
+    // 16: parallel printer (NLPT 0: every slot answers ENXIO, as in the C)
+    Cell::new(cdev_lpt_init(NLPT, lptopen, lptclose, lptwrite)),
     cnotdef(), // 17: SCSI autochanger (ch: not ported)
     cnotdef(), // 18: was: concatenated disk driver
     cnotdef(), // 19
@@ -309,7 +319,15 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
     )),
     cnotdef(), // 43
     cnotdef(), // 44: generic video I/O (video: not ported)
-    cnotdef(), // 45: random data source (random: rnd.c's randomopen .., not ported)
+    Cell::new(cdev_random_init(
+        1,
+        randomopen,
+        randomclose,
+        randomread,
+        randomwrite,
+        randomioctl,
+        randomkqfilter,
+    )), // 45: random data source
     cnotdef(), // 46
     // 47: ram disk driver
     Cell::new(cdev_disk_init(
@@ -319,7 +337,16 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
     cnotdef(), // 49: Bt848 video capture device (bktr: not ported)
     cnotdef(), // 50: Kernel symbols device (ksyms: not ported)
     cnotdef(), // 51: kernel statistics (kstat: not ported)
-    cnotdef(), // 52: MIDI I/O (midi: not ported)
+    // 52: MIDI I/O
+    Cell::new(cdev_midi_init(
+        NMIDI,
+        midiopen,
+        midiclose,
+        midiread,
+        midiwrite,
+        midiioctl,
+        midikqfilter,
+    )),
     cnotdef(), // 53 was: sequencer I/O
     cnotdef(), // 54 was: RAIDframe disk driver
     cnotdef(), // 55:
