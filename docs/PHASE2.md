@@ -30,8 +30,9 @@ repository: the dependency points one way.
 
 ## Goals, in priority order
 
-1. **Safety.** Fewer and smaller `unsafe` blocks, safe abstractions over the ones that remain,
-   and a soundness argument wherever `unsafe` stays (`.claude/rules/unsafe-budget.md`).
+1. **Safety.** Zero `unsafe` outside a listed core: every module outside `unsafe-core.toml`
+   compiles under `#[forbid(unsafe_code)]`, and every `unsafe` inside the core is budgeted,
+   argued and reviewed (`docs/ZERO_UNSAFE.md`, `.claude/rules/unsafe-budget.md`).
 2. **Maintainability.** Idiomatic Rust where the LZ shape exists only to mirror C:
    `Cell`-everywhere structs, raw-pointer links, C-shaped out parameters (`docs/IDIOMS.md`).
 3. **Performance.** Measured improvements only (`just bench`), never at the cost of 1 or 2.
@@ -155,6 +156,7 @@ commit; crypto, IPsec, WireGuard and softraid CRYPTO change last of all, with ex
 | 2026-10-09 | From the external review: `adapted` as a third module status; the `method` of every applied sync; a timing rule for widely used items; `docs/SYNC.md`; the blockers inherited at `lz-origin` recorded in the baseline. |
 | 2026-10-10 | EmiBSD.LZ's subagent set-up (`b0901dd3`) adopted: roles in `.claude/agents/` (`redesigner` and `mechanical` for LZ's porters), one contract in `.claude/rules/subagents.md`, `.claude/agent-memory/` committed, the machine lock `/tmp/emibsd/ci.lock` shared with LZ, `/redesign` and `/progress` (the ROADMAP scope resolved against `lineage.toml`; no milestone key in its rows); no `external-bugs` role: slips go to the user. |
 | 2026-10-10 | `/redesign` retired after its first run, stopped in its Plan phase: the session drives the redesign and launches the roles one by one (a `milestone-coordinator` when a whole milestone runs in the background); a workflow hid the plan, could not be watched from VS Code and was never tested. The roles, the contract, the memories and `/progress` stay. |
+| 2026-10-10 | Zero `unsafe` outside a listed core (`docs/ZERO_UNSAFE.md`): every module outside `unsafe-core.toml` compiles under `#[forbid(unsafe_code)]`, set on its `mod` declaration; the core (hardware, boot, the host harness, a runtime of primitives, `explicit_bzero.rs`) is budgeted and reviewed; the legacy total only falls, an LZ sync aside; "redesigned" means "compiles with `forbid`"; N2 becomes "Core runtime", N9 "Close" is added; first slice pipe(2); `Adapter` a safe trait checked by `lz check`; `reimplemented` normal for `forbid` modules; Miri and the core crate decided at N9. Iterative: the plan follows what each step teaches. |
 
 ## Later
 

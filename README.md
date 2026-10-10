@@ -21,9 +21,10 @@
 - OpenBSD's behaviour is the specification. The system-call ABI and everything userland sees
   never change: OpenBSD's own userland runs unmodified here, as on LZ, and `just diff-openbsd`
   checks the three against each other.
-- The inside changes, subsystem by subsystem: fewer and smaller `unsafe` blocks with
-  soundness arguments, idiomatic ownership where the port mirrored C, measured performance.
-  That is the goal, measured by `cargo xtask unsafe-report` against `lz-origin`. N1 settled
+- The inside changes, subsystem by subsystem. The goal is zero `unsafe` outside a small, listed
+  core: every other module compiles under `#[forbid(unsafe_code)]`
+  ([docs/ZERO_UNSAFE.md](docs/ZERO_UNSAFE.md)), with idiomatic ownership and measured
+  performance. N1 settled
   the type idioms on leaves that were already almost free of `unsafe` (libkern 10 -> 10, libz
   2 -> 0, crypto 5 -> 5); the reduction starts with N2's core structures. Every module says what it derives
   from ([lineage.toml](lineage.toml)), and every LZ commit after the pin is triaged
@@ -33,19 +34,20 @@
 
 ## Status
 
-Status: N1 (leaves: libkern, libz, the crypto primitives) met; N2 (core structures) under way.
+Status: N1 (leaves: libkern, libz, the crypto primitives) met; N2 (core runtime) under way.
 
 | Milestone | Scope | State |
 |---|---|---|
 | N0 | Bootstrap: governance, lineage, the `lz` tooling, the unsafe budget, the baseline | met |
 | N1 | Leaves: libkern, libz, the crypto primitives | met |
-| N2 | Core structures: queue, tree, the `Cell`-everywhere header types | under way |
+| N2 | Core runtime: the safe primitives, the `forbid` ratchet, the first slice (pipe) | under way |
 | N3 | Memory (uvm) | next |
 | N4 | Processes and scheduling (kern) | next |
 | N5 | VFS and file systems | next |
 | N6 | Network stack | next |
 | N7 | Devices: bus_space, DMA, the driver model | next |
 | N8 | Security subsystems, last: pf, IPsec, WireGuard, softraid CRYPTO, the crypto framework | next |
+| N9 | Close: legacy 0, the core's boundary made final | next |
 
 Exit criteria are in [docs/ROADMAP.md](docs/ROADMAP.md); the current state is in
 [docs/STATUS.md](docs/STATUS.md). The port's milestones (M0..M16b at `lz-origin`, and onwards)
