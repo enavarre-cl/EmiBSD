@@ -14,15 +14,15 @@ total = 0
 
 [[subsystem]]
 name = "arch/amd64"
-total = 831
+total = 863
 
 [[subsystem]]
 name = "arch/arm64"
-total = 940
+total = 943
 
 [[subsystem]]
 name = "arch/host"
-total = 37
+total = 38
 
 [[subsystem]]
 name = "conf"
@@ -38,7 +38,7 @@ total = 15
 
 [[subsystem]]
 name = "dev"
-total = 398
+total = 458
 
 [[subsystem]]
 name = "dev/acpi"
@@ -46,7 +46,7 @@ total = 205
 
 [[subsystem]]
 name = "dev/ata"
-total = 44
+total = 82
 
 [[subsystem]]
 name = "dev/efi"
@@ -70,11 +70,11 @@ total = 7
 
 [[subsystem]]
 name = "dev/ic"
-total = 406
+total = 664
 
 [[subsystem]]
 name = "dev/isa"
-total = 17
+total = 106
 
 [[subsystem]]
 name = "dev/microcode"
@@ -82,7 +82,7 @@ total = 0
 
 [[subsystem]]
 name = "dev/mii"
-total = 23
+total = 33
 
 [[subsystem]]
 name = "dev/ofw"
@@ -90,19 +90,27 @@ total = 21
 
 [[subsystem]]
 name = "dev/pci"
-total = 473
+total = 737
 
 [[subsystem]]
 name = "dev/puc"
 total = 4
 
 [[subsystem]]
+name = "dev/pckbc"
+total = 28
+
+[[subsystem]]
 name = "dev/pv"
-total = 176
+total = 249
 
 [[subsystem]]
 name = "dev/rasops"
 total = 251
+
+[[subsystem]]
+name = "dev/sdmmc"
+total = 110
 
 [[subsystem]]
 name = "dev/usb"
@@ -126,7 +134,7 @@ total = 89
 
 [[subsystem]]
 name = "kern"
-total = 1178
+total = 1180
 
 [[subsystem]]
 name = "lib/libkern"
@@ -142,7 +150,7 @@ total = 0
 
 [[subsystem]]
 name = "machine"
-total = 82
+total = 85
 
 [[subsystem]]
 name = "miscfs"
