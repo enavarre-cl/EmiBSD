@@ -26,10 +26,13 @@ paths:
 - `static mut` is forbidden. Use atomics, the ported `Mutex<T>`, or `StaticCell<T>` with a
   documented invariant.
 - `#[repr(C)]` only where layout matters (hardware, ABI, bootloader). Otherwise let Rust lay it out.
-- Pointers: `&T`/`&mut T` where aliasing is clear; `Cell<*const T>` inside the `queue.h`/`tree.h`
-  entries (the list's lock guards them, the API takes and returns `&T`); `NonNull<T>` for other
-  manually managed lifetimes; raw pointers only at hardware/ABI edges. `UnsafeCell` for fields the C mutates
-  behind a shared pointer, with a doc line saying which lock protects them.
+- Pointers: `&T`/`&mut T` where aliasing is clear; the `queue.h`/`tree.h` entries hold typed links,
+  `Cell<Option<NonNull<T>>>` (`None` is NULL), made only from references and dereferenced in one
+  place per family (`docs/IDIOMS.md`, N2; the list's lock guards them, the API takes and returns
+  `&T`); a broken list or tree precondition panics, never a silent no-op; `NonNull<T>` for other
+  manually managed lifetimes; no new `Cell<*const T>` anywhere; raw pointers only at hardware/ABI
+  edges. `UnsafeCell` for fields the C mutates behind a shared pointer, with a doc line saying
+  which lock protects them.
 - MMIO through `read_volatile`/`write_volatile` behind the `bus_space`-shaped API, never plain derefs.
 - LZ's idioms are in `docs/C_TO_RUST.md` (frozen, the key to reading LZ code); native idioms,
   LZ shape -> native shape, are rows of `docs/IDIOMS.md`. Follow them; propose a new row rather
