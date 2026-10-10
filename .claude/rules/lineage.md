@@ -37,7 +37,9 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
   lines are removed from every native file at N0 (decision 20); the original `<LICENSES>`
   blocks are never touched. The author's ISC block (`scope-and-stubs.md`, Authorship) is removed from
   the native side before the comparison, so a module that differs from LZ only by it stays
-  `inherited`.
+  `inherited`. A module an `applied` record of `lz-sync.toml` names in `modules` is compared
+  with that LZ commit (the newest such record) instead of the pin, so a sync is green before
+  the pin bump (`lz-sync.md`).
   The first commit that changes the file sets `status = "adapted"` or `"redesigned"` in the
   same commit.
 - `adapted` means the module changed only at its call sites, because a type or API it uses was

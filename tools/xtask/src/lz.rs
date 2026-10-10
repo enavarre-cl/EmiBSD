@@ -247,7 +247,40 @@ fn open_lz(root: &Path) -> Result<Lz> {
 impl Lz {
     /// The content of `path` at the pin.
     fn show(&self, path: &str) -> Result<String> {
-        git_raw(&self.repo, &["show", &format!("{}:{path}", self.pin)])
+        self.show_at(&self.pin, path)
+    }
+
+    /// The content of `path` at `commit`: the pin, or the LZ commit a module is synced to.
+    fn show_at(&self, commit: &str, path: &str) -> Result<String> {
+        git_raw(&self.repo, &["show", &format!("{commit}:{path}")])
+    }
+
+    /// Whether `path` exists at `commit`.
+    fn exists_at(&self, commit: &str, path: &str) -> bool {
+        git(&self.repo, &["cat-file", "-e", &format!("{commit}:{path}")]).is_ok()
+    }
+
+    /// The commits after the pin up to the clone's `origin/main`, oldest first, a parent
+    /// before its children; empty while the clone has no `origin/main`.
+    fn history(&self) -> Result<Vec<String>> {
+        let Ok(tip) = git(&self.repo, &["rev-parse", "--verify", "-q", "origin/main"]) else {
+            return Ok(Vec::new());
+        };
+        let out = git(
+            &self.repo,
+            &[
+                "log",
+                "--format=%H",
+                "--topo-order",
+                "--reverse",
+                &format!("{}..{tip}", self.pin),
+            ],
+        )?;
+        Ok(out
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect())
     }
 
     /// Every non-structural `.rs` under `sys/` at the pin.
@@ -262,6 +295,31 @@ impl Lz {
             .map(str::to_string)
             .collect())
     }
+}
+
+/// The LZ commit each module is synced to (`lz-sync.md`): the newest `applied` record of
+/// `lz-sync.toml` that names it in `modules`, by LZ history order (`Lz::history`); a module
+/// no applied record names stays at the pin. `lz check` compares a module with its own
+/// commit, so a sync is green before the pin catches up.
+fn synced_commits(records: &[Record], history: &[String]) -> HashMap<String, String> {
+    let mut newest: HashMap<String, (usize, String)> = HashMap::new();
+    for r in records
+        .iter()
+        .filter(|r| r.status == SyncStatus::Applied && is_hex12(&r.lz))
+    {
+        let Some(i) = history.iter().position(|h| h.starts_with(&r.lz)) else {
+            continue;
+        };
+        for m in &r.modules {
+            let e = newest
+                .entry(m.clone())
+                .or_insert_with(|| (i, history[i].clone()));
+            if i > e.0 {
+                *e = (i, history[i].clone());
+            }
+        }
+    }
+    newest.into_iter().map(|(m, (_, h))| (m, h)).collect()
 }
 
 /// `git` without trimming, for file contents.
@@ -611,15 +669,27 @@ pub(crate) fn check(root: &Path) -> Result<()> {
             short(&lz.pin)
         ));
     }
-    match load_sync(root) {
-        Ok(sync) if sync.meta.lz != lz.pin => errors.push(format!(
-            "{SYNC_FILE} [meta].lz ({}) != {LZ_PINNED} Commit: ({})",
-            short(&sync.meta.lz),
-            short(&lz.pin)
-        )),
-        Ok(_) => {}
-        Err(e) => errors.push(e.to_string()),
-    }
+    let sync = match load_sync(root) {
+        Ok(sync) => {
+            if sync.meta.lz != lz.pin {
+                errors.push(format!(
+                    "{SYNC_FILE} [meta].lz ({}) != {LZ_PINNED} Commit: ({})",
+                    short(&sync.meta.lz),
+                    short(&lz.pin)
+                ));
+            }
+            Some(sync)
+        }
+        Err(e) => {
+            errors.push(e.to_string());
+            None
+        }
+    };
+    // A module an applied record names is compared with that LZ commit, not with the pin.
+    let synced = match &sync {
+        Some(s) => synced_commits(&s.commits, &lz.history()?),
+        None => HashMap::new(),
+    };
 
     // The OpenBSD pins agree: LZ's at the pinned commit, this tree's, the clone's HEAD.
     let lz_openbsd = lz
@@ -753,6 +823,10 @@ pub(crate) fn check(root: &Path) -> Result<()> {
     for m in &lineage.modules {
         let rust = &m.rust;
         let tag = format!("[[module]] rust = \"{rust}\"");
+        let at = synced
+            .get(rust.as_str())
+            .map(String::as_str)
+            .unwrap_or(lz.pin.as_str());
         if !rust.starts_with("sys/") || !rust.ends_with(".rs") {
             errors.push(format!("{tag}: `rust` must be a .rs path under sys/"));
             continue;
@@ -768,9 +842,10 @@ pub(crate) fn check(root: &Path) -> Result<()> {
             continue;
         }
         for l in &m.lz {
-            if !lz_files.contains(l.as_str()) && !is_structural(l) {
+            if !lz_files.contains(l.as_str()) && !is_structural(l) && !lz.exists_at(at, l) {
                 errors.push(format!(
-                    "{tag}: lz = \"{l}\" is not a file of LZ at the pin"
+                    "{tag}: lz = \"{l}\" is not a file of LZ at {}",
+                    short(at)
                 ));
             }
         }
@@ -788,10 +863,11 @@ pub(crate) fn check(root: &Path) -> Result<()> {
                         "{tag}: inherited modules have no [[module.fn]] rows"
                     ));
                 }
-                let theirs = lz.show(rust).unwrap_or_default();
+                let theirs = lz.show_at(at, rust).unwrap_or_default();
                 if comparable(&src) != comparable(&theirs) {
                     errors.push(format!(
-                        "{tag}: differs from LZ at the pin; set status = \"redesigned\" in the commit that changes it"
+                        "{tag}: differs from LZ at {}; set status = \"redesigned\" in the commit that changes it",
+                        short(at)
                     ));
                 }
             }
@@ -817,10 +893,11 @@ pub(crate) fn check(root: &Path) -> Result<()> {
                         "{tag}: adapted modules derive from the LZ file of the same path only"
                     ));
                 } else {
-                    let theirs = lz.show(rust).unwrap_or_default();
+                    let theirs = lz.show_at(at, rust).unwrap_or_default();
                     if comparable(&src) == comparable(&theirs) {
                         errors.push(format!(
-                            "{tag}: identical to LZ at the pin; an unchanged module is `inherited`"
+                            "{tag}: identical to LZ at {}; an unchanged module is `inherited`",
+                            short(at)
                         ));
                     }
                 }
@@ -834,7 +911,7 @@ pub(crate) fn check(root: &Path) -> Result<()> {
                     if !ok {
                         errors.push(format!("{tag}: lacks a `//! LZ: {l}@<12-hex>` line"));
                     }
-                    if let Ok(theirs) = lz.show(l) {
+                    if let Ok(theirs) = lz.show_at(at, l) {
                         for up in theirs.lines().filter(|x| x.starts_with("//! Upstream:")) {
                             if !src.lines().any(|x| x == up) {
                                 errors.push(format!("{tag}: lacks the line `{up}` of {l}"));
@@ -858,18 +935,20 @@ pub(crate) fn check(root: &Path) -> Result<()> {
                 errors.push(format!("{rtag}: {file} is not in this module's lz list"));
                 continue;
             }
-            let theirs = match lz_items.get(&file) {
+            let key = format!("{at}:{file}");
+            let theirs = match lz_items.get(&key) {
                 Some(v) => v,
                 None => {
-                    let text = lz.show(&file).unwrap_or_default();
-                    lz_items.insert(file.clone(), items(&text));
-                    lz_sources.insert(file.clone(), text);
-                    &lz_items[&file]
+                    let text = lz.show_at(at, &file).unwrap_or_default();
+                    lz_items.insert(key.clone(), items(&text));
+                    lz_sources.insert(key.clone(), text);
+                    &lz_items[&key]
                 }
             };
             if !theirs.iter().any(|it| it.name == item) {
                 errors.push(format!(
-                    "{rtag}: {file} defines no item `{item}` at the pin"
+                    "{rtag}: {file} defines no item `{item}` at {}",
+                    short(at)
                 ));
             }
             if row.kind == Kind::Dropped {
@@ -915,16 +994,21 @@ pub(crate) fn check(root: &Path) -> Result<()> {
         .iter()
         .filter(|m| m.status == Status::Redesigned)
     {
+        let at = synced
+            .get(m.rust.as_str())
+            .map(String::as_str)
+            .unwrap_or(lz.pin.as_str());
         for l in &m.lz {
             if !checked_lz_files.insert(l.as_str()) {
                 continue;
             }
-            let theirs = match lz_items.get(l.as_str()) {
+            let key = format!("{at}:{l}");
+            let theirs = match lz_items.get(&key) {
                 Some(v) => v.clone(),
                 None => {
-                    let text = lz.show(l).unwrap_or_default();
+                    let text = lz.show_at(at, l).unwrap_or_default();
                     let v = items(&text);
-                    lz_items.insert(l.clone(), v.clone());
+                    lz_items.insert(key, v.clone());
                     v
                 }
             };
@@ -1007,8 +1091,13 @@ pub(crate) fn check(root: &Path) -> Result<()> {
         warnings.len(),
     );
     let nred = nmod - n_inherited - n_adapted;
+    let n_synced = lineage
+        .modules
+        .iter()
+        .filter(|m| synced.contains_key(m.rust.as_str()))
+        .count();
     println!(
-        "lz check: {nmod} modules ({n_inherited} inherited, {n_adapted} adapted, {nred} redesigned), {n_rows} fn rows, {nx} extras, {nd} dropped; author's block in {n_author} of {nfiles} .rs; pin {}: {nerr} error(s), {nwarn} warning(s)",
+        "lz check: {nmod} modules ({n_inherited} inherited, {n_adapted} adapted, {nred} redesigned), {n_rows} fn rows, {nx} extras, {nd} dropped; author's block in {n_author} of {nfiles} .rs; pin {}, {n_synced} synced ahead of it: {nerr} error(s), {nwarn} warning(s)",
         short(&lz.pin)
     );
     if errors.is_empty() {
@@ -1451,6 +1540,60 @@ pub(crate) fn trace(root: &Path, args: &[&str]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn record(lz: &str, status: SyncStatus, modules: &[&str]) -> Record {
+        Record {
+            lz: lz.to_string(),
+            subject: String::new(),
+            modules: modules.iter().map(|m| m.to_string()).collect(),
+            status,
+            emibsd: String::new(),
+            reason: String::new(),
+            security: false,
+            method: String::new(),
+        }
+    }
+
+    #[test]
+    fn synced_commits_take_the_newest_applied_record_per_module() {
+        let history: Vec<String> = ["aaaaaaaaaaaa1", "bbbbbbbbbbbb2", "cccccccccccc3"]
+            .iter()
+            .map(|h| h.to_string())
+            .collect();
+        let records = [
+            record(
+                "bbbbbbbbbbbb",
+                SyncStatus::Applied,
+                &["sys/x.rs", "sys/y.rs"],
+            ),
+            record(
+                "aaaaaaaaaaaa",
+                SyncStatus::Applied,
+                &["sys/y.rs", "sys/z.rs"],
+            ),
+            record("cccccccccccc", SyncStatus::NotApplicable, &["sys/x.rs"]),
+            record("dddddddddddd", SyncStatus::Applied, &["sys/w.rs"]),
+            record("not-a-hash", SyncStatus::Applied, &["sys/v.rs"]),
+        ];
+        let synced = synced_commits(&records, &history);
+        // The newest applied record wins, whatever the order of the file.
+        assert_eq!(
+            synced.get("sys/x.rs").map(String::as_str),
+            Some("bbbbbbbbbbbb2")
+        );
+        assert_eq!(
+            synced.get("sys/y.rs").map(String::as_str),
+            Some("bbbbbbbbbbbb2")
+        );
+        assert_eq!(
+            synced.get("sys/z.rs").map(String::as_str),
+            Some("aaaaaaaaaaaa1")
+        );
+        // A not-applicable record, a commit outside the history and a bad hash name nothing.
+        assert_eq!(synced.get("sys/w.rs"), None);
+        assert_eq!(synced.get("sys/v.rs"), None);
+        assert_eq!(synced.len(), 3);
+    }
 
     #[test]
     fn strips_only_the_ident_lines() {

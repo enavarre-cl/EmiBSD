@@ -17,6 +17,9 @@ always before an `N` milestone is marked met. LZ is read, never written.
    - `security = true` on every security fix; such a record is never `not-applicable` without a
      reason that names the fix.
    A file new in LZ becomes a new `inherited` module of `lineage.toml` in the same commit.
+   `modules` names every native module the commit touches, the new ones included: `lz check`
+   compares each with the newest applied commit naming it, not with the pin, until the pin
+   catches up.
 3. One `lz-sync:` commit per LZ commit or coherent cluster, nothing else in it, trailer
    `LZ: <12-hex>`; the body carries the three method totals so far.
 4. `just ci` (which runs `cargo xtask lz drift --strict`), then `just diff-openbsd`.
