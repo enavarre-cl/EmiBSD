@@ -392,3 +392,19 @@ subject = "Merge branch 'worktree-agent-a2364f82ca4b0de05' into worktree-agent-a
 modules = []
 status = "not-applicable"
 reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "fa503323b575"
+subject = "dev/sdmmc: port sdhc(4) and the sdmmc(4) bus"
+modules = ["sys/dev/sdmmc/sdhc.rs", "sys/dev/sdmmc/sdhcreg.rs", "sys/dev/sdmmc/sdhcvar.rs", "sys/dev/sdmmc/sdmmc.rs", "sys/dev/sdmmc/sdmmc_cis.rs", "sys/dev/sdmmc/sdmmc_io.rs", "sys/dev/sdmmc/sdmmc_ioreg.rs", "sys/dev/sdmmc/sdmmc_mem.rs", "sys/dev/sdmmc/sdmmc_scsi.rs", "sys/dev/sdmmc/sdmmcchip.rs", "sys/dev/sdmmc/sdmmcdevs.rs", "sys/dev/sdmmc/sdmmcreg.rs", "sys/dev/sdmmc/sdmmcvar.rs"]
+status = "applied"
+emibsd = "f05fa50cd105"
+method = "cherry-pick"
+
+[[commit]]
+lz = "028991238bda"
+subject = "dev/pci: port sdhc_pci.c, attach sdhc and sdmmc, add smoke-sdmmc"
+modules = ["sys/dev/pci/pcidevs.rs", "sys/dev/pci/sdhc_pci.rs"]
+status = "applied"
+emibsd = "7aa6c65357ec"
+method = "cherry-pick"
