@@ -148,9 +148,8 @@ the session.
 - `.claude/agents/`: the subagent roles (`milestone-coordinator`, `redesigner`, `mechanical`,
   `integrator`, `debugger`, `reviewer`, `openbsd-probe`, `image-worker`); launch them by
   `subagent_type`; their lessons persist in `.claude/agent-memory/<agent>/`. The shared
-  contract is `.claude/rules/subagents.md`. `/redesign <modules | N row>`
-  (`.claude/workflows/redesign.js`) runs a whole batch through them; `/progress`
-  (`.claude/skills/progress/`) measures the redesign per milestone.
+  contract is `.claude/rules/subagents.md`; the main session drives the redesign and launches
+  them one by one. `/progress` (`.claude/skills/progress/`) measures the redesign per milestone.
 - `docs/STATUS.md` and `lz/PINNED.md` are imported below, so they are always in context.
 
 @docs/STATUS.md

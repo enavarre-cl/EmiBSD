@@ -79,13 +79,13 @@ with the tree so the whole team of agents learns. An agent in a worktree writes 
 the `integrator` keeps both sides on merge. Task state lives in a `HANDOFF.md`, never in memory.
 The `reviewer` has no memory on purpose: every change gets fresh eyes.
 
-`/redesign <modules | N row>` (`.claude/workflows/redesign.js`) runs the loop above as one
-workflow: plan the clusters (modules that share types together, a big module alone), one
-redesigner per cluster in its own worktree (at most four at once), a reviewer per branch with one
-fix round, then an integrator that merges the approved branches and runs `just ci`. Its result
-is a branch; `main` moves only by hand, after the user's OK. Running it is the user's decision,
-never the model's. The machine lock, `/tmp/emibsd/ci.lock`, is shared with LZ: one Mac, one
-`ci` at a time.
+The main session drives the redesign: it measures the baseline, splits the milestone into
+clusters, launches the roles one by one with the Agent tool (at most four at once, two for a
+coordinator), has every branch reviewed, integrates and runs `just ci`; the user sees every plan
+and approves every commit. LZ's batch workflow (`/port`) was brought over as `/redesign` and
+retired the same day, after its first run (the user's decision of 2026-10-10): it hid the plan
+inside a script, could not be watched from VS Code, and had never been exercised. The machine
+lock, `/tmp/emibsd/ci.lock`, is shared with LZ: one Mac, one `ci` at a time.
 
 ## How it is measured
 
@@ -154,6 +154,7 @@ commit; crypto, IPsec, WireGuard and softraid CRYPTO change last of all, with ex
 | 2026-10-09 | Authorship, the user's decision: every `.rs` under `sys/` and `tools/` carries the author's ISC block ("Copyright (c) 2026 Emilio Navarrete Lineros <enavarre@outlook.com>") in its `<LICENSES>` zone, first (the latest change), before the original blocks, which never change, or alone where there are none; `license = "none"` now describes the C source, not the Rust file; `lz check` requires the block and compares inherited modules without it. |
 | 2026-10-09 | From the external review: `adapted` as a third module status; the `method` of every applied sync; a timing rule for widely used items; `docs/SYNC.md`; the blockers inherited at `lz-origin` recorded in the baseline. |
 | 2026-10-10 | EmiBSD.LZ's subagent set-up (`b0901dd3`) adopted: roles in `.claude/agents/` (`redesigner` and `mechanical` for LZ's porters), one contract in `.claude/rules/subagents.md`, `.claude/agent-memory/` committed, the machine lock `/tmp/emibsd/ci.lock` shared with LZ, `/redesign` and `/progress` (the ROADMAP scope resolved against `lineage.toml`; no milestone key in its rows); no `external-bugs` role: slips go to the user. |
+| 2026-10-10 | `/redesign` retired after its first run, stopped in its Plan phase: the session drives the redesign and launches the roles one by one (a `milestone-coordinator` when a whole milestone runs in the background); a workflow hid the plan, could not be watched from VS Code and was never tested. The roles, the contract, the memories and `/progress` stay. |
 
 ## Later
 
