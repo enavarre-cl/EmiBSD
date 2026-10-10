@@ -21,8 +21,11 @@
 - OpenBSD's behaviour is the specification. The system-call ABI and everything userland sees
   never change: OpenBSD's own userland runs unmodified here, as on LZ, and `just diff-openbsd`
   checks the three against each other.
-- The inside changes: fewer and smaller `unsafe` blocks with soundness arguments, idiomatic
-  ownership where the port mirrored C, measured performance. Every module says what it derives
+- The inside changes, subsystem by subsystem: fewer and smaller `unsafe` blocks with
+  soundness arguments, idiomatic ownership where the port mirrored C, measured performance.
+  That is the goal, measured by `cargo xtask unsafe-report` against `lz-origin`. N1 settled
+  the type idioms on leaves that were already almost free of `unsafe` (libkern 10 -> 10, libz
+  2 -> 0, crypto 5 -> 5); the reduction starts with N2's core structures. Every module says what it derives
   from ([lineage.toml](lineage.toml)), and every LZ commit after the pin is triaged
   ([lz-sync.toml](lz-sync.toml)).
 - A standalone `#![no_std]` kernel for amd64 and arm64, booted by its own boot(8)/efiboot or by

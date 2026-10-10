@@ -30,3 +30,19 @@ Columns: LZ shape | native shape | why.
 - `unsafe impl Send/Sync` as a marker on a C-shaped struct -> the struct made of `Send`/`Sync`
   parts, the marker gone. Why: the compiler proves it.
 - A `#[repr(C)]` struct shared with userland -> unchanged, ever. Why: it is the ABI.
+- `StaticCell<T>` (626 uses at the M16 pin): a global in an `UnsafeCell` whose
+  `get_mut(&self) -> &mut T` leaves the aliasing proof to every caller -> the state owned by
+  the lock that guards it (a `Mutex<State>` in the static), per-CPU state behind its
+  interrupt-level guard, or an init-once cell for tables written only at boot. Not solved yet.
+  The constraint: `libkern::StaticCell`'s API is frozen by the timing rule (N1), so each use
+  moves with the subsystem that owns it; meanwhile a redesigned module adds no new use, and a
+  moved `unsafe` that reappears as a `get_mut` call does not count as a reduction. Why: the
+  `unsafe` budget counts sites, and `get_mut` hides one at every caller.
+- A `&'static T` made from a raw pointer (`kern_sig.rs` `parent() -> &'static Process`;
+  `uvm_map.rs` `uvm_mapent_free(&'static VmMapEntry)`, which hands the entry back to its
+  pool) -> a reference whose lifetime is a borrow of its owner (the lock guard, the parent's
+  handle), or a typed handle (a refcount, an index) where the object outlives every borrow.
+  Not solved yet. The constraint: a safe function that takes a `&'static` and frees the
+  object makes a use after free expressible in safe code, so no redesigned module creates a
+  new one, and the subsystem that owns each existing one (N3 uvm, N4 proc) removes it. Why:
+  `'static` is a promise the pool breaks.
