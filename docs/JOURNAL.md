@@ -104,3 +104,18 @@ commits, 33785a0..d6cfca6, landed just before N0's close and belong here).
 Effort: _(user)_
 
 Time: _(user)_
+
+## N2 Core structures
+
+Under way since 2026-10-10. Boundary: from `lz: bump pin to 3c62ede68802` (7eee150).
+
+- LZ sync before N2 (the timing rule: N2 redesigns `queue`/`tree`, used by 222 files, so LZ's
+  M16 came first): `f5985f1d055a..3c62ede68802`, 99 LZ commits, every one recorded in
+  `lz-sync.toml` (cherry-pick 39, cherry-pick-conflicts 30, reimplemented 1, the rest records of
+  merges or not applicable), 122 new inherited modules, `rnd.rs` adapted to the N1 crypto API
+  (reviewed). Wall time 01:48-05:28 on 2026-10-10 (3 h 40 min, `git log --format=%ci
+  acf8449..956c81b`), four chunks by subagents and one integrator. Closed by the pin bump
+  (7eee150), the unsafe re-baseline of the 14 rows the inherited drivers moved (c443f75, the
+  user's rule in `unsafe-budget.md`), `just jobs=3 ci` rc=0 in 1643 s (84 of 84 smokes in
+  17 min 43 s; host tests 2893 passed, 0 failed, 294 ignored) and `just diff-openbsd` rc=0
+  (amd64 and arm64, 102 steps, 99 equal, 3 expected, 0 unexpected) at 154ad1d.
