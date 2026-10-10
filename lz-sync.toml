@@ -363,3 +363,78 @@ status = "applied"
 emibsd = "4040f445aa97"
 method = "cherry-pick-conflicts"
 reason = "merge commit of the virtio branch (viornd, viomb, viogpu, viocon, dma_alloc) into the M16d branch; its resolution (the amd64 conf.rs, the amd64 ioconf.rs numbering, the justfile's smokes list) arrived with the hand-resolved applies of its second parent's commits 60214109 and cf384384, so the tree equals LZ at this merge and lz check compares the amd64 conf.rs with it"
+
+[[commit]]
+lz = "1b590ccc1d14"
+subject = "dev/isa: port pcppi(4) and spkr(4), the PC speaker"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/dev/isa/isareg.rs", "sys/dev/isa/pcppi.rs", "sys/dev/isa/pcppireg.rs", "sys/dev/isa/pcppivar.rs", "sys/dev/isa/spkr.rs", "sys/dev/isa/spkrio.rs"]
+status = "applied"
+emibsd = "140246d8a704"
+method = "cherry-pick"
+
+[[commit]]
+lz = "924b9fc95baa"
+subject = "dev/pckbc: name the KBC_ENABLE polling race in pckbd's docs"
+modules = ["sys/dev/pckbc/pckbd.rs"]
+status = "applied"
+emibsd = "f4a9f42dcfcf"
+method = "cherry-pick"
+
+[[commit]]
+lz = "9a6ca6765f9f"
+subject = "Merge branch 'worktree-agent-aa21042b44fed554c' into worktree-agent-aea5c23f44813def9"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits (3bf642a1 in chunk A, e0a4a28b)"
+
+[[commit]]
+lz = "b3e993f57c6f"
+subject = "dev: port pms(4), the PS/2 mouse and touchpads"
+modules = ["sys/dev/pckbc/pms.rs", "sys/dev/pckbc/pmsreg.rs"]
+status = "applied"
+emibsd = "277fe176e148"
+method = "cherry-pick"
+
+[[commit]]
+lz = "c15fec6a0b1f"
+subject = "Merge branch 'worktree-agent-aea5c23f44813def9' into worktree-agent-aa21042b44fed554c"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits (924b9fc9, b3e993f5), and the tree equals LZ at it"
+
+[[commit]]
+lz = "c693c60a52be"
+subject = "arch/amd64: attach pms(4) and its wsmouse; smoke the PS/2 mouse"
+modules = []
+status = "applied"
+emibsd = "f1c524902048"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "a4e31939039e"
+subject = "Merge pms(4) and wsmouse at pms (M16d agent A)"
+modules = []
+status = "not-applicable"
+reason = "merge commit of the pms branch into the M16d branch; its resolution (the amd64 ioconf.rs numbering, an [[extra]]) arrived with the hand-resolved apply of c693c60a, and every file it changes equals LZ at it"
+
+[[commit]]
+lz = "3b33cb5219bd"
+subject = "build: smoke-bell rings with ksh's print, the ramdisk has no printf"
+modules = []
+status = "applied"
+emibsd = "640d48717058"
+method = "cherry-pick"
+
+[[commit]]
+lz = "0e99151d330e"
+subject = "Merge main (the OpenBSD C slips logged) into the M16d coordinator branch"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits (388f3139, not-applicable in chunk A)"
+
+[[commit]]
+lz = "6d1d70e04501"
+subject = "docs: log M16d's external bugs (EXT-181 to EXT-191)"
+modules = []
+status = "not-applicable"
+reason = "LZ's external bugs log (docs/EXTERNAL_BUGS.md, EXT-181 to EXT-191: the OpenBSD C slips M16d's ports found in pckbd, spkr, pms, eap, viomb and viogpu); native keeps no such log, the slips reach the user through the sync's report (.claude/rules/subagents.md)"
