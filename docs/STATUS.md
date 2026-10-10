@@ -5,16 +5,16 @@ Milestone: **N2 (core runtime) under way** since 2026-10-10; N1 met on 2026-10-0
 Updated: 2026-10-10.
 
 Done:
-- M16 sync closed: 99 LZ commits, 122 new inherited modules, pin 3c62ede68802, the 14 budget
-  rows re-baselined; `just ci` rc=0 (84 of 84), `diff-openbsd` 0 unexpected.
+- M16 sync closed: 99 LZ commits, 122 inherited modules, pin 3c62ede68802; `just ci` rc=0.
 - N2: queue.rs, tree.rs and subr_tree.rs redesigned and merged (typed links, panics on broken
   preconditions, RbtEntry kept bit-valid for pf), each reviewed with one fix round; sys 394 ->
   330, kern 1180 -> 1146, tests 2893 -> 2936; `just ci` rc=0, `diff-openbsd` 0 unexpected.
-- Crypto: the nine hash and keyed contexts are not Copy and wipe on Drop (reviewed, deb5932).
+- Crypto contexts not Copy, wiped on Drop (deb5932); the forbid ratchet: 305 modules forbid,
+  core 2478, legacy 8748 (29367b4..7829777, reviewed).
 
 Next:
-- docs/ZERO_UNSAFE.md section 9: the rules, the xtask split (core, forbid, legacy), the safe
-  `Adapter` and the `forbid` sweep, then the pipe(2) slice.
+- The pipe(2) slice (docs/ZERO_UNSAFE.md section 6): first the runtime's safe API (`Mutex<T>`,
+  `Rwlock<T>`, `Pool<T>`, an init-once static), designed before any code.
 - Crypto: SiphashKey still Copy; the volatile `wipe` moves to the core.
 Unsafe (`cargo xtask unsafe-report`): kernel 8907 blocks, 1128 fn, 821 impl, 30 trait, 340 other; tests 904 more; core 2478, legacy 8748, forbid 305 of 1165 modules.
 <!-- lz:begin -->
