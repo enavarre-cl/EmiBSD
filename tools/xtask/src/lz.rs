@@ -1122,7 +1122,7 @@ pub(crate) fn check(root: &Path) -> Result<()> {
         let n = adapter_impls(&rel, toks);
         if n > 0 {
             errors.push(format!(
-                "{rel}: {n} hand-written `impl Adapter` (or a rename of the trait); only queue_adapter! and tree_adapter! implement sys/sys/queue.rs's Adapter, whose OFFSET the core's container_of trusts (docs/ZERO_UNSAFE.md, section 3)"
+                "{rel}: {n} hand-written `impl Adapter`, rename of the trait, or `impl $t for` with the trait in a macro variable; only queue_adapter! and tree_adapter! implement sys/sys/queue.rs's Adapter, whose OFFSET the core's container_of trusts (docs/ZERO_UNSAFE.md, section 3)"
             ));
         }
     }
@@ -1194,11 +1194,15 @@ const ADAPTER_MACROS: [(&str, &str); 2] = [
 
 /// How many `impl .. Adapter for` (and renames `Adapter as`) the file `rel`, lexed as `toks`,
 /// writes outside the bodies of `macro_rules! queue_adapter` and `macro_rules! tree_adapter`
-/// in the files that define them. `Adapter` is the safe trait of sys/sys/queue.rs; its
-/// contract (`OFFSET` is the offset of the field `entry` returns) is kept by those macros
-/// alone, so a hand-written impl is refused (docs/ZERO_UNSAFE.md, decision 7).
+/// in the files that define them, plus the `impl $t for` whose trait is a macro variable (any
+/// `$name` but `$crate` in the trait path), which the rule cannot see through. `Adapter` is
+/// the safe trait of sys/sys/queue.rs; its contract (`OFFSET` is the offset of the field
+/// `entry` returns) is kept by those macros alone, so a hand-written impl is refused
+/// (docs/ZERO_UNSAFE.md, decision 7). Raw identifiers count as the plain name
+/// (`r#Adapter`). No other macro of the tree names a trait through a variable (none did when
+/// the rule was written), so there is no allowlist beyond the two adapter macros.
 pub(crate) fn adapter_impls(rel: &str, toks: &[Tok]) -> usize {
-    let ident = |i: usize, s: &str| matches!(toks.get(i), Some(Tok::Ident(x)) if x == s);
+    let ident = |i: usize, s: &str| matches!(toks.get(i), Some(Tok::Ident(x)) if unraw(x) == s);
     let mut allowed = vec![false; toks.len()];
     for (file, mac) in ADAPTER_MACROS {
         if rel != file {
@@ -1222,29 +1226,51 @@ pub(crate) fn adapter_impls(rel: &str, toks: &[Tok]) -> usize {
             continue;
         }
         let renamed = ident(i, "Adapter") && ident(i + 1, "as");
-        if renamed || (ident(i, "impl") && impl_trait_is(&toks[i + 1..], "Adapter")) {
+        let hand_impl = ident(i, "impl")
+            && impl_trait_path(&toks[i + 1..]).is_some_and(|path| {
+                let last = path.iter().rev().find_map(|t| match t {
+                    Tok::Ident(x) => Some(unraw(x)),
+                    _ => None,
+                });
+                let via_var = path
+                    .windows(2)
+                    .any(|w| matches!(w, [Tok::Punct('$'), Tok::Ident(v)] if v != "crate"));
+                last == Some("Adapter") || via_var
+            });
+        if renamed || hand_impl {
             n += 1;
         }
     }
     n
 }
 
-/// After `impl`: `<..>`? then a trait path whose last segment is `name`, then `for`.
-fn impl_trait_is(after: &[Tok], name: &str) -> bool {
+/// An identifier without its `r#`: `r#Adapter` names `Adapter`.
+fn unraw(x: &str) -> &str {
+    x.strip_prefix("r#").unwrap_or(x)
+}
+
+/// After `impl`: the tokens of the trait path (at angle depth 0, generic arguments left out)
+/// up to `for`, past the impl's own `<..>`; `None` for an inherent impl (no `for` before the
+/// body or a `where`). The `>` of a `->` is not a closing angle bracket.
+fn impl_trait_path(after: &[Tok]) -> Option<Vec<&Tok>> {
     let mut depth = 0usize;
-    let mut last: Option<&str> = None;
+    let mut path = Vec::new();
+    let mut prev: Option<&Tok> = None;
     for t in after {
         match t {
             Tok::Punct('<') => depth += 1,
-            Tok::Punct('>') => depth = depth.saturating_sub(1),
-            Tok::Ident(x) if depth == 0 && x == "for" => return last == Some(name),
-            Tok::Ident(x) if depth == 0 && x == "where" => return false,
-            Tok::Ident(x) if depth == 0 => last = Some(x),
-            Tok::Punct('{' | ';') if depth == 0 => return false,
+            Tok::Punct('>') if prev != Some(&Tok::Punct('-')) => {
+                depth = depth.saturating_sub(1);
+            }
+            Tok::Ident(x) if depth == 0 && x == "for" => return Some(path),
+            Tok::Ident(x) if depth == 0 && x == "where" => return None,
+            Tok::Punct('{' | ';') if depth == 0 => return None,
+            _ if depth == 0 => path.push(t),
             _ => {}
         }
+        prev = Some(t);
     }
-    false
+    None
 }
 
 /// The index of the bracket that closes the one at `open`.
@@ -1897,7 +1923,22 @@ mod tests {
             "impl crate::sys::queue::Adapter for Mine {}",
             "impl<T> queue::Adapter for Wrap<T> where T: Sized {}",
             "use crate::sys::queue::Adapter as Q;",
+            "impl r#Adapter for Mine {}",
+            "impl queue::r#Adapter for Mine {}",
+            "use crate::sys::queue::r#Adapter as Q;",
+            "impl<F: Fn() -> u8> Adapter for Wrap<F> {}",
+            "macro_rules! mk { ($t:path) => { impl $t for Mine {} } }",
+            "macro_rules! mk { ($t:ident) => { impl<T> crate::sys::queue::$t for W<T> {} } }",
         ];
+        // A trait named by `$crate` is not a variable; other traits and inherent impls pass.
+        for src in [
+            "macro_rules! m { () => { impl $crate::sys::tree::TreeAdapter for X {} } }",
+            "macro_rules! m { ($s:ty) => { impl core::ops::Add<$s> for A { } } }",
+            "impl<F: Fn() -> u8> Wrap<F> { fn f() {} }",
+            "impl AdapterX for Mine {}",
+        ] {
+            assert_eq!(adapter_impls("sys/net/if.rs", &lex(src)), 0, "{src}");
+        }
         for src in by_hand {
             assert_eq!(adapter_impls("sys/net/if.rs", &lex(src)), 1, "{src}");
         }
