@@ -21,7 +21,9 @@ summarises stay authoritative in their own files (`re-engineering.md`, `large-ch
 | `image-worker` | sonnet | no | no | scratchpad | view, crop, resize images so the coordinator's context stays small |
 
 Mechanical vs delicate (the user's split, 2026-10-03): when unsure, it is delicate (opus).
-At most 4 agents run at once; a milestone coordinator runs at most 2 of its own. There is no
+Concurrency: at most 4 agents run at the same time, and a milestone coordinator runs at most 2
+of its own. That is a ceiling on parallel runs, not on how they start: each agent is still
+launched individually with the Agent tool ("one by one", below), never by a script. There is no
 `external-bugs` role here: a slip found in OpenBSD's C, in QEMU, in EDK2 or in LZ goes to the
 user in the final report, with the evidence; no agent reports anything upstream or to LZ (LZ
 is never told this repository exists, `reference-readonly.md`).
@@ -43,7 +45,9 @@ same Mac, and the Mac is the bottleneck (the rule of 2026-10-07: no competing CI
 repositories sharing one lock never run two `ci`s at once. A launching session may name a lock
 of its own in its scratchpad instead. There is no batch workflow: the main session (or a
 `milestone-coordinator` it launches) drives the redesign, launches the roles one by one with
-the Agent tool and sees every plan and every commit (the user's decision of 2026-10-10).
+the Agent tool (each launch its own call with its own prompt; several may then run in
+parallel up to the ceiling above) and sees every plan and every commit (the user's decision of
+2026-10-10).
 
 ## What the launching prompt must give
 
