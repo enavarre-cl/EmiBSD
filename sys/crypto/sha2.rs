@@ -120,6 +120,13 @@
 //!   in place instead of copying each block into a stack array first.
 //! - `SHA256Transform` and `SHA512Transform` take the state words and one block, not the
 //!   context, and keep their names.
+//! - The contexts are not `Copy` and zero themselves when dropped (`docs/IDIOMS.md`, "a hash
+//!   context"): [`Sha256Ctx`] and the shared `Sha512Core` (so [`Sha384Ctx`] and
+//!   [`Sha512Ctx`] through it). A by-value pass or a context dropped before `finalize` leaves
+//!   no copy of the message state behind; `Clone` stays for the callers that fork a prefixed
+//!   hash (the TCP ISS secret).
+
+use libkern::explicit_bzero;
 
 use super::wipe;
 
@@ -276,8 +283,8 @@ const SHA512_INITIAL_HASH_VALUE: [u64; 8] = [
 /// [`Sha256Ctx::finalize`].
 ///
 /// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
-/// hash.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// hash. Not `Copy`: dropping a context wipes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sha256Ctx {
     /// `state.st32`: the eight chaining words.
     state: [u32; 8],
@@ -297,7 +304,21 @@ impl Default for Sha256Ctx {
     }
 }
 
+impl Drop for Sha256Ctx {
+    /// Wipes the context, as `finalize` does, on every path that frees it.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl Sha256Ctx {
+    /// Zeroes every field in place: the context becomes the `Default` (wiped) value.
+    pub(crate) fn zeroize(&mut self) {
+        wipe(&mut self.state);
+        wipe(&mut self.bitcount);
+        explicit_bzero(&mut self.buffer);
+    }
+
     /// `SHA256Init`.
     pub fn new() -> Self {
         Self {
@@ -395,14 +416,15 @@ impl Sha256Ctx {
             *out = word.to_be_bytes();
         }
         // Clean up state data:
-        wipe(self);
+        self.zeroize();
         digest
     }
 }
 
 /// `SHA2_CTX` as SHA-384 and SHA-512 use it: the 64-bit state, the 128-bit bit count and the
-/// 128-byte buffer, with the update and padding the two hashes share.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// 128-byte buffer, with the update and padding the two hashes share. Not `Copy`: dropping
+/// it wipes it, and with it a [`Sha384Ctx`] or [`Sha512Ctx`].
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Sha512Core {
     /// `state.st64`: the eight chaining words.
     state: [u64; 8],
@@ -422,7 +444,21 @@ impl Default for Sha512Core {
     }
 }
 
+impl Drop for Sha512Core {
+    /// Wipes the state, as the `Final` functions do, on every path that frees it.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl Sha512Core {
+    /// Zeroes every field in place: the core becomes the `Default` (wiped) value.
+    fn zeroize(&mut self) {
+        wipe(&mut self.state);
+        wipe(&mut self.bitcount);
+        explicit_bzero(&mut self.buffer);
+    }
+
     /// `SHA384Init`/`SHA512Init`: the initial hash value `iv`, nothing hashed yet.
     fn new(iv: [u64; 8]) -> Self {
         Self {
@@ -530,8 +566,8 @@ impl Sha512Core {
 /// [`Sha384Ctx::finalize`].
 ///
 /// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
-/// hash.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// hash. Not `Copy`: dropping a context wipes it (`Sha512Core`'s `Drop`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sha384Ctx(Sha512Core);
 
 impl Sha384Ctx {
@@ -554,7 +590,7 @@ impl Sha384Ctx {
         let digest = self.0.digest();
 
         // Zero out state data
-        wipe(self);
+        self.0.zeroize();
         digest
     }
 }
@@ -563,8 +599,8 @@ impl Sha384Ctx {
 /// [`Sha512Ctx::finalize`].
 ///
 /// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
-/// hash.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// hash. Not `Copy`: dropping a context wipes it (`Sha512Core`'s `Drop`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sha512Ctx(Sha512Core);
 
 impl Sha512Ctx {
@@ -586,7 +622,7 @@ impl Sha512Ctx {
         let digest = self.0.digest();
 
         // Zero out state data
-        wipe(self);
+        self.0.zeroize();
         digest
     }
 }
@@ -1010,6 +1046,63 @@ mod tests {
         same64("K512", &K512);
         same64("sha384_initial_hash_value", &SHA384_INITIAL_HASH_VALUE);
         same64("sha512_initial_hash_value", &SHA512_INITIAL_HASH_VALUE);
+    }
+
+    #[test]
+    fn the_contexts_are_not_copy() {
+        crate::crypto::testutil::assert_not_copy!(Sha256Ctx, Sha384Ctx, Sha512Ctx, Sha512Core);
+    }
+
+    #[test]
+    fn zeroize_leaves_the_wiped_contexts() {
+        // What `Drop` runs on a context freed before `finalize`: every field zeroed (for
+        // SHA-384 and SHA-512, the shared core's).
+        let msg = b"a message that stays partly in the buffer";
+        let mut c256 = Sha256Ctx::new();
+        c256.update(msg);
+        assert_ne!(c256, Sha256Ctx::default());
+        c256.zeroize();
+        assert_eq!(c256, Sha256Ctx::default());
+
+        let mut c384 = Sha384Ctx::new();
+        c384.update(msg);
+        assert_ne!(c384, Sha384Ctx::default());
+        c384.0.zeroize();
+        assert_eq!(c384, Sha384Ctx::default());
+
+        let mut c512 = Sha512Ctx::new();
+        c512.update(msg);
+        assert_ne!(c512, Sha512Ctx::default());
+        c512.0.zeroize();
+        assert_eq!(c512, Sha512Ctx::default());
+    }
+
+    #[test]
+    fn a_clone_forks_the_hash() {
+        // `Clone` replaces the `Copy` the TCP ISS secret used to fork its keyed prefix; each
+        // side wipes only itself.
+        let mut ctx = Sha512Ctx::new();
+        ctx.update(b"abc");
+        let mut fork = ctx.clone();
+        fork.update(b"def");
+        assert_eq!(fork.finalize(), sha512(b"abcdef"));
+        assert_eq!(fork, Sha512Ctx::default());
+        assert_ne!(ctx, Sha512Ctx::default());
+        assert_eq!(ctx.finalize(), sha512(b"abc"));
+
+        let mut ctx = Sha256Ctx::new();
+        ctx.update(b"abc");
+        let mut fork = ctx.clone();
+        fork.update(b"def");
+        assert_eq!(fork.finalize(), sha256(b"abcdef"));
+        assert_eq!(ctx.finalize(), sha256(b"abc"));
+
+        let mut ctx = Sha384Ctx::new();
+        ctx.update(b"abc");
+        let mut fork = ctx.clone();
+        fork.update(b"def");
+        assert_eq!(fork.finalize(), sha384(b"abcdef"));
+        assert_eq!(ctx.finalize(), sha384(b"abc"));
     }
 }
 /* </TESTS> */

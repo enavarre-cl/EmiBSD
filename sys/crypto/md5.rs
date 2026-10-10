@@ -69,6 +69,11 @@
 //! - The fields are private: the chaining words and the partial block change only through
 //!   the methods.
 //! - `MD5Transform` takes the state words and one block, not the context, and keeps its name.
+//! - The context is not `Copy` and zeroes itself when dropped (`docs/IDIOMS.md`, "a hash
+//!   context"), so a by-value pass or a context dropped before `finalize` leaves no copy of
+//!   the message state behind; `Clone` stays for a caller that forks a prefixed hash.
+
+use libkern::explicit_bzero;
 
 use super::wipe;
 
@@ -80,8 +85,8 @@ pub const MD5_DIGEST_LENGTH: usize = 16;
 /// `MD5_CTX`: a hash in progress, from [`Md5Ctx::new`] to [`Md5Ctx::finalize`].
 ///
 /// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
-/// hash.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// hash. Not `Copy`: dropping a context wipes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Md5Ctx {
     /// `state`: the four chaining words.
     state: [u32; 4],
@@ -101,7 +106,21 @@ impl Default for Md5Ctx {
     }
 }
 
+impl Drop for Md5Ctx {
+    /// Wipes the context, as `finalize` does, on every path that frees it.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl Md5Ctx {
+    /// Zeroes every field in place: the context becomes the `Default` (wiped) value.
+    pub(crate) fn zeroize(&mut self) {
+        wipe(&mut self.state);
+        wipe(&mut self.count);
+        explicit_bzero(&mut self.buffer);
+    }
+
     /// `MD5Init`: start MD5 accumulation. Set bit count to 0 and buffer to mysterious
     /// initialization constants.
     pub fn new() -> Self {
@@ -168,7 +187,7 @@ impl Md5Ctx {
         for (out, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
             *out = word.to_le_bytes();
         }
-        wipe(self); // in case it's sensitive
+        self.zeroize(); // in case it's sensitive
         digest
     }
 }
@@ -357,6 +376,35 @@ mod tests {
             }
             assert_eq!(ctx.finalize(), whole, "{} bytes", msg.len());
         }
+    }
+
+    #[test]
+    fn the_context_is_not_copy() {
+        crate::crypto::testutil::assert_not_copy!(Md5Ctx);
+    }
+
+    #[test]
+    fn zeroize_leaves_the_wiped_context() {
+        // What `Drop` runs on a context freed before `finalize`: every field zeroed.
+        let mut ctx = Md5Ctx::new();
+        ctx.update(b"a message that stays partly in the buffer");
+        assert_ne!(ctx, Md5Ctx::default());
+        ctx.zeroize();
+        assert_eq!(ctx, Md5Ctx::default());
+    }
+
+    #[test]
+    fn a_clone_forks_the_hash() {
+        // `Clone` replaces the `Copy` a caller used to fork a prefixed hash; each side wipes
+        // only itself.
+        let mut ctx = Md5Ctx::new();
+        ctx.update(b"abc");
+        let mut fork = ctx.clone();
+        fork.update(b"def");
+        assert_eq!(fork.finalize(), digest(b"abcdef"));
+        assert_eq!(fork, Md5Ctx::default());
+        assert_ne!(ctx, Md5Ctx::default());
+        assert_eq!(ctx.finalize(), digest(b"abc"));
     }
 }
 /* </TESTS> */

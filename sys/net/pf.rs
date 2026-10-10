@@ -4576,7 +4576,12 @@ pub fn pf_tcp_iss(pd: &mut PfPdesc) -> u32 {
         sec.ctx.set(Some(c));
         sec.init.set(true);
     }
-    let Some(mut ctx) = sec.ctx.get() else {
+    // The keyed prefix stays in the cell and the hash runs on a clone of it: the context is
+    // not `Copy` (it wipes itself when dropped), so `Cell::get` cannot copy it out.
+    let prefix = sec.ctx.take();
+    let fork = prefix.clone();
+    sec.ctx.set(prefix);
+    let Some(mut ctx) = fork else {
         return 0;
     };
 

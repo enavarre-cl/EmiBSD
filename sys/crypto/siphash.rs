@@ -110,6 +110,9 @@
 //! - [`SipHash24`] and [`SipHash48`] keep their names and signatures (six callers across
 //!   fs and net use the one-call form).
 //! - The fields are private; the block loop of `update` walks `as_chunks`.
+//! - The context holds key-derived state (`v` is the key xor the constants until the end),
+//!   so it is not `Copy` and zeroes itself when dropped (`docs/IDIOMS.md`, "a hash
+//!   context"): a by-value pass or a context dropped before `end` leaves no copy of it.
 
 use super::wipe;
 
@@ -125,7 +128,8 @@ pub const SIPHASH_DIGEST_LENGTH: usize = 8;
 /// [`SiphashCtx::finalize`].
 ///
 /// `Default` is the wiped, all-zero context the end leaves behind, not a hash under any key.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Not `Copy`: dropping a context wipes it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SiphashCtx<const C: usize, const D: usize> {
     /// `v`: the four state words.
     v: [u64; 4],
@@ -135,7 +139,21 @@ pub struct SiphashCtx<const C: usize, const D: usize> {
     bytes: u32,
 }
 
+impl<const C: usize, const D: usize> Drop for SiphashCtx<C, D> {
+    /// Wipes the key-derived state, as `end` does, on every path that frees it.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl<const C: usize, const D: usize> SiphashCtx<C, D> {
+    /// Zeroes every field in place: the context becomes the `Default` (wiped) value.
+    pub(crate) fn zeroize(&mut self) {
+        wipe(&mut self.v);
+        wipe(&mut self.buf);
+        wipe(&mut self.bytes);
+    }
+
     /// `SipHash_Init`: starts a hash under `key`.
     pub fn new(key: &SiphashKey) -> Self {
         // lemtoh64: the key words are stored little-endian.
@@ -213,7 +231,7 @@ impl<const C: usize, const D: usize> SiphashCtx<C, D> {
         self.rounds(D);
 
         let r = (self.v[0] ^ self.v[1]) ^ (self.v[2] ^ self.v[3]);
-        wipe(self);
+        self.zeroize();
         r
     }
 
@@ -398,6 +416,40 @@ mod tests {
             assert_eq!(c24.end(), SipHash24(&key, &msg), "2-4, {len} bytes");
             assert_eq!(c48.end(), SipHash48(&key, &msg), "4-8, {len} bytes");
         }
+    }
+
+    #[test]
+    fn the_contexts_are_not_copy() {
+        crate::crypto::testutil::assert_not_copy!(SipHash24Ctx, SipHash48Ctx);
+    }
+
+    #[test]
+    fn zeroize_leaves_the_wiped_context() {
+        // What `Drop` runs on a context freed before `end`: the key-derived words zeroed.
+        let mut ctx = SipHash24Ctx::new(&paper_key());
+        ctx.update(b"0123456789a");
+        assert_ne!(ctx, SipHash24Ctx::default());
+        ctx.zeroize();
+        assert_eq!(ctx, SipHash24Ctx::default());
+
+        // Even with nothing hashed, the state is the key xor the constants.
+        let mut ctx = SipHash48Ctx::new(&paper_key());
+        assert_ne!(ctx, SipHash48Ctx::default());
+        ctx.zeroize();
+        assert_eq!(ctx, SipHash48Ctx::default());
+    }
+
+    #[test]
+    fn a_clone_forks_the_hash() {
+        let key = paper_key();
+        let mut ctx = SipHash24Ctx::new(&key);
+        ctx.update(b"abcdefghij");
+        let mut fork = ctx.clone();
+        fork.update(b"klm");
+        assert_eq!(fork.end(), SipHash24(&key, b"abcdefghijklm"));
+        assert_eq!(fork, SipHash24Ctx::default());
+        assert_ne!(ctx, SipHash24Ctx::default());
+        assert_eq!(ctx.end(), SipHash24(&key, b"abcdefghij"));
     }
 }
 /* </TESTS> */

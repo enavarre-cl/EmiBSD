@@ -1226,8 +1226,10 @@ pub fn tcp_set_iss_tsm(tp: &Tcpcb) {
     TCP_ISS.store(iss, Ordering::Relaxed);
     mtx_leave(&TCP_TIMER_MTX);
 
-    // SAFETY: written once by `tcp_init` before any connection exists, then only read.
-    let mut ctx = unsafe { TCP_SECRET_CTX.read() }.unwrap_or_default();
+    // SAFETY: written once by `tcp_init` before any connection exists, then only read, so no
+    // `&mut` to the contents is live while this shared reference is; it ends with the clone
+    // (the context is not `Copy`: it wipes itself when dropped).
+    let mut ctx = unsafe { TCP_SECRET_CTX.get() }.clone().unwrap_or_default();
     ctx.update(&rdomain.to_ne_bytes());
     ctx.update(&inp.inp_lport.get().to_ne_bytes());
     ctx.update(&inp.inp_fport.get().to_ne_bytes());

@@ -61,6 +61,9 @@
 //!   arithmetic over `i` and `j`; `finalize` appends the padding with one `update` of the
 //!   needed zeros instead of one byte at a time, which feeds the same bytes.
 //! - `SHA1Transform` takes the state words and one block, not the context, and keeps its name.
+//! - The context is not `Copy` and zeroes itself when dropped (`docs/IDIOMS.md`, "a hash
+//!   context"), so a by-value pass or a context dropped before `finalize` leaves no copy of
+//!   the message state behind; `Clone` stays for a caller that forks a prefixed hash.
 
 use libkern::explicit_bzero;
 
@@ -74,8 +77,8 @@ pub const SHA1_DIGEST_LENGTH: usize = 20;
 /// `SHA1_CTX`: a hash in progress, from [`Sha1Ctx::new`] to [`Sha1Ctx::finalize`].
 ///
 /// `Default` is the wiped, all-zero context that `finalize` leaves behind, not the start of a
-/// hash.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// hash. Not `Copy`: dropping a context wipes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sha1Ctx {
     /// `state`: the five chaining words.
     state: [u32; 5],
@@ -95,7 +98,21 @@ impl Default for Sha1Ctx {
     }
 }
 
+impl Drop for Sha1Ctx {
+    /// Wipes the context, as `finalize` does, on every path that frees it.
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl Sha1Ctx {
+    /// Zeroes every field in place: the context becomes the `Default` (wiped) value.
+    pub(crate) fn zeroize(&mut self) {
+        wipe(&mut self.state);
+        wipe(&mut self.count);
+        explicit_bzero(&mut self.buffer);
+    }
+
     /// `SHA1Init`: initialize new context.
     pub fn new() -> Self {
         Self {
@@ -148,7 +165,7 @@ impl Sha1Ctx {
             *out = word.to_be_bytes();
         }
         explicit_bzero(&mut finalcount);
-        wipe(self);
+        self.zeroize();
         digest
     }
 }
@@ -315,6 +332,35 @@ mod tests {
             }
             assert_eq!(ctx.finalize(), whole, "{len} bytes");
         }
+    }
+
+    #[test]
+    fn the_context_is_not_copy() {
+        crate::crypto::testutil::assert_not_copy!(Sha1Ctx);
+    }
+
+    #[test]
+    fn zeroize_leaves_the_wiped_context() {
+        // What `Drop` runs on a context freed before `finalize`: every field zeroed.
+        let mut ctx = Sha1Ctx::new();
+        ctx.update(b"a message that stays partly in the buffer");
+        assert_ne!(ctx, Sha1Ctx::default());
+        ctx.zeroize();
+        assert_eq!(ctx, Sha1Ctx::default());
+    }
+
+    #[test]
+    fn a_clone_forks_the_hash() {
+        // `Clone` replaces the `Copy` a caller used to fork a prefixed hash; each side wipes
+        // only itself.
+        let mut ctx = Sha1Ctx::new();
+        ctx.update(b"abc");
+        let mut fork = ctx.clone();
+        fork.update(b"def");
+        assert_eq!(fork.finalize(), digest(b"abcdef"));
+        assert_eq!(fork, Sha1Ctx::default());
+        assert_ne!(ctx, Sha1Ctx::default());
+        assert_eq!(ctx.finalize(), digest(b"abc"));
     }
 }
 /* </TESTS> */
