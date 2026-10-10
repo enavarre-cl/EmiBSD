@@ -532,7 +532,6 @@ pub fn dequeue_randomness(_v: *mut c_void) {
 /// `extract_entropy`: grabs the pool and slams it through SHA-512: a key and an IV for the
 /// generator. The pool is then modified so the next hash differs.
 pub fn extract_entropy(buf: &mut [u8; EBUFSIZE]) {
-
     // INTENTIONALLY not protected by any lock. Races during the copy result in acceptable
     // input data; races during the hashing would create nasty data dependencies. We do not
     // rely on this as a benefit, but if it happens, cool.
