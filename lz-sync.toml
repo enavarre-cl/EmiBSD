@@ -72,3 +72,43 @@ subject = "Merge branch 'worktree-agent-a86b6ca0c283708a2' into worktree-agent-a
 modules = []
 status = "not-applicable"
 reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "75f79004ea5a"
+subject = "dev/ic: port fxp(4) with firmload, inphy(4) and the fxp ioconf entries"
+modules = ["sys/dev/firmload.rs", "sys/dev/ic/fxp.rs", "sys/dev/ic/fxpreg.rs", "sys/dev/ic/fxpvar.rs", "sys/dev/microcode/fxp/rcvbundl.rs", "sys/dev/mii/inphy.rs", "sys/dev/mii/inphyreg.rs", "sys/dev/mii/miidevs.rs", "sys/dev/pci/if_fxp_pci.rs", "sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "9154f65c3599"
+method = "cherry-pick"
+
+[[commit]]
+lz = "3b7814c46a07"
+subject = "xtask: put the fxp(4) microcode in the base set's /etc/firmware"
+modules = []
+status = "applied"
+emibsd = "842256111669"
+method = "cherry-pick"
+
+[[commit]]
+lz = "e25f7813dc02"
+subject = "build: add smoke-fxp, fxp(4) on QEMU's i82559er"
+modules = []
+status = "applied"
+emibsd = "39235715b7c0"
+method = "cherry-pick"
+
+[[commit]]
+lz = "1f0434b833fc"
+subject = "dev: record loadfirmware's EIO without a current process"
+modules = ["sys/dev/firmload.rs"]
+status = "applied"
+emibsd = "d1c22b54f170"
+method = "cherry-pick"
+
+[[commit]]
+lz = "e6b09c97a4ec"
+subject = "rules: name userland/firmware.rs in xtask.md"
+modules = []
+status = "applied"
+emibsd = "0c2b9b427039"
+method = "cherry-pick"
