@@ -137,3 +137,51 @@ status = "applied"
 emibsd = "65650cfaf283"
 method = "cherry-pick-conflicts"
 reason = "merge commit of the pcn/ne branch into the fxp branch; its resolution (pcidevs.rs, the amd64 ioconf numbering, the justfile) arrived with the hand-resolved apply of its second parent 99879554, so the tree equals LZ at this merge and lz check compares pcidevs.rs with it"
+
+[[commit]]
+lz = "b755055f21c8"
+subject = "dev/ic: port dcreg.h (21143 tulip registers and softc)"
+modules = ["sys/dev/ic/dcreg.rs"]
+status = "applied"
+emibsd = "7a9e4d26e711"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "95dc8a771a30"
+subject = "Merge branch 'worktree-agent-ad3610ba9788ecdfd' into worktree-agent-ae930b5dbb24edef1"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "0d2d6905db22"
+subject = "dev/mii: port lxtphy.c, lxtphyreg.h and dcphy.c"
+modules = ["sys/dev/ic/dcreg.rs", "sys/dev/mii/dcphy.rs", "sys/dev/mii/lxtphy.rs", "sys/dev/mii/lxtphyreg.rs", "sys/dev/mii/miidevs.rs"]
+status = "applied"
+emibsd = "d943e157f418"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "e389526e327a"
+subject = "dev/ic: port dc.c and if_dc_pci.c (dc* at pci? on amd64)"
+modules = ["sys/dev/ic/dc.rs", "sys/dev/pci/if_dc_pci.rs", "sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "4f4acbd5aacd"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "9a6bfe5566b0"
+subject = "build: add smoke-dc, dc(4) on QEMU's tulip as OpenBSD 8.0 behaves"
+modules = []
+status = "applied"
+emibsd = "423692c10a7f"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "7e1cf1b557cf"
+subject = "Merge dc(4), lxtphy(4) and dcphy(4) (M16c subagent A)"
+modules = ["sys/dev/mii/miidevs.rs", "sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "423692c10a7f"
+method = "cherry-pick-conflicts"
+reason = "merge commit of the dc branch into the fxp/pcn/ne line; its resolution arrived with the hand-resolved applies of its second parent's commits: sys/dev/mii/mod.rs and miidevs.rs with 0d2d6905 (d943e157f418), the amd64 ioconf numbering and pcidevs.rs (one PCI_VENDOR_COMPEX) with e389526e (4f4acbd5aacd), the smokes list with 9a6bfe55 (423692c10a7f), after which the tree equals LZ at this merge; naming miidevs.rs and pcidevs.rs here lets lz check compare them with it"
