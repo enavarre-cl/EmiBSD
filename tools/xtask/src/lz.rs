@@ -1114,7 +1114,8 @@ pub(crate) fn check(root: &Path) -> Result<()> {
     }
 
     // The zero-unsafe rules (docs/ZERO_UNSAFE.md, sections 3 and 5): only the adapter macros
-    // implement `Adapter`, whose `OFFSET` the core's `container_of` trusts.
+    // implement `Adapter`, whose `OFFSET` the core's `container_of` trusts; and "redesigned"
+    // means "compiles with forbid" outside the core.
     let lexed = crate::unsafereport::lex_tree(root)?;
     for (f, toks) in &lexed {
         let rel = rel_of(root, f);
@@ -1125,6 +1126,12 @@ pub(crate) fn check(root: &Path) -> Result<()> {
             ));
         }
     }
+    let core = crate::unsafereport::CoreList::load(root)?;
+    let forbid: HashSet<String> = crate::unsafereport::forbid_files(&lexed)
+        .iter()
+        .map(|f| rel_of(root, f))
+        .collect();
+    errors.extend(redesigned_not_forbid(&lineage.modules, &core, &forbid));
 
     for w in &warnings {
         println!("warning: {w}");
@@ -1155,6 +1162,27 @@ pub(crate) fn check(root: &Path) -> Result<()> {
     } else {
         Err(format!("{nerr} error(s) in {LINEAGE_FILE}").into())
     }
+}
+
+/// "Redesigned" means "compiles with `forbid`" (docs/ZERO_UNSAFE.md, section 5): one error
+/// per `redesigned` module outside the core whose `mod` declaration (or an ancestor's) does
+/// not carry `#[forbid(unsafe_code)]`.
+fn redesigned_not_forbid(
+    modules: &[Module],
+    core: &crate::unsafereport::CoreList,
+    forbid: &HashSet<String>,
+) -> Vec<String> {
+    modules
+        .iter()
+        .filter(|m| m.status == Status::Redesigned)
+        .filter(|m| !core.contains(&m.rust) && !forbid.contains(&m.rust))
+        .map(|m| {
+            format!(
+                "[[module]] rust = \"{}\": redesigned outside unsafe-core.toml but its mod declaration is not #[forbid(unsafe_code)]; a redesigned module compiles with forbid (docs/ZERO_UNSAFE.md, section 5)",
+                m.rust
+            )
+        })
+        .collect()
 }
 
 /// The files where the adapter macros are defined, with the macros whose bodies may write
@@ -1892,6 +1920,51 @@ mod tests {
             let kept = strip_forbid_decl_attrs(changed);
             assert_eq!(kept, changed, "{changed}");
         }
+    }
+    #[test]
+    fn a_redesigned_module_outside_the_core_is_forbid() {
+        #[derive(Deserialize)]
+        struct L {
+            module: Vec<Module>,
+        }
+        let l: L = toml::from_str(
+            r#"
+            [[module]]
+            rust = "sys/crypto/sha2.rs"
+            status = "redesigned"
+            [[module]]
+            rust = "sys/kern/sys_pipe.rs"
+            status = "redesigned"
+            [[module]]
+            rust = "sys/sys/queue.rs"
+            status = "redesigned"
+            [[module]]
+            rust = "sys/arch/amd64/amd64/pmap.rs"
+            status = "redesigned"
+            [[module]]
+            rust = "sys/kern/kern_sig.rs"
+            status = "inherited"
+            [[module]]
+            rust = "sys/netinet/tcp_subr.rs"
+            status = "adapted"
+        "#,
+        )
+        .unwrap();
+        let core = crate::unsafereport::CoreList::parse(
+            "[core]\npaths = [\"sys/arch/amd64/**\", \"sys/sys/queue.rs\"]\n",
+        )
+        .unwrap();
+        let forbid: HashSet<String> = ["sys/crypto/sha2.rs".to_string()].into();
+        let errors = redesigned_not_forbid(&l.module, &core, &forbid);
+        // The core may hold unsafe; inherited and adapted modules are legacy until redesigned.
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("sys/kern/sys_pipe.rs"));
+        let forbid: HashSet<String> = [
+            "sys/crypto/sha2.rs".to_string(),
+            "sys/kern/sys_pipe.rs".to_string(),
+        ]
+        .into();
+        assert!(redesigned_not_forbid(&l.module, &core, &forbid).is_empty());
     }
 }
 /* </TESTS> */
