@@ -6245,7 +6245,7 @@ status = "inherited"
 [[module]]
 rust = "sys/sys/tree.rs"
 lz = ["sys/sys/tree.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/sys/tty.rs"
