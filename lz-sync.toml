@@ -185,3 +185,94 @@ status = "applied"
 emibsd = "423692c10a7f"
 method = "cherry-pick-conflicts"
 reason = "merge commit of the dc branch into the fxp/pcn/ne line; its resolution arrived with the hand-resolved applies of its second parent's commits: sys/dev/mii/mod.rs and miidevs.rs with 0d2d6905 (d943e157f418), the amd64 ioconf numbering and pcidevs.rs (one PCI_VENDOR_COMPEX) with e389526e (4f4acbd5aacd), the smokes list with 9a6bfe55 (423692c10a7f), after which the tree equals LZ at this merge; naming miidevs.rs and pcidevs.rs here lets lz check compare them with it"
+
+[[commit]]
+lz = "e1a461cc589e"
+subject = "build: name David Greenman's notice in LICENSE"
+modules = []
+status = "applied"
+emibsd = "9b1f8c26f1d1"
+method = "cherry-pick"
+
+[[commit]]
+lz = "02f407d34ae8"
+subject = "docs: M16c met (network drivers)"
+modules = []
+status = "not-applicable"
+reason = "LZ's M16c close: its README, JOURNAL, PORTING, ROADMAP and STATUS; native keeps its own docs (the drivers, smokes and LICENSE line it records arrived with their own records)"
+
+[[commit]]
+lz = "3978fe92c930"
+subject = "xtask: add M16a's storage controller options and probe them"
+modules = []
+status = "applied"
+emibsd = "6f8359470beb"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "935cc5af378e"
+subject = "xtask: seed a worktree's userland and comp from the main checkout"
+modules = []
+status = "applied"
+emibsd = "269c2d197294"
+method = "cherry-pick"
+
+[[commit]]
+lz = "3bf642a168e9"
+subject = "xtask: log what a stopped recipe's processes were doing"
+modules = []
+status = "applied"
+emibsd = "98dce7311f25"
+method = "cherry-pick"
+
+[[commit]]
+lz = "1c259f58a54e"
+subject = "Merge branch 'main' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "a0c4660910e5"
+subject = "docs: start the external bugs log"
+modules = []
+status = "not-applicable"
+reason = "LZ's external bugs log (docs/EXTERNAL_BUGS.md, its rule lines in .claude/rules/docs.md, porting-workflow.md and CLAUDE.md); native keeps no such log: a slip found in OpenBSD's C, QEMU or EDK2 goes to the user in the agent's final report (.claude/rules/subagents.md)"
+
+[[commit]]
+lz = "576d3c65fa2c"
+subject = "xtask: boot once more after EDK2's UhciDxe assertion"
+modules = []
+status = "applied"
+emibsd = "bb762101e57b"
+method = "cherry-pick"
+
+[[commit]]
+lz = "953eca01032c"
+subject = "xtask: M16d device options, monitor pairs in diff-openbsd probe"
+modules = []
+status = "applied"
+emibsd = "798bb3063a5e"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "45744a5e3883"
+subject = "xtask: diff-openbsd probe takes the M16b USB pointer flags"
+modules = []
+status = "applied"
+emibsd = "60b4a47574fb"
+method = "cherry-pick"
+
+[[commit]]
+lz = "86ecec05626d"
+subject = "Merge main (worktree userland seed) into the M16d coordinator branch"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "388f31391881"
+subject = "docs: log the OpenBSD C slips the ports found"
+modules = []
+status = "not-applicable"
+reason = "LZ's external bugs log (docs/EXTERNAL_BUGS.md: the OpenBSD C slips LZ's ports found, EXT-9 on); native keeps no such log, the slips reach the user through the sync's report (.claude/rules/subagents.md)"
