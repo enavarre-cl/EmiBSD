@@ -661,3 +661,21 @@ subject = "rules: defer a driver whose QEMU device OpenBSD itself fails on"
 modules = []
 status = "not-applicable"
 reason = "LZ's porting rule (.claude/rules/scope-and-stubs.md: defer a driver whose QEMU device OpenBSD itself fails on), about which OpenBSD drivers LZ ports next; native ports nothing, it takes LZ's ports through this sync"
+
+[[commit]]
+lz = "adda999166e9"
+subject = "Merge main (M16d met) into the M16a branch"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/arch/arm64/arm64/conf.rs"]
+status = "applied"
+emibsd = "d02b6e960962"
+method = "cherry-pick-conflicts"
+reason = "merge commit of LZ's main (M16d met) into the M16a branch; native joined the same two branches in the merge of chunk C into chunk B (d02b6e960962), whose resolution equals LZ's: both archs' conf.rs (M16d's cdevsw entries beside M16a's) equal LZ first at this merge, so lz check compares them with it; the ioconf numbering (an [[extra]]) and the shared mod.rs files follow 475b49bb"
+
+[[commit]]
+lz = "475b49bbed44"
+subject = "Merge pciide(4) (M16a agent P)"
+modules = ["sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "d02b6e960962"
+method = "cherry-pick-conflicts"
+reason = "merge commit of pciide(4) into the M16a branch; native's merge of chunk C (d02b6e960962) resolved every shared file to this merge, so the tree equals LZ here but for native's own files; pcidevs.rs (eap's ids beside sdhc's and pciide's) equals LZ only at this merge, so lz check compares it with it"
