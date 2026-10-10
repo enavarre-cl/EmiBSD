@@ -26,3 +26,49 @@ subject = "build: put the author's ISC notice first in every Rust file"
 status = "applied"
 emibsd = "20514daa926d"
 method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "bb33b8a20143"
+subject = "xtask: watch smoke-all's recipes from outside"
+modules = []
+status = "applied"
+emibsd = "17d57432f406"
+method = "cherry-pick"
+
+[[commit]]
+lz = "a18bd6be2477"
+subject = "rules: watch long background runs and finish them before handing back"
+modules = []
+status = "not-applicable"
+reason = "LZ's rule of 2026-10-09 in its .claude/rules/large-ports.md (\"Long runs in the background\") and a line of LZ's STATUS; native already has it in .claude/rules/subagents.md (\"While working\": the ten-minute still-log watcher, the log's last change in progress reports, every background task waited for or stopped and ps clean before the final report); native keeps its own docs and rules"
+
+[[commit]]
+lz = "a642b94de4a5"
+subject = "xtask: let --nic take pcnet, i82559er, ne2k_pci and tulip"
+modules = []
+status = "applied"
+emibsd = "59f997e0d4c6"
+method = "cherry-pick"
+
+[[commit]]
+lz = "379cb18bd0d3"
+subject = "xtask: let diff-openbsd probe take --nic"
+modules = []
+status = "applied"
+emibsd = "2d2288d19dd7"
+method = "cherry-pick"
+
+[[commit]]
+lz = "7d375b5ed797"
+subject = "build: add smoke-igb, em(4) on QEMU's 82576 as OpenBSD 8.0 behaves"
+modules = []
+status = "applied"
+emibsd = "bd7b84e94360"
+method = "cherry-pick"
+
+[[commit]]
+lz = "3e9344fad6c4"
+subject = "Merge branch 'worktree-agent-a86b6ca0c283708a2' into worktree-agent-a9b2762494445ec86"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
