@@ -679,3 +679,56 @@ status = "applied"
 emibsd = "d02b6e960962"
 method = "cherry-pick-conflicts"
 reason = "merge commit of pciide(4) into the M16a branch; native's merge of chunk C (d02b6e960962) resolved every shared file to this merge, so the tree equals LZ here but for native's own files; pcidevs.rs (eap's ids beside sdhc's and pciide's) equals LZ only at this merge, so lz check compares it with it"
+
+[[commit]]
+lz = "7609a91f2e9a"
+subject = "docs: defer mfi, mfii, pcscp and ufshci to M17; log EXT-192..195"
+modules = []
+status = "not-applicable"
+reason = "LZ's docs (EXTERNAL_BUGS.md EXT-192..195) and ports.toml notes of C files LZ defers to M17 (mfi, mfii, pcscp, ufshci); native has no ports.toml and no module for those files"
+
+[[commit]]
+lz = "e588b9f625bc"
+subject = "Merge branch 'worktree-agent-aec5d6538af525b1d' into worktree-agent-af0027fe28ef0b0ea"
+modules = []
+status = "not-applicable"
+reason = "merge commit of the M16a branch (at 02899123) into the isadma/fdc branch; every file it brings equals LZ at a recorded commit (chunk C's sdhc applies), nothing to apply"
+
+[[commit]]
+lz = "61ac98576030"
+subject = "dev/isa: port isadma(4) and the ISA DMA bounce-buffer tag"
+modules = ["sys/arch/amd64/amd64/machdep.rs", "sys/arch/amd64/amd64/mainbus.rs", "sys/arch/amd64/include/isa_machdep.rs", "sys/arch/amd64/isa/isa_machdep.rs", "sys/dev/ic/i8237reg.rs", "sys/dev/isa/isa.rs", "sys/dev/isa/isadma.rs", "sys/dev/isa/isadmareg.rs", "sys/dev/isa/isadmavar.rs", "sys/dev/isa/isavar.rs"]
+status = "applied"
+emibsd = "eabaa2678b00"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "8384feb696eb"
+subject = "Merge branch 'worktree-agent-aec5d6538af525b1d' into worktree-agent-af0027fe28ef0b0ea"
+modules = ["sys/arch/amd64/amd64/machdep.rs"]
+status = "applied"
+emibsd = "eabaa2678b00"
+method = "cherry-pick-conflicts"
+reason = "merge commit of the M16a branch (with M16d and pciide, 475b49bb) into the isadma branch; its resolution (the amd64 ioconf, sys/dev/ic/mod.rs, sys/dev/isa/mod.rs) arrived with the hand-resolved apply of 61ac9857 (eabaa2678b00), and the amd64 machdep.rs (isadma's AVAIL_END beside rnd's lines) equals LZ only here, so lz check compares it with this merge"
+
+[[commit]]
+lz = "94eba32a213b"
+subject = "dev/isa: port fdc(4) and fd(4), add smoke-fd"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/arch/amd64/include/ioctl_fd.rs", "sys/dev/ic/nec765reg.rs", "sys/dev/isa/fd.rs", "sys/dev/isa/fdc.rs", "sys/dev/isa/fdlink.rs", "sys/dev/isa/fdreg.rs"]
+status = "applied"
+emibsd = "6d7b2f737fad"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "d4b264267176"
+subject = "Merge branch 'worktree-agent-af0027fe28ef0b0ea' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit of the isadma/fdc branch into the M16a coordinator branch (with 7609a91f); every file it brings equals LZ at a recorded commit (94eba32a; 7609a91f's docs are LZ's), nothing to apply"
+
+[[commit]]
+lz = "fa0bcc235f12"
+subject = "Merge branch 'main' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit of main (8fe75082, LZ's porting rule) into the M16a coordinator branch; it brings only that rules file, recorded not-applicable"
