@@ -464,6 +464,7 @@ sys/                    the kernel (package `bsd`): LZ's subsystem directories, 
 init/                   the Rust init, the kernel's self-test
 tools/xtask/            images, QEMU, smoke tests, userland build, the lz tooling, unsafe-report
 docs/                   the process (PHASE2), architecture, idioms, roadmap, sync, journal, status
+.claude/                rules, agent roles, the /redesign workflow, the /progress skill, agent memory
 ```
 
 ## Documentation
@@ -479,6 +480,8 @@ docs/                   the process (PHASE2), architecture, idioms, roadmap, syn
 | How is LZ's later work absorbed? | [docs/SYNC.md](docs/SYNC.md), [.claude/rules/lz-sync.md](.claude/rules/lz-sync.md) |
 | Where are we right now? | [docs/STATUS.md](docs/STATUS.md) |
 | What rules does every change follow? | [CLAUDE.md](CLAUDE.md), [.claude/rules/](.claude/rules/) |
+| Who redesigns, and how is a batch run? | [docs/PHASE2.md](docs/PHASE2.md) ("Who redesigns"), [.claude/agents/](.claude/agents/) |
+| How far is the redesign? | `/progress` in Claude Code; the method in [docs/PHASE2.md](docs/PHASE2.md) ("Measuring progress") |
 
 ## Contributing and workflow
 
@@ -506,6 +509,60 @@ Unsafe: kern 1234 -> 1201
 
 The full process is in [docs/PHASE2.md](docs/PHASE2.md); the monthly sync with LZ in
 [docs/SYNC.md](docs/SYNC.md).
+
+Most of the redesign is done by Claude Code subagents with fixed roles ([.claude/agents/](.claude/agents/):
+`redesigner`, `mechanical`, `reviewer`, `integrator`, `debugger`, `milestone-coordinator`, ...)
+under one contract, [.claude/rules/subagents.md](.claude/rules/subagents.md). `/redesign <modules>`
+runs a batch through them (plan, redesign in worktrees, review, integrate, `just ci`) and
+`/progress` measures the redesign per milestone; their lessons persist in
+[.claude/agent-memory/](.claude/agent-memory/).
+
+How `/redesign` runs a batch ([.claude/workflows/redesign.js](.claude/workflows/redesign.js)):
+
+```mermaid
+flowchart TD
+    A["/redesign args<br/>module paths | N2 | {modules, max, base, note}"] --> B{"modules named?"}
+    B -- no --> Z0["return: nothing requested"]
+    B -- yes --> P
+
+    subgraph PLAN["phase('Plan')"]
+        P["agent(plan) · schema PLAN<br/>reads only: lineage.toml, ROADMAP, wc -l, grep -rl<br/>clusters, delicate/mechanical, sensitive, excluded"] --> P1{"clusters?"}
+    end
+    P1 -- "0" --> Z1["return: planned 0 + excluded"]
+    P1 -- "n" --> S
+
+    subgraph PIPE["pipeline(clusters): stage 2 of each cluster starts as soon as its stage 1 ends, no barrier"]
+        direction TB
+        S["slot(): at most MAX agents booting QEMU at once"] --> R
+        R["agent(redesignPrompt) · worktree · schema RESULT<br/>redesigner if delicate, mechanical otherwise"] --> R1{"status"}
+        R1 -- blocked --> H["verdict = blocked"]
+        R1 -- "done / partial" --> V["agent(reviewPrompt) · reviewer · schema REVIEW<br/>no QEMU: outside the limit"]
+        V --> V1{"verdict"}
+        V1 -- approve --> OK["verdict = approve<br/>(+ security_review when sensitive)"]
+        V1 -- "changes with defects" --> F["slot() → agent(fixPrompt) · worktree<br/>a fresh agent: git merge the reviewed branch, fix, commit"]
+        F --> F1{"blocked?"}
+        F1 -- no --> V2["agent(reviewPrompt) re-review"] --> OUT
+        F1 -- yes --> OUT
+        OK --> OUT
+        H --> OUT
+        OUT(("{cluster, work, review, verdict}"))
+    end
+
+    OUT --> C{"any approve?"}
+    C -- no --> Z2["return summary: held, branches and HANDOFF.md kept"]
+    C -- yes --> I
+
+    subgraph INT["phase('Integrate'): the one real barrier"]
+        I["agent(integrator) · worktree · schema INTEGRATION<br/>git merge in order (--no-ff + Security-Review: on sensitive ones)<br/>lineage.toml, unsafe-budget.toml, IDIOMS, justfile, docs, memories<br/>under /tmp/emibsd/ci.lock: just userland if needed, just jobs=3 ci, diff-openbsd if needed"]
+    end
+    I --> N{"ci_rc == 0"}
+    N -- yes --> Z3["summary.next: with the user's OK, fast-forward main to the tip; remove the worktrees"]
+    N -- no --> Z4["summary.next: read integrated.left and held before anything reaches main"]
+```
+
+Two barriers, not four: the plan and the integration; between them every cluster advances on
+its own. The limit counts QEMU, not agents: reviewers run outside it. `main` never appears: the
+result is a branch and a `summary.next` line.
 
 Problems go to [Issues](https://github.com/enavarre-cl/EmiBSD/issues). Problems of the port
 itself go to [EmiBSD.LZ's Issues](https://github.com/enavarre-cl/EmiBSD.LZ/issues). External

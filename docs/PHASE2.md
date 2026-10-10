@@ -53,6 +53,40 @@ the RCS ident lines), `adapted` (only its call sites changed, because a module i
 redesigned) or `redesigned`; a redesign of an item used by more than 50 modules waits for the
 LZ milestone that touches them to close (`.claude/rules/re-engineering.md`).
 
+## Who redesigns: the agents
+
+Since 2026-10-10 the redesign is done by Claude Code subagents with fixed roles, defined in
+`.claude/agents/` and sharing one contract, `.claude/rules/subagents.md` (setup in a worktree,
+the machine lock, the long-run watcher, when to stop, what to report). The set-up is EmiBSD.LZ's
+(its commit `b0901dd3`, where 196 hand-written launch prompts had carried the same rules),
+adapted: the porter became the redesigner, `ports.toml` became `lineage.toml`, the trailers are
+this repository's, and there is no bug-log role, since LZ is never told this repository exists.
+
+| Agent | Model | Does |
+|---|---|---|
+| `milestone-coordinator` | opus | an `N` milestone: measure the baseline, split, launch, integrate, close CI and docs |
+| `redesigner` | opus | a delicate redesign: locking, `unsafe`, data structures, the areas of `security-review.md`, any module over 3,000 lines |
+| `mechanical` | sonnet | tests added to a module, `lineage.toml` bookkeeping, the same call-site change over many files, docs once decided |
+| `integrator` | opus | merge agent branches, resolve the shared files (`lineage.toml`, the budget, the justfile), `just ci` |
+| `debugger` | opus | the root cause of a failing or flaky smoke, test or `diff-openbsd` scenario, fixed without weakening an expectation |
+| `reviewer` | opus | a read-only review of a branch: behaviour kept, `unsafe`, rules, security; it writes the `Security-Review:` text |
+| `openbsd-probe` | sonnet | boot the real OpenBSD 8.0 on a QEMU setup and report what it does |
+| `image-worker` | sonnet | view, crop, resize images, so the coordinator's context stays small |
+
+Five of them keep a memory, `.claude/agent-memory/<agent>/MEMORY.md`: one line per lesson that
+outlives a run (an idiom that took two attempts, a known flake, a conflict pattern), committed
+with the tree so the whole team of agents learns. An agent in a worktree writes it on its branch;
+the `integrator` keeps both sides on merge. Task state lives in a `HANDOFF.md`, never in memory.
+The `reviewer` has no memory on purpose: every change gets fresh eyes.
+
+`/redesign <modules | N row>` (`.claude/workflows/redesign.js`) runs the loop above as one
+workflow: plan the clusters (modules that share types together, a big module alone), one
+redesigner per cluster in its own worktree (at most four at once), a reviewer per branch with one
+fix round, then an integrator that merges the approved branches and runs `just ci`. Its result
+is a branch; `main` moves only by hand, after the user's OK. Running it is the user's decision,
+never the model's. The machine lock, `/tmp/emibsd/ci.lock`, is shared with LZ: one Mac, one
+`ci` at a time.
+
 ## How it is measured
 
 - `cargo xtask unsafe-report`: per subsystem, blocks, `unsafe fn`, `unsafe impl`, `unsafe
@@ -71,6 +105,24 @@ first `just ci` and `just diff-openbsd` in this tree (recorded in the N0 section
 arch, `smoke-tcpbench`, a vioblk number; amd64 under TCG is indicative only until M17 brings
 real hardware). The blockers LZ had at `lz-origin` are inherited and listed in `docs/STATUS.md`:
 an N-milestone report is not a regression for them.
+
+## Measuring progress
+
+`/progress [milestone]` (`.claude/skills/progress/`) prints one row per ROADMAP milestone,
+computed when asked from `lineage.toml`, `docs/ROADMAP.md`, the LZ clone at the pin and git:
+modules redesigned, adapted and inherited, LZ lines done and left (the lines of each module's LZ
+sources at the pin), Rust lines, and the time the rest would take at the project's own average
+of LZ lines redesigned per active day. Its conventions:
+
+- a module belongs to the `N` row whose scope cell names its path in backticks (a directory, a
+  file or a glob), the most specific pattern winning; a row whose scope is prose resolves
+  nothing; modules no row names are listed apart;
+- `adapted` modules are shown apart from `redesigned` ones: their call sites followed a
+  redesign, nothing of their own changed; extras count nowhere;
+- the time column is a linear extrapolation of the past; it promises nothing.
+
+The numbers in README, STATUS and JOURNAL do not come from it: they come from
+`cargo xtask lz status`, `cargo xtask unsafe-report` and the git commands `docs/JOURNAL.md` names.
 
 ## How LZ's later work is absorbed
 
@@ -101,6 +153,7 @@ commit; crypto, IPsec, WireGuard and softraid CRYPTO change last of all, with ex
 | 2026-10-09 | The port's repository became EmiBSD.LZ (public, locked down); this one is native from `lz-origin` = `f5985f1d055a`; `reference/openbsd-src` kept at LZ's pin; the milestone order N1..N8 recommended, the user's call at each start. |
 | 2026-10-09 | Authorship, the user's decision: every `.rs` under `sys/` and `tools/` carries the author's ISC block ("Copyright (c) 2026 Emilio Navarrete Lineros <enavarre@outlook.com>") in its `<LICENSES>` zone, first (the latest change), before the original blocks, which never change, or alone where there are none; `license = "none"` now describes the C source, not the Rust file; `lz check` requires the block and compares inherited modules without it. |
 | 2026-10-09 | From the external review: `adapted` as a third module status; the `method` of every applied sync; a timing rule for widely used items; `docs/SYNC.md`; the blockers inherited at `lz-origin` recorded in the baseline. |
+| 2026-10-10 | EmiBSD.LZ's subagent set-up (`b0901dd3`) adopted: roles in `.claude/agents/` (`redesigner` and `mechanical` for LZ's porters), one contract in `.claude/rules/subagents.md`, `.claude/agent-memory/` committed, the machine lock `/tmp/emibsd/ci.lock` shared with LZ, `/redesign` and `/progress` (the ROADMAP scope resolved against `lineage.toml`; no milestone key in its rows); no `external-bugs` role: slips go to the user. |
 
 ## Later
 

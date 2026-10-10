@@ -145,6 +145,12 @@ the session.
 - `docs/ROADMAP.md`: milestones N0.. with mechanical exit criteria. `docs/SYNC.md`: the monthly
   sync with LZ, step by step.
 - `docs/SETUP.md`: toolchain, QEMU and the boot loaders on macOS.
+- `.claude/agents/`: the subagent roles (`milestone-coordinator`, `redesigner`, `mechanical`,
+  `integrator`, `debugger`, `reviewer`, `openbsd-probe`, `image-worker`); launch them by
+  `subagent_type`; their lessons persist in `.claude/agent-memory/<agent>/`. The shared
+  contract is `.claude/rules/subagents.md`. `/redesign <modules | N row>`
+  (`.claude/workflows/redesign.js`) runs a whole batch through them; `/progress`
+  (`.claude/skills/progress/`) measures the redesign per milestone.
 - `docs/STATUS.md` and `lz/PINNED.md` are imported below, so they are always in context.
 
 @docs/STATUS.md
