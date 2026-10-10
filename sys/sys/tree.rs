@@ -613,8 +613,11 @@ impl<T> Default for RbEntry<T> {
 /// `_name##_RBT_INFO`: the `struct rb_type` of an `RBT_*` adapter.
 pub struct RbtInfo<A>(PhantomData<A>);
 
-// SAFETY: `Adapter`'s contract (upheld by `queue_adapter!`, which `tree_adapter!` expands to)
-// makes `A::OFFSET` the offset of the field `A::entry` projects, of type `A::Entry`; an
+// SAFETY: `Adapter`'s contract makes `A::OFFSET` the offset of the field `A::entry` projects,
+// of type `A::Entry`. `Adapter` is a safe trait, so the compiler does not hold implementers to
+// it: `queue_adapter!` (which `tree_adapter!` expands to) is the only impl, computing `OFFSET`
+// with `offset_of!` of the same field `entry` returns, and `cargo xtask lz check` (in
+// `just ci`) refuses an impl written anywhere else (`docs/ZERO_UNSAFE.md`, decision 7). An
 // `RbtAdapter` has `Entry = RbtEntry`, so an `RbtEntry` lies at `OFFSET` in every `A::Elem`.
 unsafe impl<A: RbtAdapter> RbType for RbtInfo<A> {
     type Elem = A::Elem;

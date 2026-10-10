@@ -136,6 +136,12 @@
 //! - The entries no longer need their next link first: `container_of` uses the adapter's
 //!   offset plus the link's offset in its entry (`NextEntry::NEXT`). They stay `#[repr(C)]`,
 //!   the C's layout, for the structures that embed them.
+//! - [`Adapter`] is a safe trait and `queue_adapter!` expands a plain `impl`
+//!   (`docs/ZERO_UNSAFE.md`, decision 7), so a module that declares a list can be compiled
+//!   under `#[forbid(unsafe_code)]`. The contract `container_of` trusts (`OFFSET` is the offset
+//!   of the field `entry` projects) is kept by the macro, which computes both from one field
+//!   name, and `cargo xtask lz check` refuses any `impl Adapter` written by hand: the one place
+//!   where a CI check, not the compiler, upholds a premise of a `SAFETY:` argument.
 
 use core::cell::Cell;
 use core::marker::PhantomData;
@@ -155,9 +161,10 @@ macro_rules! queue_adapter {
         $(#[$meta])*
         $vis struct $name;
 
-        // SAFETY: `entry` projects the named field and nothing else, and `OFFSET` is that
-        // field's offset, so the two agree.
-        unsafe impl $crate::sys::queue::Adapter for $name {
+        // `Adapter`'s contract: `entry` projects the named field and nothing else, and
+        // `OFFSET` is that field's offset, so the two agree. This macro and `tree_adapter!`
+        // (which expands to it) are the only impls; `cargo xtask lz check` refuses any other.
+        impl $crate::sys::queue::Adapter for $name {
             type Elem = $elem;
             type Entry = $entry;
             const OFFSET: usize = ::core::mem::offset_of!($elem, $field);
@@ -1580,11 +1587,15 @@ impl<'a, A: StailqAdapter> Iterator for StailqIter<'a, A> {
 /// Names the entry field a list uses inside its element type: the `field` argument of the C
 /// macros, fixed once per head type. Made with [`crate::queue_adapter!`].
 ///
-/// # Safety
+/// # Contract
 ///
-/// `entry` must return the entry embedded in `elem` at offset `OFFSET`, the same one every
-/// time, and nothing else.
-pub unsafe trait Adapter {
+/// `entry` returns the entry embedded in `elem` at offset `OFFSET`, the same one every time,
+/// and nothing else; [`container_of`] trusts it to step back from a link to its element. The
+/// trait is safe (`docs/ZERO_UNSAFE.md`, decision 7), so the compiler does not hold an
+/// implementer to this: [`crate::queue_adapter!`] alone implements it, with `OFFSET` the
+/// `offset_of!` of the very field `entry` projects (and `tree_adapter!` expands to it), and
+/// `cargo xtask lz check`, in `just ci`, refuses an impl written anywhere else.
+pub trait Adapter {
     /// The element type (`struct type` in C).
     type Elem;
     /// The embedded entry type: `SlistEntry<Elem>`, `ListEntry<Elem>`, ...
@@ -1727,6 +1738,10 @@ where
 
 /// The element whose next link is `link`: the inverse of [`link_of`]. Address arithmetic only;
 /// the caller dereferences the result where the link is known to be inside a live element.
+/// The step back is `A::OFFSET` plus the link's offset in its entry, so the result is the
+/// element only because `A::OFFSET` is the offset of the entry [`link_of`] took the link from:
+/// [`Adapter`]'s contract, which only `queue_adapter!` implements (`cargo xtask lz check`
+/// refuses any other impl); the three readers' `SAFETY:` arguments rest on it.
 fn container_of<A: Adapter>(link: NonNull<Link<A::Elem>>) -> Option<NonNull<A::Elem>>
 where
     A::Entry: NextEntry<A::Elem>,
