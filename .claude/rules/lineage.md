@@ -51,7 +51,12 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
   trailer. `lz status` shows the three columns.
 - A `redesigned` module keeps the whole licence blocks and the
   `//! Upstream:` lines of every file in its `lz` list, and has one `//! LZ: <path>@<12-hex>`
-  line per entry (`rust-kernel.md`, file layout).
+  line per entry (`rust-kernel.md`, file layout). Outside the core of `unsafe-core.toml` it is
+  also `forbid`: its `mod` declaration carries `#[forbid(unsafe_code)]` (`docs/ZERO_UNSAFE.md`;
+  `lz check` enforces it once the sweep has marked N1's modules). The attribute lives in the
+  parent `mod.rs`, which `lineage.toml` does not track, so an `inherited` module can be `forbid`
+  and stay byte-identical to LZ. A module that needs no redesign and is `forbid` as it stands
+  may carry a per-file verdict (`reviewed`, with its reason) once the xtask supports it.
 - Every `.rs` under `sys/` except `mod.rs`, `lib.rs`, `main.rs`, `build.rs`, `sys/machine/`,
   `sys/arch/host/` and `sys/stand/` is referenced by exactly one `[[module]]` or `[[extra]]`.
 - The reverse direction: every `.rs` at the LZ pin (same exclusions) appears in some `lz` list,

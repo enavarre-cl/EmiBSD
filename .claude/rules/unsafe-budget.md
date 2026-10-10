@@ -1,8 +1,18 @@
 # The unsafe budget
 
-Safety is the first goal of the native system (`docs/PHASE2.md`): fewer and smaller `unsafe`
-blocks, safe abstractions over the ones that remain, and a soundness argument wherever `unsafe`
-stays. The budget makes that measurable and keeps it from regressing.
+Safety is the first goal of the native system (`docs/PHASE2.md`): zero `unsafe` outside a
+listed core (`docs/ZERO_UNSAFE.md`, the user's decision of 2026-10-10). The budget makes that
+measurable and keeps it from regressing.
+
+- The core is the list of paths in `unsafe-core.toml` (the hardware, the boot code, the host
+  harness, the runtime of primitives). Only there may `unsafe` live. A path joins the list only
+  with the user's OK, in a commit of its own, like a budget raise.
+- Every module outside the core is either `forbid` (its `mod` declaration in the parent
+  `mod.rs` carries `#[forbid(unsafe_code)]`, so the compiler refuses any `unsafe` in it) or
+  legacy (inherited, not yet redesigned). The `forbid` count never falls; the legacy total
+  never rises, except in the re-baseline commit of an LZ sync (below).
+- Until `cargo xtask unsafe-report` prints the core, `forbid` and legacy groups (the xtask
+  split of `docs/ZERO_UNSAFE.md` section 9), the per-subsystem rows below are the check.
 
 - `unsafe-budget.toml` holds, per `cargo xtask unsafe-report` row (`kern`, `uvm`, `net`,
   `dev/pci`, `arch/amd64`, `lib/libkern`, ...), the kernel total (blocks + fn + impl + trait +

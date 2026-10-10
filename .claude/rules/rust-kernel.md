@@ -37,8 +37,12 @@ paths:
 - LZ's idioms are in `docs/C_TO_RUST.md` (frozen, the key to reading LZ code); native idioms,
   LZ shape -> native shape, are rows of `docs/IDIOMS.md`. Follow them; propose a new row rather
   than improvising.
-- Every `unsafe` in a redesigned module carries a soundness argument, not a reference to the C
-  (`unsafe-budget.md`).
+- No `unsafe` outside the core of `unsafe-core.toml` (`docs/ZERO_UNSAFE.md`): a module outside
+  it is legacy or `forbid`. Every `unsafe` in the core carries a soundness argument, not a
+  reference to the C (`unsafe-budget.md`), and the core exposes safe APIs: an `unsafe fn` there is
+  for the core's own use, since a caller of it cannot be `forbid`.
+- `Adapter` (`sys/sys/queue.rs`) is implemented only by `queue_adapter!` and `tree_adapter!`;
+  never write an impl by hand (`lz check` refuses one once the xtask supports it).
 - Dependencies allowed in `sys/`: `libkern`, `libz`, `bitflags`; dev-only `proptest`. The boot
   loaders' crates (M14) may also use `libsa`, `boot` and `efi` (ours, OpenBSD code); the kernel
   does not depend on them. Lists and trees

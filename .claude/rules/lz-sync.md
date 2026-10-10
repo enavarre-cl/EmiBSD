@@ -15,9 +15,14 @@ records every decision. LZ is never written to: `reference/emibsd-lz/` is a read
     clone as a remote); an adapted module as a cherry-pick with conflicts expected at its call
     sites, resolved by hand; a redesigned module takes it re-implemented in its new shape. The
     record names the EmiBSD commit and the `method`: `cherry-pick`, `cherry-pick-conflicts` or
-    `reimplemented`. The three totals go in every `lz-sync:` commit body and in the JOURNAL:
-    if `reimplemented` grows month over month, the roadmap's order is reconsidered. A file new in LZ is applied as a new `inherited` module in
-    the same commit (`lineage.toml` in the same commit, as always).
+    `reimplemented`. The three totals go in every `lz-sync:` commit body and in the JOURNAL.
+    A `forbid` module (`docs/ZERO_UNSAFE.md`) takes an LZ change by cherry-pick when it still
+    compiles, and `reimplemented` in safe code when the change brings `unsafe`: the compiler
+    decides, and `reimplemented` growing is expected. The signal to reconsider the roadmap is a
+    legacy `unsafe` total that stops falling from one sync to the next. A file new in LZ is
+    applied as a new `inherited` (legacy) module in the same commit (`lineage.toml` in the same
+    commit, as always); its `unsafe` raises the legacy ceiling only through the sync's own
+    re-baseline commit, with the user's OK.
   - `not-applicable`: the change touches nothing native derives from, or a path that does not
     exist here; the reason says which.
   - `covered-by-redesign`: the redesigned code cannot have the bug or already has the feature;

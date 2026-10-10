@@ -24,6 +24,9 @@ Everything in this repository (code, comments, docs, commits) is in English.
 - `lineage.toml` is updated in the same commit as the change it describes (`.claude/rules/lineage.md`).
 - Every commit carries its numbers: `LZ:` per source file, `Unsafe:` when a count moved
   (`.claude/rules/git-commits.md`). `cargo xtask unsafe-report --check` stays green.
+- Zero `unsafe` outside the core listed in `unsafe-core.toml` (`docs/ZERO_UNSAFE.md`): every
+  other module ends `#[forbid(unsafe_code)]` on its `mod` declaration; the `forbid` count never
+  falls; adding a path to the core is the user's decision.
 - No `std` outside `sys/arch/host/`, `#[cfg(test)]` code and `tools/xtask/`.
 - Stable toolchain, pinned in `rust-toolchain.toml`. No nightly features, ever.
 - A new crate dependency needs the user's OK, a row in `docs/ARCHITECTURE.md` ("Dependencies") and

@@ -25,8 +25,13 @@ starting point, and what userland sees never changes.
   (`sys/sys/syscall.rs`, the sysctl MIBs, ioctls, device majors, every `#[repr(C)]` shared with
   userland). An idiom used for the first time is a new row of `docs/IDIOMS.md` in the same
   commit.
-- Prove: every `unsafe` that stays carries a `// SAFETY:` with a soundness argument (the
-  invariant and who upholds it); every behaviour whose shape changed gets a test in the
+- The target is `forbid` (`docs/ZERO_UNSAFE.md`): a module outside the core is `redesigned`
+  only when it compiles under `#[forbid(unsafe_code)]` on its `mod` declaration. What it needs
+  from the core (a lock that owns its data, a typed pool, an owner's collection, a safe seam
+  over a legacy module) lands in the core first, with its first user and its `docs/IDIOMS.md`
+  row; `unsafe` never moves into a non-core module to make it build.
+- Prove: every `unsafe` that stays (only in the core) carries a `// SAFETY:` with a soundness
+  argument (the invariant and who upholds it); every behaviour whose shape changed gets a test in the
   `<TESTS>` zone; the affected smokes and `just diff-openbsd` pass; a security-sensitive area
   follows `security-review.md`.
 - Keep the gaps honest: an inherited `unported!` path stays listed in `## Deviations` and is
