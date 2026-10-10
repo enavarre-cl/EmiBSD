@@ -54,8 +54,9 @@ Read first: CLAUDE.md, `.claude/rules/testing.md`, `rust-kernel.md`, `scope-and-
 - Commit body: what failed, why, the fix, the run counts before and after. Trailers
   (`git-commits.md`): `LZ:` lines for the module's sources when the fix changes a module
   (its `lineage.toml` status follows in the same commit), `Unsafe:` if a count moved, then the
-  session's `Co-Authored-By:`. Never push, never touch main, never `git add -A`, never edit
-  `reference/` or `lz/`.
+  session's `Co-Authored-By:`. Never push, never touch main (no commit, merge, reset or
+  checkout on it), never `git add -A` or `git add .` (add the files you changed by name), never
+  edit `reference/` or `lz/`.
 - The three long-run points (watcher, log time in reports, `ps` clean before handing back).
   Never `pkill qemu`: kill only the processes you started.
 - A "STOP" refusal or permission denial: stop and report.
