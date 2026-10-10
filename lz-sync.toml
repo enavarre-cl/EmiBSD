@@ -354,3 +354,41 @@ subject = "Merge branch 'worktree-agent-a4daa0d3b74ebc6fd' into worktree-agent-a
 modules = []
 status = "not-applicable"
 reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "13bcb0ca6a03"
+subject = "dev/ata: port the IDE/ATA headers (atareg, atavar, satareg, wdvar, wdc*)"
+modules = ["sys/dev/ata/atareg.rs", "sys/dev/ata/atavar.rs", "sys/dev/ata/satareg.rs", "sys/dev/ata/wdvar.rs", "sys/dev/ic/wdcevent.rs", "sys/dev/ic/wdcreg.rs", "sys/dev/ic/wdcvar.rs"]
+status = "applied"
+emibsd = "91343780468d"
+method = "cherry-pick"
+
+[[commit]]
+lz = "a07e3710a618"
+subject = "Merge branch 'worktree-agent-aec5d6538af525b1d' into worktree-agent-a2364f82ca4b0de05"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "3359ea7ce10c"
+subject = "dev/ic: port wdc.c, the IDE channel core, with ata.c"
+modules = ["sys/dev/ata/ata.rs", "sys/dev/ic/wdc.rs", "sys/dev/ic/wdcvar.rs"]
+status = "applied"
+emibsd = "6f3c1ceff277"
+method = "cherry-pick"
+
+[[commit]]
+lz = "a696f9b3ae3d"
+subject = "dev/ata: port wd(4) and ata_wdc.c, its transfers through wdc"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/arch/arm64/arm64/conf.rs", "sys/dev/ata/ata_wdc.rs", "sys/dev/ata/wd.rs", "sys/dev/ic/wdc.rs"]
+status = "applied"
+emibsd = "ff5fb3f57a32"
+method = "cherry-pick"
+
+[[commit]]
+lz = "3a6d783ed3ca"
+subject = "Merge branch 'worktree-agent-a2364f82ca4b0de05' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
