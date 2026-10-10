@@ -52,11 +52,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # macOS's /usr/bin/python3 is older than 3.11
+if sys.version_info < (3, 11):  # macOS's /usr/bin/python3 is 3.9: re-exec under a newer one
+    import os
+    import shutil
+
+    for name in ("python3.14", "python3.13", "python3.12", "python3.11"):
+        exe = shutil.which(name) or shutil.which(name, path="/opt/homebrew/bin:/usr/local/bin")
+        if exe:
+            os.execv(exe, [exe, "-I", __file__, *sys.argv[1:]])
     print(f"progress: Python 3.11+ is needed (tomllib); this is {sys.version.split()[0]}")
     sys.exit(0)
+
+import tomllib  # noqa: E402
 
 MS_ID = re.compile(r"N\d+[a-z]*")
 STATUSES = ("redesigned", "adapted", "inherited")
@@ -384,9 +391,10 @@ def main() -> None:
         shown = ", ".join(subs[:8]) + (", ..." if len(subs) > 8 else "")
         ud, udu = lines_of(u["lz_done"])
         ul, ulu = lines_of(u["lz_left"])
+        adapted_note = f" ({u['adapted']} adapted)" if u["adapted"] else ""
         print(f"| (no milestone) | modules no ROADMAP scope names: {shown} | — | "
               f"{fmt(u['redesigned'] + u['adapted'])}"
-              f"{f' ({u['adapted']} adapted)' if u['adapted'] else ''} | {fmt(u['inherited'])} | "
+              f"{adapted_note} | {fmt(u['inherited'])} | "
               f"{with_unknown(ud, udu)} | {with_unknown(ul, ulu)} | {fmt(u['rust'])} | — |")
     print()
 
