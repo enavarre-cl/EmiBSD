@@ -231,6 +231,67 @@ pub(crate) fn smp() -> Option<u32> {
     SMP.get().copied()
 }
 
+/// What the boot image is to the VM ([`qemu_command`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BootMedium {
+    /// A hard disk: AHCI's first port on amd64 `q35`, a virtio disk on arm64 (every smoke).
+    Disk,
+    /// A USB stick (`usb-storage`) on a `qemu-xhci` of its own, as `install80.img` is used
+    /// (M16g, `distrib.rs`). QEMU writes go to a temporary overlay (`snapshot=on`): the
+    /// image is the release's and stays as made.
+    UsbStick,
+    /// A CD-ROM (`ide-cd`, read-only) on AHCI's first port, as `cd80.iso` is used (M16g,
+    /// amd64 only).
+    Cdrom,
+}
+
+/// The boot medium of the next VM [`qemu_command`] makes ([`BootMedium::Disk`] unless an
+/// M16g command says otherwise; it sets it back for the VMs after).
+static BOOT_MEDIUM: std::sync::Mutex<BootMedium> = std::sync::Mutex::new(BootMedium::Disk);
+
+/// Sets the boot medium of the next VMs.
+pub(crate) fn set_boot_medium(m: BootMedium) {
+    if let Ok(mut b) = BOOT_MEDIUM.lock() {
+        *b = m;
+    }
+}
+
+/// The boot medium of the next VM.
+pub(crate) fn boot_medium() -> BootMedium {
+    BOOT_MEDIUM.lock().map(|b| *b).unwrap_or(BootMedium::Disk)
+}
+
+/// The QEMU id of the boot stick's own `qemu-xhci` ([`BootMedium::UsbStick`]).
+const BOOT_XHCI_ID: &str = "bootxhci";
+
+/// The `-drive` and `-device` arguments of the boot image `image` (id `hd0`) when the
+/// medium is not a hard disk ([`BootMedium::Disk`], which `qemu_command` sets up itself).
+fn removable_boot_args(medium: BootMedium, image: &Path) -> Option<Vec<String>> {
+    match medium {
+        BootMedium::Disk => None,
+        BootMedium::UsbStick => Some(vec![
+            "-drive".to_string(),
+            format!(
+                "if=none,format=raw,file={},id=hd0,snapshot=on",
+                image.display()
+            ),
+            "-device".to_string(),
+            format!("qemu-xhci,id={BOOT_XHCI_ID}"),
+            "-device".to_string(),
+            format!("usb-storage,bus={BOOT_XHCI_ID}.0,drive=hd0,bootindex=0"),
+        ]),
+        BootMedium::Cdrom => Some(vec![
+            "-drive".to_string(),
+            format!(
+                "if=none,format=raw,media=cdrom,readonly=on,file={},id=hd0",
+                image.display()
+            ),
+            "-device".to_string(),
+            "ide-cd,drive=hd0,bus=ide.0,bootindex=0".to_string(),
+        ]),
+    }
+}
+
 /// The path of persistent disk `k` (`sd<k>`): disk 0 is [`disk_path`], the others are
 /// `disk-<arch>[-<tag>]-sd<k>.img`.
 pub(crate) fn disk_path_n(root: &Path, arch: Arch, tag: Option<&str>, k: usize) -> PathBuf {
@@ -664,14 +725,23 @@ pub(crate) fn qemu_command(
             cmd.args(["-M", crate::hwopts::amd64_machine(), "-cpu", "qemu64"]);
             // M16e (hwopts.rs): `--iommu`, before every PCI device.
             cmd.args(crate::hwopts::iommu_args());
-            cmd.arg("-drive").arg(format!(
-                "if=none,format=raw,file={},id=hd0",
-                image.display()
-            ));
-            // M16e (hwopts.rs): on `--machine pc` the boot image goes on an AHCI controller
-            // added after every other device (`add_devices`), not on the PIIX3 IDE channel.
-            if !crate::hwopts::machine_pc() {
-                cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
+            // M16g: the boot image as a USB stick or a CD (`distrib.rs`), on q35 only.
+            if let Some(args) = removable_boot_args(boot_medium(), image) {
+                if crate::hwopts::machine_pc() {
+                    return Err("a USB stick or CD boot medium needs q35, not --machine pc".into());
+                }
+                cmd.args(args);
+            } else {
+                cmd.arg("-drive").arg(format!(
+                    "if=none,format=raw,file={},id=hd0",
+                    image.display()
+                ));
+                // M16e (hwopts.rs): on `--machine pc` the boot image goes on an AHCI
+                // controller added after every other device (`add_devices`), not on the
+                // PIIX3 IDE channel.
+                if !crate::hwopts::machine_pc() {
+                    cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
+                }
             }
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
             // M13 (hwopts.rs): `--nic` puts an em(4) NIC in vio0's place; M16b
@@ -719,11 +789,22 @@ pub(crate) fn qemu_command(
                 "virtio-blk-device"
             };
             cmd.args(["-M", &machine, "-cpu", "cortex-a72"]);
-            cmd.arg("-drive").arg(format!(
-                "if=none,format=raw,file={},id=hd0",
-                image.display()
-            ));
-            cmd.args(["-device", &format!("{blk},drive=hd0,bootindex=0")]);
+            // M16g: the boot image as a USB stick (`distrib.rs`); no CD on arm64.
+            match removable_boot_args(boot_medium(), image) {
+                Some(_) if boot_medium() == BootMedium::Cdrom => {
+                    return Err("the CD boot medium is amd64's (cd80.iso)".into());
+                }
+                Some(args) => {
+                    cmd.args(args);
+                }
+                None => {
+                    cmd.arg("-drive").arg(format!(
+                        "if=none,format=raw,file={},id=hd0",
+                        image.display()
+                    ));
+                    cmd.args(["-device", &format!("{blk},drive=hd0,bootindex=0")]);
+                }
+            }
             // QEMU `virt` hands virtio-mmio slots out from the top down and the kernel
             // finds them bottom up, so the device added LAST is vio0: the link NIC goes
             // before the user-mode one.

@@ -155,24 +155,36 @@ pub(crate) fn install_media(root: &Path, args: &[&str]) -> Result<()> {
     let arch = arch_of(args)?;
     let rd_kernel = PathBuf::from(opt(args, "--rd-kernel").ok_or("missing `--rd-kernel FILE`")?);
     let bsd = PathBuf::from(opt(args, "--bsd").ok_or("missing `--bsd FILE`")?);
-    let dir = install_dir(root, arch);
     crate::userland::with_ctx(root, arch, |ctx| {
-        use crate::userland::{miniroot, sets};
-        let pubkey = sets::test_pubkey(ctx)?;
-        let image = dir.join("miniroot.ffs");
-        miniroot::build(
-            ctx,
-            arch,
-            &miniroot::Options {
-                pubkey: Some(&pubkey),
-                auto_install_conf: None,
-                image: &image,
-            },
-        )?;
-        let bsd_rd = dir.join("bsd.rd");
-        miniroot::make_bsd_rd(ctx, &rd_kernel, &image, &bsd_rd)?;
-        sets::build(ctx, arch, Some(&bsd), Some(&bsd_rd)).map(|_| ())
+        let bsd_rd = make_bsd_rd(ctx, root, arch, &rd_kernel)?;
+        crate::userland::sets::build(ctx, arch, Some(&bsd), Some(&bsd_rd)).map(|_| ())
     })
+}
+
+/// The miniroot (with the test key) and `bsd.rd` of the install media, in [`install_dir`];
+/// `bsd.rd`'s path. `cd-iso` (M16g, `distrib.rs`) makes them so too, without the sets.
+pub(crate) fn make_bsd_rd(
+    ctx: &crate::userland::Ctx<'_>,
+    root: &Path,
+    arch: Arch,
+    rd_kernel: &Path,
+) -> Result<PathBuf> {
+    use crate::userland::{miniroot, sets};
+    let dir = install_dir(root, arch);
+    let pubkey = sets::test_pubkey(ctx)?;
+    let image = dir.join("miniroot.ffs");
+    miniroot::build(
+        ctx,
+        arch,
+        &miniroot::Options {
+            pubkey: Some(&pubkey),
+            auto_install_conf: None,
+            image: &image,
+        },
+    )?;
+    let bsd_rd = dir.join("bsd.rd");
+    miniroot::make_bsd_rd(ctx, rd_kernel, &image, &bsd_rd)?;
+    Ok(bsd_rd)
 }
 
 /// The answers of the autoinstall run (`install.sub`'s questions, in the order it asks them;
@@ -517,9 +529,15 @@ pub(crate) fn install_boot(root: &Path, args: &[&str]) -> Result<()> {
     let arch = arch_of(args)?;
     let disk = target_disk(root, arch);
     need(&disk, "installed disk", &recipe("smoke-install", arch))?;
+    boot_installed(root, arch, &disk, work_dir(root, arch).join("boot.log"))
+}
+
+/// [`install_boot`]'s run on the installed disk `disk` (copied into the VM's boot image),
+/// its console in `log`; M16g's `install80` (`distrib.rs`) boots its own installed disk so.
+pub(crate) fn boot_installed(root: &Path, arch: Arch, disk: &Path, log: PathBuf) -> Result<()> {
     let boot_image = boot::image_path(root, arch, None);
     let _ = fs::remove_file(&boot_image);
-    fs::copy(&disk, &boot_image).map_err(|e| format!("{}: {e}", boot_image.display()))?;
+    fs::copy(disk, &boot_image).map_err(|e| format!("{}: {e}", boot_image.display()))?;
     let cmd = boot::qemu_command(
         root,
         arch,
@@ -532,11 +550,7 @@ pub(crate) fn install_boot(root: &Path, args: &[&str]) -> Result<()> {
             set: Some("boot"),
         },
     )?;
-    let mut vm = Vm::spawn(
-        &format!("boot-{}", arch.name()),
-        cmd,
-        work_dir(root, arch).join("boot.log"),
-    )?;
+    let mut vm = Vm::spawn(&format!("boot-{}", arch.name()), cmd, log)?;
     let limit = boot::time_limit(Duration::from_secs(900));
     wait_unless(&mut vm, "login:", BOOT_FAILURES, limit)?;
     // rc.subr refuses a shell without `KSH_VERSION` (base's ksh is the full build since

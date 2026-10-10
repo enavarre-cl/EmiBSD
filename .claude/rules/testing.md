@@ -46,7 +46,9 @@ Four tiers. Every change lands with the tier it belongs to.
    the installer end to end on both archs, also on four CPUs (the user's decision of
    2026-10-07): `smoke-install-amd64`, `smoke-install-arm64` (with `smoke-install-arm64-acpi`)
    and `smoke-install-boot-amd64`, `-arm64`, `-arm64-acpi`, which make the install media
-   afresh from the tree, install to a fresh disk and boot the installed system; so it needs
+   afresh from the tree, install to a fresh disk and boot the installed system, and (M16g)
+   `smoke-install80-amd64`, `-arm64`, the same from `install80.img` as a USB stick with the
+   installer answered over the console and no HTTP server; so it needs
    `just userland` and `just comp`. Two CPUs make the races rarer and nothing else checks the
    installer, so `ci-full` is mandatory before a milestone is marked met, and its result (rc
    and wall time) goes in the milestone's closing commit. A milestone split into lettered

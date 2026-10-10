@@ -215,6 +215,86 @@ impl Vm {
         }
     }
 
+    /// Answers an interactive program over the console, as a person would: like
+    /// [`Vm::respond`], but a rule's answers are typed one per appearance of its text, in
+    /// turn (the last one again after the list is used up), so a question asked twice can be
+    /// answered differently each time. A question no rule knows is an error as soon as the
+    /// console has been still for `still` with a question at its end (its last line ends in
+    /// `?` or `]`, the installer's `ask` shows its default between brackets), rather than a
+    /// wait until `limit`.
+    pub(crate) fn respond_in_turn(
+        &mut self,
+        rules: &[(&str, &[&str])],
+        fails: &[&str],
+        stops: &[Stop],
+        limit: Duration,
+        still: Duration,
+    ) -> Result<()> {
+        let started = Instant::now();
+        let mut used = vec![0usize; rules.len()];
+        let mut last_len = self.len();
+        let mut last_change = Instant::now();
+        loop {
+            let from = self.cursor;
+            let tail = self.text_from(from);
+            let mut best: Option<(usize, usize, usize)> = None;
+            for (i, (pat, _)) in rules.iter().enumerate() {
+                if let Some(at) = tail.find(pat)
+                    && best.is_none_or(|(b, _, _)| at < b)
+                {
+                    best = Some((at, pat.len(), i));
+                }
+            }
+            for f in fails {
+                if let Some(at) = tail.find(f) {
+                    return Err(format!("{}: saw {f:?} at offset {}", self.name, from + at).into());
+                }
+            }
+            if let Some((at, n, i)) = best {
+                self.cursor = from + tail[..at + n].len();
+                let answers = rules[i].1;
+                let answer = answers
+                    .get(used[i])
+                    .or(answers.last())
+                    .copied()
+                    .unwrap_or("\n");
+                used[i] += 1;
+                println!(
+                    "xtask: {}: {:?} -> {:?} after {:.0}s",
+                    self.name,
+                    rules[i].0,
+                    answer.trim_end(),
+                    started.elapsed().as_secs_f32()
+                );
+                self.send(answer)?;
+                continue;
+            }
+            if self.exited() {
+                if stops.iter().any(|s| matches!(s, Stop::Exited)) {
+                    return Ok(());
+                }
+                return Err(format!("{}: QEMU exited", self.name).into());
+            }
+            let len = self.len();
+            if len != last_len {
+                last_len = len;
+                last_change = Instant::now();
+            } else if last_change.elapsed() > still {
+                let text = self.text_from(from);
+                let line = text.lines().last().unwrap_or("").trim_end();
+                if line.ends_with('?') || line.ends_with(']') {
+                    return Err(
+                        format!("{}: a question no answer covers: {line:?}", self.name).into(),
+                    );
+                }
+            }
+            if started.elapsed() > limit {
+                return Err(format!("{}: no end in {}s", self.name, limit.as_secs()).into());
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+    }
+
     /// Waits up to `limit` for QEMU to exit on its own.
     pub(crate) fn wait_exit(&mut self, limit: Duration) -> Result<()> {
         let started = Instant::now();

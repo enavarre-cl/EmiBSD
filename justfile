@@ -122,14 +122,14 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm smoke-virtio smoke-viogpu " + \
     "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio smoke-uhci smoke-ohci smoke-cdce smoke-ucom " + \
-    "smoke-pckbc smoke-eap smoke-lpt smoke-bell"
+    "smoke-pckbc smoke-eap smoke-lpt smoke-bell smoke-cd80"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
 
 # What the smoke recipes boot: the MULTIPROCESSOR kernels with `--features qemu`, the init
-# stand-ins, and `smoke-up`'s uniprocessor kernels (`build-up`).
-smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 efiboot-amd64 efiboot-arm64 build-bsdrd
+# stand-ins, `smoke-up`'s uniprocessor kernels (`build-up`) and `smoke-cd80`'s cd80.iso (M16g).
+smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 efiboot-amd64 efiboot-arm64 build-bsdrd cd-iso-amd64
 
 # `smoke-boot`, the first of `smokes` (it was `smoke`'s own body until the smokes ran in
 # parallel). Boots per arch, every one with a virtio network card on QEMU's user network: a
@@ -3341,16 +3341,66 @@ smoke-install-arm64-acpi: install-media-arm64
 smoke-install-boot-arm64-acpi:
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install-acpi} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install-boot {{smp}} --arch arm64 --acpi
 
+# --- the release images (M16g) -----------------------------------------------------------
+
+# The images `distrib/` makes from the install media (tools/xtask/src/distrib.rs, iso9660.rs;
+# docs/ARCHITECTURE.md, "The release images"), in target/install/<arch>: `install80.img`, the
+# install kernel, efiboot and the sets on one disk image for a USB stick, laid out as
+# `distrib/<arch>/iso/Makefile` lays it out (MBR, boot partition with efiboot, FFS1 `a` with
+# `8.0/<arch>/`), needs the install media (`just userland`, `just comp`); `cd80.iso`, amd64's
+# boot-only CD (`distrib/amd64/ramdisk_cd/Makefile`: `8.0/amd64/bsd.rd`, `etc/boot.conf`, an
+# El Torito catalogue whose EFI image holds efiboot), needs only `bsd.rd` and so no comp build:
+# `cd-iso` makes the miniroot and `bsd.rd` itself, as `install-media` does.
+install-img-amd64: install-media-amd64
+    cargo xtask install-img --arch amd64
+
+install-img-arm64: install-media-arm64
+    cargo xtask install-img --arch arm64
+
+cd-iso-amd64: build-bsdrd-amd64 efiboot-amd64
+    @test -x target/userland/amd64/host/bin/makefs || { echo "cd-iso: no makefs; run just userland first"; exit 1; }
+    cargo xtask cd-iso --arch amd64 --rd-kernel target/bsdrd/{{amd64}}/debug/bsd
+
+# M16g's criterion, per arch: `install80.img` attached as a USB stick (its own qemu-xhci,
+# `bootindex=0`, QEMU writes to an overlay) and a fresh 2304 MB disk; the firmware boots
+# efiboot from the stick, efiboot `/8.0/<arch>/bsd.rd` (amd64 by `boot.conf`'s `set image`,
+# after `set tty com0` at its prompt), and OpenBSD's installer, unmodified, is answered over
+# the serial console as a person answers it, with no response file, no network and no HTTP
+# server: `disk` as the location of the sets, `sd1` partition `a`, `8.0/<arch>`, and yes to
+# going on without `SHA256.sig` (the image has none, as OpenBSD's). It says `CONGRATULATIONS!`
+# and reboots; the installed disk then boots to `login:` and compiles a program
+# (`install-boot`'s check). About two minutes on amd64, four on arm64; not in `smokes`, part
+# of `ci-full`. Needs `just userland` and `just comp`.
+smoke-install80: smoke-install80-amd64 smoke-install80-arm64
+
+smoke-install80-amd64: install-img-amd64
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install80} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install80 {{smp}} --arch amd64
+
+smoke-install80-arm64: install-img-arm64
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install80} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install80 {{smp}} --arch arm64
+
+# M16g: `cd80.iso` as q35's CD-ROM (`ide-cd` on AHCI's first port, `bootindex=0`): OVMF boots
+# the El Torito EFI image, efiboot finds the CD (`cd0`), reads `etc/boot.conf` from it by
+# libsa's cd9660 and loads `/8.0/amd64/bsd.rd`; the kernel attaches the drive (`cd0 at
+# scsibus1`, ahci's ATAPI) and the installer asks its first question. A shell then mounts the
+# CD with mount_cd9660(8) (its Rock Ridge names) and reads `etc/boot.conf`. amd64 only, as
+# M16g's cd80.iso. The ISO is made by `smoke-build` (`cd-iso-amd64`). Part of `smoke`.
+smoke-cd80:
+    @test -f target/install/amd64/cd80.iso || { echo "smoke-cd80: no cd80.iso; run just cd-iso-amd64"; exit 1; }
+    cargo xtask cd80 {{smp}} --arch amd64
+
 ci: fmt clippy test build smoke check-lineage check-drift check-unsafe check-syscalls
 
 # `ci` with every `{{smp}}` recipe on four processors (`EMIBSD_NCPU=4`), not only the `smp4`
 # group: four CPUs make the MP races likelier. Then the installer end to end on both archs, also
 # on four processors (the user's decision of 2026-10-07): the install media made afresh from the
 # tree, `smoke-install-<arch>` and `smoke-install-boot-<arch>` for amd64, arm64 and arm64 on
-# ACPI, so every milestone close regenerates and checks the installer. Needs `just userland` and
+# ACPI, and (M16g) `smoke-install80-<arch>`, the install from `install80.img` as a USB stick,
+# so every milestone close regenerates and checks the installer. Needs `just userland` and
 # `just comp`. Mandatory before a milestone is marked met; its result goes in the milestone's
 # closing commit (.claude/rules/testing.md). `just jobs=N ci-full` passes N on.
 ci-full:
     EMIBSD_NCPU=4 {{quote(just_executable())}} jobs={{jobs}} ci
     EMIBSD_NCPU=4 {{quote(just_executable())}} smoke-install-amd64 smoke-install-boot-amd64 \
-        smoke-install-arm64 smoke-install-boot-arm64 smoke-install-arm64-acpi smoke-install-boot-arm64-acpi
+        smoke-install-arm64 smoke-install-boot-arm64 smoke-install-arm64-acpi smoke-install-boot-arm64-acpi \
+        smoke-install80-amd64 smoke-install80-arm64

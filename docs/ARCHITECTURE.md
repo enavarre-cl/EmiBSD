@@ -711,6 +711,81 @@ efi(4), is not ported), so the firmware boots the ESP's fallback `\EFI\BOOT\BOOT
 root disk's DUID from a stale buffer and `fsck` failed (`sys/dev/rd.rs`, deviations: an
 empty `rd0` reads no label now).
 
+## The release images (M16g)
+
+OpenBSD ships its installer on two more images, which `distrib/` makes from the install
+media: `install80.img`, a disk image for a USB stick with `bsd.rd`, efiboot and the sets on it
+(`distrib/amd64/iso/Makefile`, `distrib/arm64/iso/Makefile`), and amd64's boot-only
+`cd80.iso` (`distrib/amd64/ramdisk_cd/Makefile`). xtask makes both from what
+`install-media` made (`tools/xtask/src/distrib.rs`; recipes `install-img-<arch>`,
+`cd-iso-amd64`), into `target/install/<arch>`:
+
+- **install80.img** is laid out as the Makefile lays it out, sector for sector (checked against
+  the snapshot's own image, `target/openbsd/<arch>/install80.img`, and in the module's tests):
+  the MBR `fdisk -i -b` writes (amd64: an EFI system partition of 960 sectors at 64, the
+  OpenBSD partition from 1024 to `FSSIZE`=1638400, active, in an image of `FSSIZE+960`
+  sectors; arm64: a FAT partition of type `0x0C` at 32768, 16384 sectors, active, then the
+  OpenBSD partition to 1433600), with fdisk's CHS values; the label `disklabel -wAT-` writes
+  with `/ *` on the image's vnd(4) (`vnd device`, 100 sectors a track, `a` the OpenBSD
+  partition, `c` the disk, `i` the boot partition as MSDOS); the boot partition as
+  `newfs -t msdos` makes it (amd64 FAT12, 8 sectors a cluster, `efi/boot/BOOTX64.EFI` and
+  `BOOTIA32.EFI`; arm64 FAT16 labelled `BOOT`, one sector a cluster, `efi/boot/bootaa64.efi`,
+  `startup.nsh`, `config.txt`, an empty `overlays/`), by OpenBSD's makefs with the matching
+  options; and `a` an FFS1 (`newfs -O 1 -m 0 -o space -i 524288`: 16 KB blocks, 2 KB
+  fragments) by makefs, holding `8.0/<arch>/` with the sets, the kernels, `INSTALL.<arch>`
+  and `SHA256` but no `SHA256.sig` (the Makefile's `XXX no SHA256.sig`), and the install
+  kernel as `/bsd` and its link `/bsd.rd` (amd64, with `/etc/boot.conf` saying `set image
+  /8.0/amd64/bsd.rd`; arm64's are links to `8.0/arm64/bsd.rd`).
+- **cd80.iso** holds `8.0/amd64/bsd.rd`, `etc/boot.conf` (the same `set image`) and
+  `8.0/amd64/eficdboot`, the 350 KB FAT image (`makefs -t msdos -o create_size=350K`) with
+  efiboot, named by the El Torito catalogue `8.0/amd64/boot.catalog`. OpenBSD makes it with
+  mkhybrid, GNU code outside the clone (`gnu/usr.sbin/mkhybrid`), and no host tool is
+  installed for it: `tools/xtask/src/iso9660.rs` writes the ISO 9660 image as `mkhybrid -a -R
+  -T -L -l -d -D -N` does (Rock Ridge with `SP`, and `ER` through a `CE`, which the kernel
+  requires; `TRANS.TBL` in every directory; upper-case names, directories keeping their dots,
+  as libsa's `pnmatch` needs for `/8.0/amd64/bsd.rd`). `cd-iso --rd-kernel` makes the miniroot
+  and `bsd.rd` first, as `install-media` does, so the CD needs no comp build and `smoke-build`
+  makes it.
+
+Deviations: what the build does not make is not on the images (printed when they are made):
+the BIOS boot programs (the MBR's code, `biosboot`, `boot`, `cdbr`, `cdboot`; `stand/` wants
+GNU as), so the CD has no BIOS El Torito entry and its EFI image is the default entry; the
+`game`, `man` and X sets and `BUILDINFO`; arm64's Raspberry Pi firmware and U-Boot
+(packages). The label's `d_uid` is fixed per arch (`I80AMD64`, `I80ARM64`); makefs makes its
+own cylinder groups (newfs's `-c FSSIZE` has no makefs option). The CD's descriptors name
+EmiBSD and its author where mkhybrid's command line names OpenBSD and its release engineer,
+as the kernel's `ostype` does. makefs needs two workarounds (EXT-223 and EXT-224 in LZ's
+external bugs log).
+
+**The smokes.** `just smoke-install80-<arch>` (`cargo xtask install80`, part of `ci-full`,
+not `smokes`: two minutes on amd64, four on arm64) boots `install80.img` as a USB stick
+(`boot.rs`, `BootMedium::UsbStick`: a `qemu-xhci` of its own and `usb-storage` with
+`bootindex=0`, QEMU's writes to an overlay) beside a fresh 2304 MB disk, small enough that
+disklabel's automatic layout is one `/` and swap (`alloc_small`). The firmware boots efiboot
+from the stick (on amd64 the run types `set tty com0` and `boot` at its prompt, as one does on
+a serial console; the kernel comes from `boot.conf`'s `set image`), and OpenBSD's installer is
+answered over the console as a person answers it (`Vm::respond_in_turn`: a question asked
+twice gets its answers in turn, and one no answer covers fails the run at once): no response
+file, no network, no HTTP server; the sets come from `disk`, `sd1`, partition `a`,
+`8.0/<arch>`, and the installer goes on without `SHA256.sig`. After `CONGRATULATIONS!` the
+installed disk boots to `login:` and compiles a program (`install-boot`'s run,
+`install.rs::boot_installed`). The fresh disk is `sd0` and the stick `sd1` (umass attaches
+after the virtio disk); the run checks both attach lines. At efiboot's prompt each line is
+typed a character at a time, a character again when its echo does not come back
+(`distrib.rs`, `type_echoed`): after `set tty com0` a `boot` typed at once under the load of
+four smokes once reached efiboot as `b` alone, and efiboot waited for the rest for ever.
+`cargo xtask install80 --image FILE` puts another image on the stick: with OpenBSD's own
+`install80.img` (the `diff-openbsd` snapshot's) the same answers install OpenBSD on both archs
+(2026-10-09), its installer asking the same questions in the same order, with the same
+automatic layout, but for one: EmiBSD's amd64 installer also asks `An EFI/GPT disk may not
+boot. Proceed?`, because efi(4) is not ported, so `efi0 at bios0` is not in the dmesg and
+`install.md` does not set `MDEFI` (M14's known gap, as `installboot`'s `/dev/efi`). `just smoke-cd80` (`cargo xtask
+cd80`, part of `smoke`, about a minute) boots `cd80.iso` as q35's CD-ROM (`ide-cd` on AHCI's
+first port): OVMF loads the El Torito EFI image, efiboot reads `etc/boot.conf` from the CD
+(`cd0a:`) and loads `bsd.rd`, the kernel attaches the drive (`cd0 at scsibus1`, ahci's ATAPI)
+and the installer asks its first question; a shell then mounts the CD with mount_cd9660(8)
+and lists it by its Rock Ridge names.
+
 ## Boot loaders (M14)
 
 OpenBSD's boot programs are ported as OpenBSD builds them (the user's decision of 2026-10-03,

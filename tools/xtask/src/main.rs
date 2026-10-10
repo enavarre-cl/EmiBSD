@@ -100,6 +100,13 @@
 //! cargo xtask comp --arch A [--jobs N]     M14: OpenBSD's compiler (clang, lld, libc++) from
 //!                                          gnu/llvm by its build glue, into target/comp/A
 //!                                          (userland/comp.rs); N jobs, default half the CPUs
+//! cargo xtask install-img --arch A         M16g: install80.img, the install media with the
+//!                                          sets on one disk image (distrib.rs)
+//! cargo xtask cd-iso --arch amd64          M16g: cd80.iso, bsd.rd on an El Torito CD
+//!                                          (distrib.rs, iso9660.rs)
+//! cargo xtask install80|cd80 --arch A      M16g: install from install80.img as a USB stick
+//!                                          and boot the result; boot cd80.iso to the
+//!                                          installer (distrib.rs)
 //! cargo xtask ntfs-image OUT [--check]     write M10d's NTFS test volume to OUT (ntfsgen.rs);
 //!                                          --check mounts it with macOS's NTFS driver
 //! cargo xtask e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]...
@@ -123,11 +130,13 @@ mod boot;
 mod bsdmake;
 mod devices;
 mod diffopenbsd;
+mod distrib;
 mod e2fs;
 mod efiboot;
 mod https;
 mod hwopts;
 mod install;
+mod iso9660;
 mod layout;
 mod lz;
 mod ntfsgen;
@@ -340,6 +349,11 @@ fn run(args: &[String]) -> Result<()> {
         ["install-media", rest @ ..] => install::install_media(&root, rest),
         ["install", rest @ ..] => install::install(&root, rest),
         ["install-boot", rest @ ..] => install::install_boot(&root, rest),
+        // M16g: the release images and their smokes (distrib.rs, iso9660.rs).
+        ["install-img", rest @ ..] => distrib::install_img(&root, rest),
+        ["cd-iso", rest @ ..] => distrib::cd_iso(&root, rest),
+        ["install80", rest @ ..] => distrib::install80(&root, rest),
+        ["cd80", rest @ ..] => distrib::cd80(&root, rest),
         ["ntfs-image", out] => ntfsgen::ntfs_image(&root.join(out), false),
         ["ntfs-image", out, "--check"] => ntfsgen::ntfs_image(&root.join(out), true),
         // M14: efiboot's PE image and the disk smoke-efiboot boots (efiboot.rs).

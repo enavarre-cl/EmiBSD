@@ -748,7 +748,7 @@ pub(super) fn owners_table(attrs: &[Attr]) -> String {
 /// A fixed timestamp (`makefs -T`: inode times and generation numbers), 2026-10-02, the date
 /// of the reference pin. The image is not bit-for-bit reproducible: makefs gives the label a
 /// random `d_uid` (`arc4random_buf`).
-pub(super) const TIMESTAMP: u64 = 1_790_899_200;
+pub(crate) const TIMESTAMP: u64 = 1_790_899_200;
 
 /// The header force-included (`-include`) into every makefs source.
 const COMPAT_H: &str = "\
