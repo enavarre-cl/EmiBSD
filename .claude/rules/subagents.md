@@ -35,23 +35,14 @@ on its branch and the `integrator` merges them (both sides kept, duplicates drop
 state (branches, hashes, what is left) goes in `HANDOFF.md`, never in memory. The `reviewer`
 has none on purpose: it reads every change with fresh eyes. `agent-memory-local/` is not used.
 
-## Workflows (`.claude/workflows/`)
-
-`/redesign <modules | N row>` (`redesign.js`) plans clusters of inherited modules, runs one
-`redesigner`/`mechanical` per cluster in its own worktree (at most 4 at once), has a
-`reviewer` check each branch with one fix round, and ends with an `integrator` that merges the
-approved branches and runs `just ci`. The result is a branch for the main session to
-fast-forward; the workflow never touches `main`. Running a workflow is the user's call
-(`/redesign`), never the model's. Inside a workflow the lock is `/tmp/emibsd/ci.lock` and each
-cluster's notes live in `/tmp/emibsd-native/redesign/<cluster>/` (the scripts cannot see a
-session's scratchpad).
-
 ## The machine lock
 
 `/tmp/emibsd/ci.lock` is shared with EmiBSD.LZ on purpose: both repositories run QEMU on the
 same Mac, and the Mac is the bottleneck (the rule of 2026-10-07: no competing CI). Two
 repositories sharing one lock never run two `ci`s at once. A launching session may name a lock
-of its own in its scratchpad instead; the workflow always uses the shared one.
+of its own in its scratchpad instead. There is no batch workflow: the main session (or a
+`milestone-coordinator` it launches) drives the redesign, launches the roles one by one with
+the Agent tool and sees every plan and every commit (the user's decision of 2026-10-10).
 
 ## What the launching prompt must give
 
@@ -96,8 +87,8 @@ A prompt that misses one of these gets a question back, not a guess.
   mix a redesign with an `lz-sync:` or a `lineage:` commit.
 - Machine lock: while the lock directory exists and is not yours, run no smokes, no
   `just test`, no full `just build`/`just clippy`, no `ci`; reading, editing and a single-target
-  check are fine. To take it: `mkdir <lock>`, your name in `<lock>/owner`, `rmdir`-remove it when
-  done. Only coordinators and integrators run `just ci` / `just smoke` (all); redesigners run
+  check are fine. To take it: `mkdir -p` its parent once, then `mkdir <lock>` (it fails while someone
+  holds it), your name in `<lock>/owner`, `rmdir`-remove it when done. Only coordinators and integrators run `just ci` / `just smoke` (all); redesigners run
   single smokes, one QEMU at a time.
 - Long runs (`large-changes.md`): every background run of minutes has a watcher that warns when
   its log has not changed for ten minutes (`stat -f %m <log>`); a progress report gives the
