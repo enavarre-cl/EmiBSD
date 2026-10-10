@@ -86,12 +86,18 @@
 //!                                          that OpenBSD alone with the smokes' device
 //!                                          options, booted with `-c` and the UKC commands
 //!                                          given: its dmesg and CMD's output
-//! cargo xtask unsafe-report [--write|--check]
+//! cargo xtask unsafe-report [--write|--check] [--shapes]
 //!                                          `unsafe` blocks, fns, impls and traits per kernel
-//!                                          subsystem, test code apart; --write puts the totals
-//!                                          on docs/STATUS.md's `Unsafe` line and lowers
-//!                                          unsafe-budget.toml; --check fails when a subsystem
-//!                                          exceeds its budget (unsafereport.rs)
+//!                                          subsystem, test code apart, the shapes to replace,
+//!                                          and the core, forbid and legacy groups of
+//!                                          unsafe-core.toml; --write puts the totals on
+//!                                          docs/STATUS.md's `Unsafe` line, lowers
+//!                                          unsafe-budget.toml and moves its [ratchet] the
+//!                                          good way only; --check fails when a subsystem
+//!                                          exceeds its budget, the forbid modules fall below
+//!                                          the floor or legacy rises above the ceiling;
+//!                                          --shapes lists the shapes per module
+//!                                          (unsafereport.rs)
 //! cargo xtask symbolize --arch A [--kernel K]
 //!                                          annotate the addresses of a stack trace on stdin
 //!                                          with K's symbols (default: the debug kernel)
@@ -160,7 +166,7 @@ const USAGE: &str = "usage: cargo xtask <lz check | lz status [--write] | lz dri
                      smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--disk-set NAME] [--nvme FILE] [--ahci FILE] [--scsi-cd ISO] [--lsi FILE [--lsi-cd ISO]] [--pci-serial FILE] [--pci-bridges] [--machine pc] [--ide|--megasas|--megasas-gen2|--mptsas|--pvscsi|--am53c974|--dc390|--ufs|--sdhci|--floppy FILE]... [--ipmi] [--reboot] [--vio-mq] [--expect-pci-serial T]... [--fb] [--screenshot-after L [--screen-text ROW:COL:TEXT]] [--sendkey-after L --sendkeys K] [--usb] [--usb-hc xhci|ehci|uhci|ohci] [--usb-mouse] [--usb-tablet] [--usb-wacom-tablet] [--usb-ccid] [--usb-net] [--usb-serial FILE [--usb-serial-send-after L --usb-serial-send T]... [--expect-usb-serial T]...] [--audio hda|ac97|usb] [--expect-tone] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
                      smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
                      smoke-all [-j N] [--just PATH] RECIPE... | \
-                     unsafe-report [--write] [--check] | \
+                     unsafe-report [--write] [--check] [--shapes] | \
                      diff-openbsd [--arch A]... [--smp N] [--kernel-dir D] [fetch | install | run | powerbtn] | \
                      diff-openbsd --arch A [--ipmi] [--nic MODEL] [--usb] [--usb-hc xhci|ehci|uhci|ohci] [--ukc CMD]... [--sh CMD] probe | \
                      symbolize --arch A [--kernel K] | userland --arch A | comp --arch A [--jobs N] | ntfs-image OUT [--check] | \
@@ -308,6 +314,7 @@ fn run(args: &[String]) -> Result<()> {
             &root,
             flags.contains(&"--write"),
             flags.contains(&"--check"),
+            flags.contains(&"--shapes"),
         ),
         ["gen-syscalls"] => syscalls::gen_syscalls(&root, false),
         ["gen-syscalls", "--check"] => syscalls::gen_syscalls(&root, true),

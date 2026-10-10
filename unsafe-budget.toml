@@ -3,6 +3,14 @@
 # when one does; `--write` lowers a budget to the current count and never raises it.
 # Raising a budget is a commit of its own, with the reason in the body
 # (.claude/rules/unsafe-budget.md). Names are unsafe-report's row names.
+#
+# [ratchet] (docs/ZERO_UNSAFE.md, section 5): the `forbid` modules may not fall below
+# forbid_floor, and the `unsafe` outside unsafe-core.toml may not rise above
+# legacy_ceiling; `--write` only raises the floor and lowers the ceiling.
+
+[ratchet]
+forbid_floor = 0
+legacy_ceiling = 8748
 
 [[subsystem]]
 name = "(crate root)"

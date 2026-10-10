@@ -34,6 +34,11 @@ Sources, all read live (nothing is typed in by hand):
     native file stands in for an inherited module (it is byte-identical modulo
     the RCS ident lines) and a redesigned module's sources count as unknown;
   - the native .rs files: `wc -l`, tests included;
+  - the module tree from the crate roots (`lib.rs`, `main.rs`) down the `mod`
+    declarations: a module is `forbid` when its declaration, an inline module
+    around it, its own `#![forbid]` or an ancestor's carries
+    `#[forbid(unsafe_code)]` (docs/ZERO_UNSAFE.md, section 5; the same rule as
+    `cargo xtask unsafe-report`, which is authoritative);
   - git: the `docs: Nx met` close commits after the pin, and the active days
     (distinct commit dates after lz-origin) that give the rate for the estimate.
 
@@ -145,6 +150,185 @@ def parse_lineage(root: Path) -> tuple[dict, list[dict], list[dict]]:
     return data.get("meta", {}), data.get("module", []), data.get("extra", [])
 
 
+# --- forbid (the module tree) --------------------------------------------------
+
+def lex(src: str) -> list[tuple[str, str]]:
+    """Rust tokens as (kind, text), kind in ident, punct, str (a plain string's text), lit;
+    comments, other literals and lifetimes dropped (unsafereport.rs's `lex`, in short)."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if c.isspace():
+            i += 1
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+        elif src.startswith("/*", i):
+            depth = 0
+            while i < n:
+                if src.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif src.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                    if depth == 0:
+                        break
+                else:
+                    i += 1
+        elif c == '"':
+            j = i + 1
+            while j < n and src[j] != '"':
+                j += 2 if src[j] == "\\" else 1
+            out.append(("str", src[i + 1:j]))
+            i = j + 1
+        elif c == "'":
+            if src.startswith("\\", i + 1):
+                j = src.find("'", i + 3)
+                i = n if j < 0 else j + 1
+                out.append(("lit", ""))
+            elif i + 2 < n and src[i + 2] == "'":
+                i += 3
+                out.append(("lit", ""))
+            else:  # a lifetime or a label
+                i += 1
+                while i < n and (src[i].isalnum() or src[i] == "_"):
+                    i += 1
+        elif c.isalpha() or c == "_" or c.isdigit():
+            j = i
+            while j < n and (src[j].isalnum() or src[j] == "_"):
+                j += 1
+            word = src[i:j]
+            m = re.match(r'(#*)"', src[j:]) if word in ("r", "br", "cr") else None
+            if m:  # a raw string
+                end = src.find('"' + m.group(1), j + len(m.group(0)))
+                i = n if end < 0 else end + 1 + len(m.group(1))
+                out.append(("lit", ""))
+            elif word in ("b", "c") and j < n and src[j] in "\"'":
+                i = j  # the literal itself is lexed next, as a str or a lit
+            else:
+                out.append(("lit" if c.isdigit() else "ident", word))
+                i = j
+        else:
+            out.append(("punct", c))
+            i += 1
+    return out
+
+
+def _match(toks, i: int, step: int) -> int | None:
+    """The bracket that matches toks[i], searching forward (step 1) or back (step -1)."""
+    opens, closes = "([{", ")]}"
+    depth = 0
+    while 0 <= i < len(toks):
+        kind, text = toks[i]
+        if kind == "punct" and text in (opens if step > 0 else closes):
+            depth += 1
+        elif kind == "punct" and text in (closes if step > 0 else opens):
+            depth -= 1
+            if depth == 0:
+                return i
+        i += step
+    return None
+
+
+def _is_forbid(attr) -> bool:
+    return bool(attr) and attr[0] == ("ident", "forbid") and ("ident", "unsafe_code") in attr
+
+
+def _inner_forbid(toks, i: int, end: int) -> tuple[bool, int]:
+    forbid = False
+    while i + 2 < end and toks[i] == ("punct", "#") and toks[i + 1] == ("punct", "!") \
+            and toks[i + 2] == ("punct", "["):
+        e = _match(toks, i + 2, 1)
+        if e is None:
+            break
+        forbid |= _is_forbid(toks[i + 3:e])
+        i = e + 1
+    return forbid, i
+
+
+def _outer_attrs(toks, start: int, kw: int) -> list:
+    j = kw
+    if j > start and toks[j - 1] == ("punct", ")"):
+        k = _match(toks, j - 1, -1)
+        if k is not None and k > start and toks[k - 1] == ("ident", "pub"):
+            j = k - 1
+    elif j > start and toks[j - 1] == ("ident", "pub"):
+        j -= 1
+    attrs = []
+    while j > start and toks[j - 1] == ("punct", "]"):
+        k = _match(toks, j - 1, -1)
+        if k is None or k <= start or toks[k - 1] != ("punct", "#"):
+            break
+        attrs.append(toks[k + 1:j - 1])
+        j = k - 1
+    return attrs
+
+
+def _children(toks, start: int, end: int, d: Path, file_dir: Path, top: bool, forbid: bool,
+              out: list) -> None:
+    """(candidate files, forbid, via #[path]) of each out-of-line `mod` at this item level."""
+    i = start
+    while i < end:
+        kind, text = toks[i]
+        if (kind, text) == ("punct", "{"):
+            e = _match(toks, i, 1)
+            i = end if e is None else e + 1
+            continue
+        if (kind, text) != ("ident", "mod") or i + 1 >= end or toks[i + 1][0] != "ident":
+            i += 1
+            continue
+        name = toks[i + 1][1]
+        attrs = _outer_attrs(toks, start, i)
+        f = forbid or any(_is_forbid(a) for a in attrs)
+        path = next((a[2][1] for a in attrs if len(a) == 3 and a[0] == ("ident", "path")
+                     and a[1] == ("punct", "=") and a[2][0] == "str"), None)
+        nxt = toks[i + 2] if i + 2 < len(toks) else None
+        if nxt == ("punct", ";"):
+            if path is not None:
+                files = [Path(os.path.normpath((file_dir if top else d) / path))]
+            else:
+                files = [d / f"{name}.rs", d / name / "mod.rs"]
+            out.append((files, f, path is not None))
+            i += 3
+        elif nxt == ("punct", "{"):
+            e = _match(toks, i + 2, 1)
+            e = end if e is None else min(e, end)
+            inner, s = _inner_forbid(toks, i + 3, e)
+            sub = Path(os.path.normpath(d / (path if path is not None else name)))
+            _children(toks, s, e, sub, file_dir, False, f or inner, out)
+            i = e + 1
+        else:
+            i += 1
+
+
+def forbid_modules(root: Path) -> set[str]:
+    """The workspace-relative .rs files whose module is #[forbid(unsafe_code)]."""
+    files = {p for d in ("sys", "init") if (root / d).is_dir() for p in (root / d).rglob("*.rs")
+             if "target" not in p.relative_to(root).parts}
+    stack = [(p, False, True) for p in files if p.name in ("lib.rs", "main.rs")]
+    seen, out = set(), set()
+    while stack:
+        f, inherited, mod_rs = stack.pop()
+        if f in seen:
+            continue
+        seen.add(f)
+        try:
+            toks = lex(f.read_text(errors="replace"))
+        except OSError:
+            continue
+        inner, s = _inner_forbid(toks, 0, len(toks))
+        forbid = inherited or inner
+        if forbid:
+            out.add(f.relative_to(root).as_posix())
+        d = f.parent if mod_rs else f.parent / f.stem
+        kids: list = []
+        _children(toks, s, len(toks), d, f.parent, True, False, kids)
+        for cands, cf, via_path in kids:
+            hit = next((c for c in cands if c in files), None)
+            if hit is not None:
+                stack.append((hit, forbid or cf, via_path or hit.name == "mod.rs"))
+    return out
+
+
 # --- git ---------------------------------------------------------------------
 
 def git(root: Path, *args: str) -> str:
@@ -215,7 +399,7 @@ def fmt(n) -> str:
 
 
 def new_tally() -> dict:
-    return {"redesigned": 0, "adapted": 0, "inherited": 0, "rust": 0,
+    return {"redesigned": 0, "adapted": 0, "inherited": 0, "rust": 0, "forbid": 0,
             "lz_done": set(), "lz_left": set()}
 
 
@@ -242,6 +426,7 @@ def main() -> None:
     wip_ms = under_way(root)
     commit_dates = sorted(set(git(root, "log", rng, "--format=%cd", "--date=short").split()))
     days = len(commit_dates) or 1
+    forbid = forbid_modules(root)
 
     lz_paths = sorted({p for m in modules for p in m.get("lz", [])})
     lz_len = lz_lines(root, pin, lz_paths)
@@ -291,6 +476,8 @@ def main() -> None:
         rows_of[rid].append(m)
         t = own[rid]
         t[key] += 1
+        m["_forbid"] = path in forbid
+        t["forbid"] += int(m["_forbid"])
         rl = count_lines(root / path, cache)
         m["_rust"] = rl
         m["_key"] = key
@@ -354,8 +541,12 @@ def main() -> None:
           f"{days} active day{'s' if days != 1 else ''} since lz-origin"
           f"{' (' + commit_dates[0] + ')' if commit_dates else ''}")
     print()
-    print("| Milestone | Title | Status | Modules done | Modules left | LZ lines done | LZ lines left | Rust lines | Est. left |")
-    print("|---|---|---|---:|---:|---:|---:|---:|---:|")
+    def forbid_txt(t: dict) -> str:
+        n = sum(t[k] for k in STATUSES)
+        return f"{fmt(t['forbid'])} / {fmt(n)}" if n else "—"
+
+    print("| Milestone | Title | Status | Modules done | Modules left | Forbid | LZ lines done | LZ lines left | Rust lines | Est. left |")
+    print("|---|---|---|---:|---:|---:|---:|---:|---:|---:|")
     for r in rows:
         rid = r["id"]
         if want and not (rid == want or re.fullmatch(re.escape(want) + r"[a-z]", rid)):
@@ -383,7 +574,7 @@ def main() -> None:
         else:
             est = "—"
         indent = "&nbsp;&nbsp;" if rid in is_child else ""
-        print(f"| {indent}{rid} | {r['title']} | {st} | {done_txt} | {left_txt} | "
+        print(f"| {indent}{rid} | {r['title']} | {st} | {done_txt} | {left_txt} | {forbid_txt(t)} | "
               f"{lz_done_txt} | {lz_left_txt} | {fmt(t['rust']) if t['rust'] else '—'} | {est} |")
     u = own["unassigned"]
     if any(u[k] for k in STATUSES) and not want:
@@ -394,7 +585,7 @@ def main() -> None:
         adapted_note = f" ({u['adapted']} adapted)" if u["adapted"] else ""
         print(f"| (no milestone) | modules no ROADMAP scope names: {shown} | — | "
               f"{fmt(u['redesigned'] + u['adapted'])}"
-              f"{adapted_note} | {fmt(u['inherited'])} | "
+              f"{adapted_note} | {fmt(u['inherited'])} | {forbid_txt(u)} | "
               f"{with_unknown(ud, udu)} | {with_unknown(ul, ulu)} | {fmt(u['rust'])} | — |")
     print()
 
@@ -404,13 +595,14 @@ def main() -> None:
         if sel:
             print(f"Modules of {want} ({len(sel)}):")
             print()
-            print("| Module | Status | LZ lines | Rust lines | LZ sources |")
-            print("|---|---|---:|---:|---|")
+            print("| Module | Status | Forbid | LZ lines | Rust lines | LZ sources |")
+            print("|---|---|---|---:|---:|---|")
             order = {"inherited": 0, "adapted": 1, "redesigned": 2}
             for m in sorted(sel, key=lambda m: (order[m["_key"]], m.get("rust", ""))):
                 srcs = m.get("lz", [])
                 src_txt = "same path" if srcs == [m.get("rust")] else ", ".join(srcs)
-                print(f"| {m.get('rust', '')} | {m['_key']} | {fmt(m['_lz'])} | "
+                print(f"| {m.get('rust', '')} | {m['_key']} | {'yes' if m['_forbid'] else 'no'} | "
+                      f"{fmt(m['_lz'])} | "
                       f"{fmt(m['_rust'])} | {src_txt} |")
             print()
         else:
@@ -422,7 +614,7 @@ def main() -> None:
         for p in (root / sub).rglob("*.rs"):
             rust_total += count_lines(p, cache) or 0
     print(f"Totals: {total['redesigned']} modules redesigned, {total['adapted']} adapted, "
-          f"{total['inherited']} inherited (of {len(modules)}); "
+          f"{total['inherited']} inherited (of {len(modules)}), {total['forbid']} forbid; "
           f"LZ lines done {with_unknown(done_lines, done_unknown)}, left {with_unknown(left_lines, left_unknown)}; "
           f"Rust lines in sys/ and tools/: {rust_total:,}.")
     if rate:
@@ -440,7 +632,9 @@ def main() -> None:
           "backticks (a directory, a file or a glob), the most specific pattern winning; a row whose "
           "scope is prose resolves nothing, and a met row may keep inherited modules that a later "
           "row's prose claims. LZ lines = lines of the module's LZ sources at the pin, each file once "
-          "per row; Rust lines = wc -l of the native file, tests included. A parent milestone shows "
+          "per row; Rust lines = wc -l of the native file, tests included; Forbid = the row's modules "
+          "whose mod declaration (or an ancestor's) is #[forbid(unsafe_code)], out of its modules. "
+          "A parent milestone shows "
           "its own modules plus its lettered children's. The time column is a linear extrapolation "
           "of the project's own average; it measures the past and promises nothing.")
 

@@ -51,6 +51,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::layout::{drop_empty_licenses_zone, strip_author_block, trim_licenses_edges};
+use crate::unsafereport::Tok;
 use crate::{REFERENCE_DIR, Result, git, is_structural, short, walk_rs};
 
 const LINEAGE_FILE: &str = "lineage.toml";
@@ -1076,6 +1077,19 @@ pub(crate) fn check(root: &Path) -> Result<()> {
         errors.extend(author);
     }
 
+    // The zero-unsafe rules (docs/ZERO_UNSAFE.md, sections 3 and 5): only the adapter macros
+    // implement `Adapter`, whose `OFFSET` the core's `container_of` trusts.
+    let lexed = crate::unsafereport::lex_tree(root)?;
+    for (f, toks) in &lexed {
+        let rel = rel_of(root, f);
+        let n = adapter_impls(&rel, toks);
+        if n > 0 {
+            errors.push(format!(
+                "{rel}: {n} hand-written `impl Adapter` (or a rename of the trait); only queue_adapter! and tree_adapter! implement sys/sys/queue.rs's Adapter, whose OFFSET the core's container_of trusts (docs/ZERO_UNSAFE.md, section 3)"
+            ));
+        }
+    }
+
     for w in &warnings {
         println!("warning: {w}");
     }
@@ -1107,48 +1121,132 @@ pub(crate) fn check(root: &Path) -> Result<()> {
     }
 }
 
+/// The files where the adapter macros are defined, with the macros whose bodies may write
+/// `impl Adapter`.
+const ADAPTER_MACROS: [(&str, &str); 2] = [
+    ("sys/sys/queue.rs", "queue_adapter"),
+    ("sys/sys/tree.rs", "tree_adapter"),
+];
+
+/// How many `impl .. Adapter for` (and renames `Adapter as`) the file `rel`, lexed as `toks`,
+/// writes outside the bodies of `macro_rules! queue_adapter` and `macro_rules! tree_adapter`
+/// in the files that define them. `Adapter` is the safe trait of sys/sys/queue.rs; its
+/// contract (`OFFSET` is the offset of the field `entry` returns) is kept by those macros
+/// alone, so a hand-written impl is refused (docs/ZERO_UNSAFE.md, decision 7).
+pub(crate) fn adapter_impls(rel: &str, toks: &[Tok]) -> usize {
+    let ident = |i: usize, s: &str| matches!(toks.get(i), Some(Tok::Ident(x)) if x == s);
+    let mut allowed = vec![false; toks.len()];
+    for (file, mac) in ADAPTER_MACROS {
+        if rel != file {
+            continue;
+        }
+        for i in 0..toks.len() {
+            if ident(i, "macro_rules")
+                && toks.get(i + 1) == Some(&Tok::Punct('!'))
+                && ident(i + 2, mac)
+                && let Some(open) = (i + 3 < toks.len()).then_some(i + 3)
+                && matches!(toks[open], Tok::Punct('{' | '(' | '['))
+                && let Some(end) = closing(toks, open)
+            {
+                allowed[open..=end].iter_mut().for_each(|a| *a = true);
+            }
+        }
+    }
+    let mut n = 0;
+    for i in 0..toks.len() {
+        if allowed[i] {
+            continue;
+        }
+        let renamed = ident(i, "Adapter") && ident(i + 1, "as");
+        if renamed || (ident(i, "impl") && impl_trait_is(&toks[i + 1..], "Adapter")) {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// After `impl`: `<..>`? then a trait path whose last segment is `name`, then `for`.
+fn impl_trait_is(after: &[Tok], name: &str) -> bool {
+    let mut depth = 0usize;
+    let mut last: Option<&str> = None;
+    for t in after {
+        match t {
+            Tok::Punct('<') => depth += 1,
+            Tok::Punct('>') => depth = depth.saturating_sub(1),
+            Tok::Ident(x) if depth == 0 && x == "for" => return last == Some(name),
+            Tok::Ident(x) if depth == 0 && x == "where" => return false,
+            Tok::Ident(x) if depth == 0 => last = Some(x),
+            Tok::Punct('{' | ';') if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The index of the bracket that closes the one at `open`.
+fn closing(toks: &[Tok], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, t) in toks.iter().enumerate().skip(open) {
+        match t {
+            Tok::Punct('(' | '[' | '{') => depth += 1,
+            Tok::Punct(')' | ']' | '}') => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 // --- lz status ---------------------------------------------------------------------------
 
 /// `cargo xtask lz status [--write]`.
 pub(crate) fn status(root: &Path, write: bool) -> Result<()> {
     let lineage = load_lineage(root)?;
     let pin = commit_line(root, LZ_PINNED)?;
-    let mut table: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+    let forbid = crate::unsafereport::forbid_modules(root)?;
+    // Per subsystem: inherited, adapted, redesigned, and how many are `forbid`.
+    let mut table: BTreeMap<String, [usize; 4]> = BTreeMap::new();
     for m in &lineage.modules {
         let row = table
             .entry(crate::unsafereport::subsystem(root, &m.rust))
             .or_default();
         match m.status {
-            Status::Inherited => row.0 += 1,
-            Status::Adapted => row.1 += 1,
-            Status::Redesigned => row.2 += 1,
+            Status::Inherited => row[0] += 1,
+            Status::Adapted => row[1] += 1,
+            Status::Redesigned => row[2] += 1,
         }
+        row[3] += usize::from(forbid.contains(&m.rust));
     }
     let mut md = String::new();
     md.push_str(
-        "| Subsystem | inherited | adapted | redesigned | total |
-|---|---:|---:|---:|---:|
+        "| Subsystem | inherited | adapted | redesigned | total | forbid |
+|---|---:|---:|---:|---:|---:|
 ",
     );
-    let (mut ti, mut ta, mut tr) = (0usize, 0usize, 0usize);
-    for (sub, (i, a, r)) in &table {
+    let mut t = [0usize; 4];
+    for (sub, [i, a, r, f]) in &table {
         md.push_str(&format!(
-            "| {sub} | {i} | {a} | {r} | {} |
+            "| {sub} | {i} | {a} | {r} | {} | {f} |
 ",
             i + a + r
         ));
-        ti += i;
-        ta += a;
-        tr += r;
+        for (sum, n) in t.iter_mut().zip([i, a, r, f]) {
+            *sum += n;
+        }
     }
+    let [ti, ta, tr, tf] = t;
     md.push_str(&format!(
-        "| **total** | {ti} | {ta} | {tr} | {} |
+        "| **total** | {ti} | {ta} | {tr} | {} | {tf} |
 ",
         ti + ta + tr
     ));
     let rows: usize = lineage.modules.iter().map(|m| m.fns.len()).sum();
     let head = format!(
-        "_Generated by `cargo xtask lz status --write` against EmiBSD.LZ {}: {} modules, {rows} function rows, {} extras, {} dropped._\n\n",
+        "_Generated by `cargo xtask lz status --write` against EmiBSD.LZ {}: {} modules ({tf} `forbid`), {rows} function rows, {} extras, {} dropped._\n\n",
         short(&pin),
         lineage.modules.len(),
         lineage.extras.len(),
@@ -1692,6 +1790,53 @@ mod tests {
             decl_name("extern \"C\" fn trap() {").as_deref(),
             Some("trap")
         );
+    }
+    #[test]
+    fn adapter_impls_only_inside_the_macros() {
+        use crate::unsafereport::lex;
+        let queue = r#"
+        macro_rules! queue_adapter {
+            ($name:ident: $elem:ty, $field:ident => $entry:ty) => {
+                impl $crate::sys::queue::Adapter for $name {
+                    type Elem = $elem;
+                }
+            };
+        }
+        pub trait Adapter { type Elem; }
+        pub trait SlistAdapter: Adapter<Entry = SlistEntry<<Self as Adapter>::Elem>> {}
+        impl<A: Adapter<Entry = SlistEntry<<A as Adapter>::Elem>>> SlistAdapter for A {}
+        impl<A: Adapter> Step<A::Elem> for NextStep<A> {}
+    "#;
+        assert_eq!(adapter_impls("sys/sys/queue.rs", &lex(queue)), 0);
+        // The same macro body in another file is not the one the check trusts.
+        assert_eq!(adapter_impls("sys/kern/x.rs", &lex(queue)), 1);
+        let tree = r#"
+        macro_rules! tree_adapter {
+            ($name:ident: $elem:ty, $field:ident => $entry:ty, $cmp:expr) => {
+                $crate::queue_adapter!($name: $elem, $field => $entry);
+                impl $crate::sys::tree::TreeAdapter for $name {}
+            };
+        }
+        impl<A: TreeAdapter<Entry = RbtEntry>> RbtAdapter for A {}
+    "#;
+        assert_eq!(adapter_impls("sys/sys/tree.rs", &lex(tree)), 0);
+        let users = r#"
+        queue_adapter!(pub ProcList: Proc, p_list => ListEntry<Proc>);
+        tree_adapter!(VmMapTree: VmMapEntry, rb_entry => RbtEntry, cmp);
+        impl TreeAdapter for Mine {}
+        impl<A: Adapter<Entry = SmrSlistEntry<<A as Adapter>::Elem>>> SmrSlistAdapter for A {}
+    "#;
+        assert_eq!(adapter_impls("sys/kern/kern_proc.rs", &lex(users)), 0);
+        let by_hand = [
+            "impl Adapter for Mine { type Elem = u8; }",
+            "unsafe impl Adapter for Mine {}",
+            "impl crate::sys::queue::Adapter for Mine {}",
+            "impl<T> queue::Adapter for Wrap<T> where T: Sized {}",
+            "use crate::sys::queue::Adapter as Q;",
+        ];
+        for src in by_hand {
+            assert_eq!(adapter_impls("sys/net/if.rs", &lex(src)), 1, "{src}");
+        }
     }
 }
 /* </TESTS> */

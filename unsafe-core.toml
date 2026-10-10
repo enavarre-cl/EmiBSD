@@ -1,0 +1,65 @@
+#
+# Copyright (c) 2026 Emilio Navarrete Lineros <enavarre@outlook.com>
+#
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+# The unsafe core: the only paths where `unsafe` may live (docs/ZERO_UNSAFE.md, section 4;
+# .claude/rules/unsafe-budget.md). Every other module is `forbid` or legacy.
+# `cargo xtask unsafe-report` and `cargo xtask lz check` read this file.
+#
+# A path joins the list only with the user's OK, in a commit of its own, like a budget raise.
+# Patterns: an exact file path, or a directory followed by `/**` (everything below it).
+
+[core]
+paths = [
+    # Hardware: MMIO, page tables, traps, context switch, copyin/copyout, atomics.
+    "sys/arch/amd64/**",
+    "sys/arch/arm64/**",
+    "sys/machine/**",
+    # Boot: the boot loaders, a separate binary that runs before the kernel.
+    "sys/stand/**",
+    "sys/lib/libsa/**",
+    # Test harness: the host test double; host only.
+    "sys/arch/host/**",
+    # Runtime: the primitives every subsystem builds on.
+    # Statics.
+    "sys/lib/libkern/staticcell.rs",
+    # Locks and reference counts.
+    "sys/sys/mutex.rs",
+    "sys/kern/kern_lock.rs",
+    "sys/sys/rwlock.rs",
+    "sys/kern/kern_rwlock.rs",
+    "sys/sys/mplock.rs",
+    "sys/sys/refcnt.rs",
+    # Per-CPU data and SMR.
+    "sys/sys/percpu.rs",
+    "sys/kern/subr_percpu.rs",
+    "sys/sys/smr.rs",
+    "sys/kern/kern_smr.rs",
+    # Allocators.
+    "sys/sys/pool.rs",
+    "sys/kern/subr_pool.rs",
+    "sys/sys/malloc.rs",
+    "sys/kern/kern_malloc.rs",
+    # Lists and trees.
+    "sys/sys/queue.rs",
+    "sys/sys/tree.rs",
+    "sys/kern/subr_tree.rs",
+    # Copy, print, time.
+    "sys/kern/kern_subr.rs",
+    "sys/kern/subr_prf.rs",
+    "sys/sys/systm.rs",
+    "sys/kern/kern_tc.rs",
+    # The volatile store N1's redesign kept (redesigned, so core or forbid).
+    "sys/lib/libkern/explicit_bzero.rs",
+]
