@@ -168,10 +168,13 @@ fn timeout_scale(value: Option<&str>) -> u32 {
 }
 
 const SECTOR: u64 = 512;
-/// 192 MiB: room for FAT32 if the formatter picks it, and for the modules: the debug kernel
-/// and the ramdisk (23 MiB since M9+ added LibreSSL, ftp and nc) outgrew 64 MiB, and the
-/// 65 MiB debug kernel with the 63 MiB ramdisk of M11e (tcpbench) outgrew 128 MiB.
-const IMAGE_SECTORS: u64 = 192 * 1024 * 1024 / SECTOR;
+/// 256 MiB: room for FAT32 if the formatter picks it, and for the modules: the debug kernel
+/// and the ramdisk (23 MiB since M9+ added LibreSSL, ftp and nc) outgrew 64 MiB, the 65 MiB
+/// debug kernel with the 63 MiB ramdisk of M11e (tcpbench) outgrew 128 MiB, and the 106-109
+/// MiB debug kernels of the M16 sync with the 89-93 MiB ramdisks left under 6 MB of 192 MiB
+/// (N2's queue(3) redesign, whose inlined mutators add 5 MB of debug info, outgrew it). The
+/// file is sparse, so the unused part costs no disk.
+const IMAGE_SECTORS: u64 = 256 * 1024 * 1024 / SECTOR;
 /// First partition sector: 1 MiB, the conventional alignment.
 const PART_START: u64 = 2048;
 
