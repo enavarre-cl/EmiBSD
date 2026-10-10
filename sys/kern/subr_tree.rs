@@ -58,14 +58,26 @@
 /* </LICENSES> */
 
 /* <CODE> */
-//! The red-black tree behind `RBT_*` (and, here, `RB_*`): `kern/subr_tree.c`.
+//! The red-black tree behind `RBT_*` (and, here, `RB_*`): `kern/subr_tree.c`, see
+//! `RBT_INIT(9)`.
 //!
 //! Upstream: sys/kern/subr_tree.c @ 3ce1f3f79392
+//! LZ: sys/kern/subr_tree.rs@3c62ede68802
 //!
 //! The algorithm works on [`RbtEntry`] links (entry to entry, never element to element) and
 //! reaches the element only to compare keys or to run the augment hook, through an [`RbType`]:
 //! the C `struct rb_type` with its comparator, optional augment and the entry's offset inside
 //! the element. `sys/sys/tree.rs` provides one `RbType` per adapter and the typed wrappers.
+//!
+//! The module is the boundary of its `unsafe`: an entry is reached only as an `RbNode`, a
+//! handle whose two constructors are the element's own entry (`rb_n2e`) and a link read out of
+//! a tree of the same type; `RbNode::entry` and `rb_e2n` are the only dereferences. Their
+//! argument is the invariant every function here keeps: a link of an entry that is not
+//! poisoned is `None` or names the live entry of a `T::Elem`. The public mutators that take an
+//! element from outside (`_rb_insert`, `_rb_remove`, `_rb_set_*`) are `unsafe`, their callers
+//! promising what the invariant needs (the element stays valid and in place while linked);
+//! `_rb_remove` leaves the element it unlinks holding no links, and the links of a poisoned
+//! entry are never followed.
 //!
 //! ## Deviations
 //! - `struct rb_type` is a trait with associated items instead of a struct of function
@@ -75,11 +87,201 @@
 //!   those that relink the tree are `unsafe` with the C precondition as their contract.
 //! - The classic `RB_*` family of `tree.h`, a macro copy of this algorithm in C, is served by
 //!   this one implementation too.
+//!
+//! ## Redesign
+//! - Entries are handled as `RbNode`s, typed by the tree's [`RbType`] (LZ: `*const RbtEntry`
+//!   and an `unsafe fn e` turning one into a reference): the algorithm (rotations, the two
+//!   colour fixups, removal, insertion, the walks) is safe code, and its `unsafe` is the two
+//!   dereferences above (LZ: an `unsafe` block or `unsafe fn` per step). The element's entry is
+//!   found by address arithmetic that keeps the element's provenance (`map_addr`), so stepping
+//!   back to the element from a link is sound.
+//! - [`RbTree`] is typed by its `RbType` (LZ: one untyped root that any `RbType` could read):
+//!   a tree cannot be walked with another type's offset.
+//! - The mirrored halves of the C (`rbe_rotate_left` and `rbe_rotate_right`, both branches of
+//!   `rbe_insert_color` and of `rbe_remove_color`, `_rb_next` and `_rb_prev`, `_rb_min` and
+//!   `_rb_max`) are one path each over a `Side`; the C's "relink the parent's child, or the
+//!   root" step is `rbe_replace_child`.
+//! - `_rb_remove` leaves the unlinked entry as `RbtEntry::new` makes it (no links, black);
+//!   the C leaves its links stale, which `RBT_INIT(9)` defines nothing for, and which would
+//!   let the safe readers walk from it into memory it no longer owns.
+//! - `_rb_poison` marks the entry poisoned (a word where the C structure has padding) besides
+//!   writing the value into its links; following a poisoned entry's links panics, where the C
+//!   would fault on the poison address (`_rb_check` still reads the raw values). A structure
+//!   the algorithm relies on that is missing (a red root, a black node without a sibling, a
+//!   colour word that is neither colour) also panics, where the C would dereference null, and
+//!   so does unlinking an element its parent (or the root) does not hold: an element removed
+//!   twice or never inserted, which in the C silently corrupts the tree. The panics go
+//!   through `rb_panic`, `panic(9)` in the kernel and an unwinding panic in the host tests.
 
 use core::cmp::Ordering;
-use core::ptr;
+use core::marker::PhantomData;
+use core::ptr::{self, NonNull};
 
-use crate::sys::tree::{RB_BLACK, RB_RED, RbTree, RbtEntry};
+use crate::sys::tree::{Color, Link, RB_BLACK, RB_RED, RbTree, RbtEntry};
+
+/// Which child of a node: the C's mirrored halves of each step are one path over it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    /// The other child.
+    fn opposite(self) -> Self {
+        match self {
+            Side::Left => Side::Right,
+            Side::Right => Side::Left,
+        }
+    }
+}
+
+/// A handle on the entry of a `T::Elem` in, or entering, a tree of `T`: the link itself,
+/// which carries the element's provenance. Made only by `rb_n2e` (from the element) and by
+/// following a link of another handle or of a tree of `T` (`from_link`), so it always names
+/// the live entry of a `T::Elem` (see [`entry`](Self::entry)).
+struct RbNode<'a, T: RbType> {
+    ptr: NonNull<RbtEntry>,
+    _life: PhantomData<&'a RbtEntry>,
+    _type: PhantomData<fn() -> T>,
+}
+
+impl<T: RbType> Clone for RbNode<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: RbType> Copy for RbNode<'_, T> {}
+
+impl<'a, T: RbType> RbNode<'a, T> {
+    /// The handle for a link read out of a tree of `T` (an entry's, or the root).
+    fn from_link(ptr: NonNull<RbtEntry>) -> Self {
+        Self {
+            ptr,
+            _life: PhantomData,
+            _type: PhantomData,
+        }
+    }
+
+    /// `e`: the entry the handle names.
+    fn entry(self) -> &'a RbtEntry {
+        // SAFETY: the handle names the live entry of a `T::Elem`. `rb_n2e` made it from a
+        // reference to a live element, `T::OFFSET` bytes in, where `RbType`'s contract puts the
+        // entry; or `from_link` made it from a link of a tree of `T`, which by the module's
+        // invariant is the live entry of a `T::Elem`: only `rb_n2e` handles are ever stored in
+        // links (`_rb_insert`, the relinking steps, `_rb_set_*`), their elements stay valid and
+        // in place while linked (the `unsafe` mutators' contract), `rbe_remove` clears the links
+        // of the entry it unlinks, and the links of a poisoned entry, which hold no pointers,
+        // are never read into a handle (`links`). The pointer is aligned (it came from a
+        // reference) and the entry is only reached shared; its fields are `Cell`s.
+        unsafe { self.ptr.as_ref() }
+    }
+
+    /// The entry, to read its links: refuses a poisoned one, whose links hold the poison value,
+    /// not pointers (the C would fault on it).
+    fn links(self) -> &'a RbtEntry {
+        let rbe = self.entry();
+        if rbe.rbt_poisoned.get() != 0 {
+            rb_poisoned(rbe);
+        }
+        rbe
+    }
+
+    /// The child on `side`, `RBE_LEFT` or `RBE_RIGHT`.
+    fn child(self, side: Side) -> Option<Self> {
+        let rbe = self.links();
+        match side {
+            Side::Left => rbe.rbt_left.get(),
+            Side::Right => rbe.rbt_right.get(),
+        }
+        .map(Self::from_link)
+    }
+
+    /// `RBE_LEFT`.
+    fn left(self) -> Option<Self> {
+        self.child(Side::Left)
+    }
+
+    /// `RBE_RIGHT`.
+    fn right(self) -> Option<Self> {
+        self.child(Side::Right)
+    }
+
+    /// `RBE_PARENT`.
+    fn parent(self) -> Option<Self> {
+        self.links().rbt_parent.get().map(Self::from_link)
+    }
+
+    /// Makes `child` the child on `side`.
+    fn set_child(self, side: Side, child: Option<RbNode<'_, T>>) {
+        let rbe = self.entry();
+        match side {
+            Side::Left => rbe.rbt_left.set(link(child)),
+            Side::Right => rbe.rbt_right.set(link(child)),
+        }
+    }
+
+    /// Makes `parent` the parent.
+    fn set_parent(self, parent: Option<RbNode<'_, T>>) {
+        self.entry().rbt_parent.set(link(parent));
+    }
+
+    /// `RBE_COLOR`, read as a [`Color`]; a word that is neither `RB_BLACK` nor `RB_RED` is a
+    /// corrupt tree.
+    fn color(self) -> Color {
+        match self.entry().rbt_color.get() {
+            RB_BLACK => Color::Black,
+            RB_RED => Color::Red,
+            _ => rb_corrupt("colour word neither RB_BLACK nor RB_RED"),
+        }
+    }
+
+    /// Sets `RBE_COLOR`.
+    fn set_color(self, color: Color) {
+        self.entry().rbt_color.set(color.word());
+    }
+
+    /// The side of `self` that `child` hangs on (the C's `child == RBE_LEFT(self)` test).
+    fn side_of(self, child: RbNode<'_, T>) -> Side {
+        if same(self.left(), Some(child)) {
+            Side::Left
+        } else {
+            Side::Right
+        }
+    }
+
+    /// The side of `self` that `child` hangs on, checked: `None` when `child` is neither.
+    fn child_side(self, child: RbNode<'_, T>) -> Option<Side> {
+        if same(self.left(), Some(child)) {
+            Some(Side::Left)
+        } else if same(self.right(), Some(child)) {
+            Some(Side::Right)
+        } else {
+            None
+        }
+    }
+
+    /// `*rbe = *old`: takes `old`'s links and colour, and so its place among its neighbours
+    /// once they are pointed here.
+    fn take_place_of(self, old: Self) {
+        let (rbe, old) = (self.entry(), old.links());
+        rbe.rbt_parent.set(old.rbt_parent.get());
+        rbe.rbt_left.set(old.rbt_left.get());
+        rbe.rbt_right.set(old.rbt_right.get());
+        rbe.rbt_color.set(old.rbt_color.get());
+    }
+
+    /// Leaves the entry as `RbtEntry::new` makes it: no links, black, not poisoned.
+    fn clear(self) {
+        let rbe = self.entry();
+        rbe.rbt_parent.set(None);
+        rbe.rbt_left.set(None);
+        rbe.rbt_right.set(None);
+        rbe.rbt_color.set(RB_BLACK);
+        rbe.rbt_poisoned.set(0);
+    }
+}
 
 /// `struct rb_type`: how a red-black tree reaches its elements. Implemented by
 /// `sys::tree::RbtInfo<A>` and `sys::tree::RbInfo<A>` for an adapter `A`.
@@ -87,7 +289,7 @@ use crate::sys::tree::{RB_BLACK, RB_RED, RbTree, RbtEntry};
 /// # Safety
 ///
 /// `OFFSET` must be the offset of an [`RbtEntry`] inside every `Elem`; the tree reads and
-/// writes that entry through it.
+/// writes that entry through it, and steps back from it to the element.
 pub unsafe trait RbType {
     /// The element type the tree holds.
     type Elem;
@@ -101,678 +303,505 @@ pub unsafe trait RbType {
     fn augment(elem: &Self::Elem);
 }
 
-/// `rb_n2e`: the entry inside `node`.
-fn rb_n2e<T: RbType>(node: &T::Elem) -> *const RbtEntry {
-    let base: *const T::Elem = node;
-    // SAFETY: `RbType` guarantees an `RbtEntry` lives at `OFFSET` inside every element, so the
-    // offset pointer stays inside `node`.
-    unsafe { base.cast::<u8>().add(T::OFFSET).cast::<RbtEntry>() }
+/// The link that names `node` (`None` for none).
+fn link<T: RbType>(node: Option<RbNode<'_, T>>) -> Option<NonNull<RbtEntry>> {
+    node.map(|node| node.ptr)
+}
+
+/// Whether two possibly absent nodes are the same one (both absent included), the C's pointer
+/// comparison.
+fn same<T: RbType>(a: Option<RbNode<'_, T>>, b: Option<RbNode<'_, T>>) -> bool {
+    link(a) == link(b)
+}
+
+/// Whether `node` is present and red; an absent node is a black leaf.
+fn is_red<T: RbType>(node: Option<RbNode<'_, T>>) -> bool {
+    node.is_some_and(|node| node.color() == Color::Red)
+}
+
+/// What the C does by dereferencing `NULL` or a poison value when a caller breaks a
+/// precondition: a kernel panic, in every configuration (`docs/IDIOMS.md`, the same shape as
+/// `queue.rs`'s).
+#[cold]
+#[cfg(not(test))]
+fn rb_panic(args: core::fmt::Arguments<'_>) -> ! {
+    crate::kern::subr_prf::panic(args)
+}
+
+/// The host tests' `rb_panic`: an unwinding panic, so that `#[should_panic]` sees it (the
+/// host's `panic(9)` ends the test process through `boot`).
+#[cold]
+#[cfg(test)]
+fn rb_panic(args: core::fmt::Arguments<'_>) -> ! {
+    std::panic!("{args}")
+}
+
+/// A poisoned entry's links were about to be followed.
+fn rb_poisoned(rbe: &RbtEntry) -> ! {
+    rb_panic(format_args!(
+        "rb tree: links of the poisoned entry {:p} followed",
+        ptr::from_ref(rbe)
+    ))
+}
+
+/// The tree lacks a structure the algorithm relies on: it was relinked by hand inconsistently,
+/// or an element was used against its contract.
+fn rb_corrupt(what: &str) -> ! {
+    rb_panic(format_args!("rb tree corrupt: {what}"))
+}
+
+/// `rb_n2e`: the entry inside `node`, as a handle.
+fn rb_n2e<T: RbType>(node: &T::Elem) -> RbNode<'_, T> {
+    // The address arithmetic keeps the element's provenance, so `rb_e2n` may step back.
+    let ptr = NonNull::from(node)
+        .cast::<u8>()
+        .map_addr(|addr| addr.saturating_add(T::OFFSET))
+        .cast::<RbtEntry>();
+    RbNode::from_link(ptr)
 }
 
 /// `rb_e2n`: the element around the entry `rbe`.
-///
-/// # Safety
-///
-/// `rbe` is the entry of a live `T::Elem`.
-unsafe fn rb_e2n<T: RbType>(rbe: *const RbtEntry) -> *const T::Elem {
-    // SAFETY: the caller guarantees `rbe` sits at `OFFSET` inside an element, so stepping back
-    // stays inside it.
-    unsafe { rbe.cast::<u8>().sub(T::OFFSET).cast::<T::Elem>() }
+fn rb_e2n<'a, T: RbType>(rbe: RbNode<'a, T>) -> &'a T::Elem {
+    let elem = rbe
+        .ptr
+        .as_ptr()
+        .cast::<u8>()
+        .wrapping_sub(T::OFFSET)
+        .cast::<T::Elem>();
+    // SAFETY: the handle names the live entry of a `T::Elem` (see `RbNode::entry`), `T::OFFSET`
+    // bytes into it by `RbType`'s contract, and its pointer carries that element's provenance
+    // (`rb_n2e` derived it from a reference to the whole element), so stepping back gives the
+    // live, aligned element. It is only lent shared, as the tree's callers hold it.
+    unsafe { &*elem }
 }
 
-/// A linked entry as a reference, for the field accesses below.
-///
-/// # Safety
-///
-/// `rbe` is non-null and points at a live entry.
-#[inline]
-unsafe fn e<'a>(rbe: *const RbtEntry) -> &'a RbtEntry {
-    // SAFETY: forwarded.
-    unsafe { &*rbe }
+/// `RBH_ROOT`, as a handle.
+fn rbh_root<T: RbType>(rbt: &RbTree<T>) -> Option<RbNode<'_, T>> {
+    rbt.rbt_root.get().map(RbNode::from_link)
 }
 
-/// `rbe_set`: makes `rbe` a red leaf under `parent`.
-fn rbe_set(rbe: &RbtEntry, parent: *const RbtEntry) {
-    rbe.rbt_parent.set(parent);
-    rbe.rbt_left.set(ptr::null());
-    rbe.rbt_right.set(ptr::null());
-    rbe.rbt_color.set(RB_RED);
+/// Makes `node` the root.
+fn rbh_set_root<T: RbType>(rbt: &RbTree<T>, node: Option<RbNode<'_, T>>) {
+    rbt.rbt_root.set(link(node));
+}
+
+/// Points `parent`'s link to `old` at `new` instead, or the root when `old` has no parent.
+/// Checks that the link it replaces does name `old`: an element removed twice, or never
+/// inserted, has no parent (`rbe_remove` clears what it unlinks) and is not the root, and
+/// replacing the root then would empty a tree whose elements are still linked.
+fn rbe_replace_child<T: RbType>(
+    rbt: &RbTree<T>,
+    parent: Option<RbNode<'_, T>>,
+    old: RbNode<'_, T>,
+    new: Option<RbNode<'_, T>>,
+) {
+    match parent {
+        Some(parent) => match parent.child_side(old) {
+            Some(side) => parent.set_child(side, new),
+            None => rb_corrupt("unlinking an element its parent does not hold"),
+        },
+        None if same(rbh_root(rbt), Some(old)) => rbh_set_root(rbt, new),
+        None => rb_corrupt("unlinking an element that is not in this tree"),
+    }
+}
+
+/// `rbe_set`: makes `rbe` a red leaf under `parent`; this also lifts a poison.
+fn rbe_set<T: RbType>(rbe: RbNode<'_, T>, parent: Option<RbNode<'_, T>>) {
+    rbe.clear();
+    rbe.set_parent(parent);
+    rbe.set_color(Color::Red);
 }
 
 /// `rbe_set_blackred`.
-fn rbe_set_blackred(black: &RbtEntry, red: &RbtEntry) {
-    black.rbt_color.set(RB_BLACK);
-    red.rbt_color.set(RB_RED);
+fn rbe_set_blackred<T: RbType>(black: RbNode<'_, T>, red: RbNode<'_, T>) {
+    black.set_color(Color::Black);
+    red.set_color(Color::Red);
 }
 
 /// `rbe_augment`: runs the augment hook on the element of `rbe`.
-///
-/// # Safety
-///
-/// `rbe` is the entry of a live `T::Elem`.
-unsafe fn rbe_augment<T: RbType>(rbe: *const RbtEntry) {
-    // SAFETY: forwarded.
-    T::augment(unsafe { &*rb_e2n::<T>(rbe) });
+fn rbe_augment<T: RbType>(rbe: RbNode<'_, T>) {
+    T::augment(rb_e2n(rbe));
 }
 
-/// `rbe_if_augment`: [`rbe_augment`] when the type has an augment hook.
-///
-/// # Safety
-///
-/// As for [`rbe_augment`].
-unsafe fn rbe_if_augment<T: RbType>(rbe: *const RbtEntry) {
+/// `rbe_if_augment`: `rbe_augment` when the type has an augment hook.
+fn rbe_if_augment<T: RbType>(rbe: RbNode<'_, T>) {
     if T::AUGMENTED {
-        // SAFETY: forwarded.
-        unsafe { rbe_augment::<T>(rbe) };
+        rbe_augment(rbe);
     }
 }
 
-/// `rbe_rotate_left`.
-///
-/// # Safety
-///
-/// `rbe` is a linked entry of `rbt` with a right child.
-unsafe fn rbe_rotate_left<T: RbType>(rbt: &RbTree, rbe: *const RbtEntry) {
-    // SAFETY: every pointer followed is a link of the tree, which only holds live entries; the
-    // caller guarantees the right child exists.
-    unsafe {
-        let tmp = e(rbe).rbt_right.get();
-        let tmp_left = e(tmp).rbt_left.get();
-        e(rbe).rbt_right.set(tmp_left);
-        if !tmp_left.is_null() {
-            e(tmp_left).rbt_parent.set(rbe);
-        }
-
-        let parent = e(rbe).rbt_parent.get();
-        e(tmp).rbt_parent.set(parent);
-        if !parent.is_null() {
-            if rbe == e(parent).rbt_left.get() {
-                e(parent).rbt_left.set(tmp);
-            } else {
-                e(parent).rbt_right.set(tmp);
-            }
-        } else {
-            rbt.rbt_root.set(tmp);
-        }
-
-        e(tmp).rbt_left.set(rbe);
-        e(rbe).rbt_parent.set(tmp);
-
-        if T::AUGMENTED {
-            rbe_augment::<T>(rbe);
-            rbe_augment::<T>(tmp);
-            let parent = e(tmp).rbt_parent.get();
-            if !parent.is_null() {
-                rbe_augment::<T>(parent);
-            }
-        }
+/// `rbe_rotate_left` (`side` = `Left`) and `rbe_rotate_right` (`Right`): `rbe` goes down to
+/// `side`, under its child from the other side, which takes its place.
+fn rbe_rotate<'a, T: RbType>(rbt: &'a RbTree<T>, rbe: RbNode<'a, T>, side: Side) {
+    let up = side.opposite();
+    let Some(tmp) = rbe.child(up) else {
+        rb_corrupt("rotation without the child to lift");
+    };
+    let inner = tmp.child(side);
+    rbe.set_child(up, inner);
+    if let Some(inner) = inner {
+        inner.set_parent(Some(rbe));
     }
-}
 
-/// `rbe_rotate_right`.
-///
-/// # Safety
-///
-/// `rbe` is a linked entry of `rbt` with a left child.
-unsafe fn rbe_rotate_right<T: RbType>(rbt: &RbTree, rbe: *const RbtEntry) {
-    // SAFETY: as for `rbe_rotate_left`, mirrored.
-    unsafe {
-        let tmp = e(rbe).rbt_left.get();
-        let tmp_right = e(tmp).rbt_right.get();
-        e(rbe).rbt_left.set(tmp_right);
-        if !tmp_right.is_null() {
-            e(tmp_right).rbt_parent.set(rbe);
-        }
+    let parent = rbe.parent();
+    tmp.set_parent(parent);
+    rbe_replace_child(rbt, parent, rbe, Some(tmp));
 
-        let parent = e(rbe).rbt_parent.get();
-        e(tmp).rbt_parent.set(parent);
-        if !parent.is_null() {
-            if rbe == e(parent).rbt_left.get() {
-                e(parent).rbt_left.set(tmp);
-            } else {
-                e(parent).rbt_right.set(tmp);
-            }
-        } else {
-            rbt.rbt_root.set(tmp);
-        }
+    tmp.set_child(side, Some(rbe));
+    rbe.set_parent(Some(tmp));
 
-        e(tmp).rbt_right.set(rbe);
-        e(rbe).rbt_parent.set(tmp);
-
-        if T::AUGMENTED {
-            rbe_augment::<T>(rbe);
-            rbe_augment::<T>(tmp);
-            let parent = e(tmp).rbt_parent.get();
-            if !parent.is_null() {
-                rbe_augment::<T>(parent);
-            }
+    if T::AUGMENTED {
+        rbe_augment(rbe);
+        rbe_augment(tmp);
+        if let Some(parent) = tmp.parent() {
+            rbe_augment(parent);
         }
     }
 }
 
 /// `rbe_insert_color`: restores the red-black invariants after `rbe` was inserted as a red leaf.
-///
-/// # Safety
-///
-/// `rbe` is a linked entry of `rbt`.
-unsafe fn rbe_insert_color<T: RbType>(rbt: &RbTree, mut rbe: *const RbtEntry) {
-    // SAFETY: every pointer followed is a link of the tree, which only holds live entries; a red
-    // parent always has a parent of its own (the root is black).
-    unsafe {
-        loop {
-            let mut parent = e(rbe).rbt_parent.get();
-            if parent.is_null() || e(parent).rbt_color.get() != RB_RED {
-                break;
-            }
-            let gparent = e(parent).rbt_parent.get();
+fn rbe_insert_color<'a, T: RbType>(rbt: &'a RbTree<T>, mut rbe: RbNode<'a, T>) {
+    while let Some(mut parent) = rbe.parent().filter(|parent| parent.color() == Color::Red) {
+        // The root is black, so a red parent has a parent of its own.
+        let Some(gparent) = parent.parent() else {
+            rb_corrupt("red root");
+        };
+        let side = gparent.side_of(parent);
 
-            if parent == e(gparent).rbt_left.get() {
-                let tmp = e(gparent).rbt_right.get();
-                if !tmp.is_null() && e(tmp).rbt_color.get() == RB_RED {
-                    e(tmp).rbt_color.set(RB_BLACK);
-                    rbe_set_blackred(e(parent), e(gparent));
-                    rbe = gparent;
-                    continue;
-                }
-
-                if e(parent).rbt_right.get() == rbe {
-                    rbe_rotate_left::<T>(rbt, parent);
-                    core::mem::swap(&mut parent, &mut rbe);
-                }
-
-                rbe_set_blackred(e(parent), e(gparent));
-                rbe_rotate_right::<T>(rbt, gparent);
-            } else {
-                let tmp = e(gparent).rbt_left.get();
-                if !tmp.is_null() && e(tmp).rbt_color.get() == RB_RED {
-                    e(tmp).rbt_color.set(RB_BLACK);
-                    rbe_set_blackred(e(parent), e(gparent));
-                    rbe = gparent;
-                    continue;
-                }
-
-                if e(parent).rbt_left.get() == rbe {
-                    rbe_rotate_right::<T>(rbt, parent);
-                    core::mem::swap(&mut parent, &mut rbe);
-                }
-
-                rbe_set_blackred(e(parent), e(gparent));
-                rbe_rotate_left::<T>(rbt, gparent);
-            }
+        if let Some(uncle) = gparent
+            .child(side.opposite())
+            .filter(|uncle| uncle.color() == Color::Red)
+        {
+            uncle.set_color(Color::Black);
+            rbe_set_blackred(parent, gparent);
+            rbe = gparent;
+            continue;
         }
 
-        e(rbt.rbt_root.get()).rbt_color.set(RB_BLACK);
+        if same(parent.child(side.opposite()), Some(rbe)) {
+            rbe_rotate(rbt, parent, side);
+            core::mem::swap(&mut parent, &mut rbe);
+        }
+
+        rbe_set_blackred(parent, gparent);
+        rbe_rotate(rbt, gparent, side.opposite());
+    }
+
+    match rbh_root(rbt) {
+        Some(root) => root.set_color(Color::Black),
+        None => rb_corrupt("empty after an insert"),
     }
 }
 
 /// `rbe_remove_color`: restores the red-black invariants after a black entry was unlinked,
-/// `rbe` (possibly null) having taken its place under `parent`.
-///
-/// # Safety
-///
-/// `parent` and `rbe` describe a position in `rbt` as `rbe_remove` leaves it.
-unsafe fn rbe_remove_color<T: RbType>(
-    rbt: &RbTree,
-    mut parent: *const RbtEntry,
-    mut rbe: *const RbtEntry,
+/// `rbe` (possibly absent) having taken its place under `parent`.
+fn rbe_remove_color<'a, T: RbType>(
+    rbt: &'a RbTree<T>,
+    mut parent: Option<RbNode<'a, T>>,
+    mut rbe: Option<RbNode<'a, T>>,
 ) {
-    // SAFETY: every pointer followed is a link of the tree, which only holds live entries; the
-    // loop stops before `parent` is used once `rbe` is the root (where `parent` is null), and a
-    // black non-root node always has a non-null sibling.
-    unsafe {
-        while (rbe.is_null() || e(rbe).rbt_color.get() == RB_BLACK) && rbe != rbt.rbt_root.get() {
-            if e(parent).rbt_left.get() == rbe {
-                let mut tmp = e(parent).rbt_right.get();
-                if e(tmp).rbt_color.get() == RB_RED {
-                    rbe_set_blackred(e(tmp), e(parent));
-                    rbe_rotate_left::<T>(rbt, parent);
-                    tmp = e(parent).rbt_right.get();
+    while !is_red(rbe) && !same(rbe, rbh_root(rbt)) {
+        // Below the root, `rbe` has a parent, and, being black (or a black leaf), a sibling.
+        let Some(p) = parent else {
+            rb_corrupt("non-root without a parent");
+        };
+        let side = if same(p.left(), rbe) {
+            Side::Left
+        } else {
+            Side::Right
+        };
+        let far = side.opposite();
+        let Some(mut tmp) = p.child(far) else {
+            rb_corrupt("black node without a sibling");
+        };
+
+        if tmp.color() == Color::Red {
+            rbe_set_blackred(tmp, p);
+            rbe_rotate(rbt, p, side);
+            let Some(sibling) = p.child(far) else {
+                rb_corrupt("black node without a sibling");
+            };
+            tmp = sibling;
+        }
+
+        if !is_red(tmp.child(side)) && !is_red(tmp.child(far)) {
+            tmp.set_color(Color::Red);
+            rbe = Some(p);
+            parent = p.parent();
+        } else {
+            if !is_red(tmp.child(far)) {
+                if let Some(near) = tmp.child(side) {
+                    near.set_color(Color::Black);
                 }
-                let tmp_left = e(tmp).rbt_left.get();
-                let tmp_right = e(tmp).rbt_right.get();
-                if (tmp_left.is_null() || e(tmp_left).rbt_color.get() == RB_BLACK)
-                    && (tmp_right.is_null() || e(tmp_right).rbt_color.get() == RB_BLACK)
-                {
-                    e(tmp).rbt_color.set(RB_RED);
-                    rbe = parent;
-                    parent = e(rbe).rbt_parent.get();
-                } else {
-                    if tmp_right.is_null() || e(tmp_right).rbt_color.get() == RB_BLACK {
-                        let oleft = e(tmp).rbt_left.get();
-                        if !oleft.is_null() {
-                            e(oleft).rbt_color.set(RB_BLACK);
-                        }
 
-                        e(tmp).rbt_color.set(RB_RED);
-                        rbe_rotate_right::<T>(rbt, tmp);
-                        tmp = e(parent).rbt_right.get();
-                    }
-
-                    e(tmp).rbt_color.set(e(parent).rbt_color.get());
-                    e(parent).rbt_color.set(RB_BLACK);
-                    let tmp_right = e(tmp).rbt_right.get();
-                    if !tmp_right.is_null() {
-                        e(tmp_right).rbt_color.set(RB_BLACK);
-                    }
-
-                    rbe_rotate_left::<T>(rbt, parent);
-                    rbe = rbt.rbt_root.get();
-                    break;
-                }
-            } else {
-                let mut tmp = e(parent).rbt_left.get();
-                if e(tmp).rbt_color.get() == RB_RED {
-                    rbe_set_blackred(e(tmp), e(parent));
-                    rbe_rotate_right::<T>(rbt, parent);
-                    tmp = e(parent).rbt_left.get();
-                }
-                let tmp_left = e(tmp).rbt_left.get();
-                let tmp_right = e(tmp).rbt_right.get();
-                if (tmp_left.is_null() || e(tmp_left).rbt_color.get() == RB_BLACK)
-                    && (tmp_right.is_null() || e(tmp_right).rbt_color.get() == RB_BLACK)
-                {
-                    e(tmp).rbt_color.set(RB_RED);
-                    rbe = parent;
-                    parent = e(rbe).rbt_parent.get();
-                } else {
-                    if tmp_left.is_null() || e(tmp_left).rbt_color.get() == RB_BLACK {
-                        let oright = e(tmp).rbt_right.get();
-                        if !oright.is_null() {
-                            e(oright).rbt_color.set(RB_BLACK);
-                        }
-
-                        e(tmp).rbt_color.set(RB_RED);
-                        rbe_rotate_left::<T>(rbt, tmp);
-                        tmp = e(parent).rbt_left.get();
-                    }
-
-                    e(tmp).rbt_color.set(e(parent).rbt_color.get());
-                    e(parent).rbt_color.set(RB_BLACK);
-                    let tmp_left = e(tmp).rbt_left.get();
-                    if !tmp_left.is_null() {
-                        e(tmp_left).rbt_color.set(RB_BLACK);
-                    }
-
-                    rbe_rotate_right::<T>(rbt, parent);
-                    rbe = rbt.rbt_root.get();
-                    break;
-                }
+                tmp.set_color(Color::Red);
+                rbe_rotate(rbt, tmp, far);
+                let Some(sibling) = p.child(far) else {
+                    rb_corrupt("black node without a sibling");
+                };
+                tmp = sibling;
             }
-        }
 
-        if !rbe.is_null() {
-            e(rbe).rbt_color.set(RB_BLACK);
+            tmp.set_color(p.color());
+            p.set_color(Color::Black);
+            if let Some(far_child) = tmp.child(far) {
+                far_child.set_color(Color::Black);
+            }
+
+            rbe_rotate(rbt, p, side);
+            rbe = rbh_root(rbt);
+            break;
         }
+    }
+
+    if let Some(rbe) = rbe {
+        rbe.set_color(Color::Black);
     }
 }
 
-/// `rbe_remove`: unlinks `rbe` from `rbt` and returns it.
-///
-/// # Safety
-///
-/// `rbe` is a linked entry of `rbt`.
-unsafe fn rbe_remove<T: RbType>(rbt: &RbTree, rbe: *const RbtEntry) -> *const RbtEntry {
-    let old = rbe;
-    // SAFETY: every pointer followed is a link of the tree, which only holds live entries, and
-    // `rbe` is one of them by the caller's guarantee.
-    unsafe {
-        let mut rbe = rbe;
-        let child = if e(rbe).rbt_left.get().is_null() {
-            e(rbe).rbt_right.get()
-        } else if e(rbe).rbt_right.get().is_null() {
-            e(rbe).rbt_left.get()
-        } else {
-            // Two children: the in-order successor takes `old`'s place in the tree.
-            rbe = e(rbe).rbt_right.get();
-            loop {
-                let tmp = e(rbe).rbt_left.get();
-                if tmp.is_null() {
-                    break;
-                }
+/// `rbe_remove`: unlinks `old` from `rbt`, leaves it holding no links and returns it.
+fn rbe_remove<'a, T: RbType>(rbt: &'a RbTree<T>, old: RbNode<'a, T>) -> RbNode<'a, T> {
+    let (parent, child, color) = match (old.left(), old.right()) {
+        (Some(left), Some(right)) => {
+            // Two children: the in-order successor, the leftmost node on the right, which has
+            // no left child, leaves its place to its right child and takes `old`'s.
+            let mut rbe = right;
+            while let Some(tmp) = rbe.left() {
                 rbe = tmp;
             }
 
-            let child = e(rbe).rbt_right.get();
-            let mut parent = e(rbe).rbt_parent.get();
-            let color = e(rbe).rbt_color.get();
-            if !child.is_null() {
-                e(child).rbt_parent.set(parent);
+            let child = rbe.right();
+            let mut parent = rbe.parent();
+            let color = rbe.color();
+            if let Some(child) = child {
+                child.set_parent(parent);
             }
-            if !parent.is_null() {
-                if e(parent).rbt_left.get() == rbe {
-                    e(parent).rbt_left.set(child);
-                } else {
-                    e(parent).rbt_right.set(child);
-                }
-                rbe_if_augment::<T>(parent);
-            } else {
-                rbt.rbt_root.set(child);
+            rbe_replace_child(rbt, parent, rbe, child);
+            if let Some(parent) = parent {
+                rbe_if_augment(parent);
             }
-            if e(rbe).rbt_parent.get() == old {
-                parent = rbe;
+            if same(rbe.parent(), Some(old)) {
+                parent = Some(rbe);
             }
-            // *rbe = *old
-            e(rbe).rbt_parent.set(e(old).rbt_parent.get());
-            e(rbe).rbt_left.set(e(old).rbt_left.get());
-            e(rbe).rbt_right.set(e(old).rbt_right.get());
-            e(rbe).rbt_color.set(e(old).rbt_color.get());
+            rbe.take_place_of(old);
 
-            let tmp = e(old).rbt_parent.get();
-            if !tmp.is_null() {
-                if e(tmp).rbt_left.get() == old {
-                    e(tmp).rbt_left.set(rbe);
-                } else {
-                    e(tmp).rbt_right.set(rbe);
-                }
-                rbe_if_augment::<T>(tmp);
-            } else {
-                rbt.rbt_root.set(rbe);
+            let tmp = old.parent();
+            rbe_replace_child(rbt, tmp, old, Some(rbe));
+            if let Some(tmp) = tmp {
+                rbe_if_augment(tmp);
             }
 
-            e(e(old).rbt_left.get()).rbt_parent.set(rbe);
-            let old_right = e(old).rbt_right.get();
-            if !old_right.is_null() {
-                e(old_right).rbt_parent.set(rbe);
+            left.set_parent(Some(rbe));
+            if let Some(old_right) = old.right() {
+                old_right.set_parent(Some(rbe));
             }
 
-            if T::AUGMENTED && !parent.is_null() {
+            if T::AUGMENTED {
                 let mut tmp = parent;
-                loop {
-                    rbe_augment::<T>(tmp);
-                    tmp = e(tmp).rbt_parent.get();
-                    if tmp.is_null() {
-                        break;
-                    }
+                while let Some(node) = tmp {
+                    rbe_augment(node);
+                    tmp = node.parent();
                 }
             }
+            (parent, child, color)
+        }
+        (left, right) => {
+            let child = left.or(right);
+            let parent = old.parent();
+            let color = old.color();
 
-            if color == RB_BLACK {
-                rbe_remove_color::<T>(rbt, parent, child);
+            if let Some(child) = child {
+                child.set_parent(parent);
             }
-            return old;
-        };
-
-        let parent = e(rbe).rbt_parent.get();
-        let color = e(rbe).rbt_color.get();
-
-        if !child.is_null() {
-            e(child).rbt_parent.set(parent);
-        }
-        if !parent.is_null() {
-            if e(parent).rbt_left.get() == rbe {
-                e(parent).rbt_left.set(child);
-            } else {
-                e(parent).rbt_right.set(child);
+            rbe_replace_child(rbt, parent, old, child);
+            if let Some(parent) = parent {
+                rbe_if_augment(parent);
             }
-            rbe_if_augment::<T>(parent);
-        } else {
-            rbt.rbt_root.set(child);
+            (parent, child, color)
         }
+    };
 
-        if color == RB_BLACK {
-            rbe_remove_color::<T>(rbt, parent, child);
-        }
+    if color == Color::Black {
+        rbe_remove_color(rbt, parent, child);
     }
+    old.clear();
     old
 }
 
-/// `_rb_remove`: unlinks `elm` from `rbt` and returns it.
+/// `_rb_remove`: unlinks `elm` from `rbt` and returns it; `elm` is left holding no links.
 ///
 /// # Safety
 ///
-/// `elm` is in `rbt`.
-pub unsafe fn _rb_remove<'a, T: RbType>(rbt: &RbTree, elm: &'a T::Elem) -> &'a T::Elem {
-    // SAFETY: forwarded; the entry returned is `elm`'s own.
-    let old = unsafe { rbe_remove::<T>(rbt, rb_n2e::<T>(elm)) };
-    debug_assert!(ptr::eq(old, rb_n2e::<T>(elm)));
+/// `elm` is in `rbt`. Once removed, no link of the tree points at it any more, so it may be
+/// freed or moved. (An element in no tree is refused with a panic, where the C would corrupt
+/// the tree.)
+///
+/// The types do not enforce the rest (gaps inherited from LZ): no reference to the element
+/// obtained from the tree (`_rb_find`, `_rb_next`, ...) may be used once it is freed, and
+/// nothing may take `&mut` of a linked element, which the tree reads and writes through shared
+/// references.
+pub unsafe fn _rb_remove<'a, T: RbType>(rbt: &RbTree<T>, elm: &'a T::Elem) -> &'a T::Elem {
+    rbe_remove(rbt, rb_n2e::<T>(elm));
     elm
 }
 
 /// `_rb_insert`: links `elm` into `rbt`; returns the element already there with an equal key
-/// instead, leaving the tree unchanged.
+/// instead, leaving the tree (and `elm`) unchanged.
 ///
 /// # Safety
 ///
-/// `elm` is in no tree of this type and stays valid and in place until unlinked.
-pub unsafe fn _rb_insert<'a, T: RbType>(rbt: &'a RbTree, elm: &T::Elem) -> Option<&'a T::Elem> {
-    let rbe = rb_n2e::<T>(elm);
-    // SAFETY: every pointer followed is a link of the tree, which only holds live entries, and
-    // `rbe` is the entry of the caller's live `elm`.
-    unsafe {
-        let mut tmp = rbt.rbt_root.get();
-        let mut parent = ptr::null();
-        let mut comp = Ordering::Equal;
+/// `elm` is in no tree of this type (its entry is unlinked, or poisoned), and stays valid and in
+/// place until it is removed (or, if the tree is abandoned by `RbTree::init`, for as long as an
+/// element of the abandoned tree is still read through this module): the tree's links point at
+/// it.
+pub unsafe fn _rb_insert<'a, T: RbType>(rbt: &'a RbTree<T>, elm: &T::Elem) -> Option<&'a T::Elem> {
+    let mut tmp = rbh_root(rbt);
+    let mut parent = None;
+    let mut side = Side::Left;
 
-        while !tmp.is_null() {
-            parent = tmp;
-            let node = &*rb_e2n::<T>(tmp);
-            comp = T::compare(elm, node);
-            match comp {
-                Ordering::Less => tmp = e(tmp).rbt_left.get(),
-                Ordering::Greater => tmp = e(tmp).rbt_right.get(),
-                Ordering::Equal => return Some(node),
-            }
+    while let Some(node) = tmp {
+        parent = Some(node);
+        let elem = rb_e2n(node);
+        match T::compare(elm, elem) {
+            Ordering::Less => side = Side::Left,
+            Ordering::Greater => side = Side::Right,
+            Ordering::Equal => return Some(elem),
         }
-
-        rbe_set(e(rbe), parent);
-
-        if !parent.is_null() {
-            if comp == Ordering::Less {
-                e(parent).rbt_left.set(rbe);
-            } else {
-                e(parent).rbt_right.set(rbe);
-            }
-            rbe_if_augment::<T>(parent);
-        } else {
-            rbt.rbt_root.set(rbe);
-        }
-
-        rbe_insert_color::<T>(rbt, rbe);
+        tmp = node.child(side);
     }
+
+    let rbe = rb_n2e::<T>(elm);
+    rbe_set(rbe, parent);
+
+    match parent {
+        Some(parent) => {
+            parent.set_child(side, Some(rbe));
+            rbe_if_augment(parent);
+        }
+        None => rbh_set_root(rbt, Some(rbe)),
+    }
+
+    rbe_insert_color(rbt, rbe);
     None
 }
 
 /// `_rb_find`: the element whose key equals `key`'s.
-pub fn _rb_find<'a, T: RbType>(rbt: &'a RbTree, key: &T::Elem) -> Option<&'a T::Elem> {
-    let mut tmp = rbt.rbt_root.get();
-    // SAFETY: every pointer followed is a link of the tree, which only holds live entries.
-    unsafe {
-        while !tmp.is_null() {
-            let node = &*rb_e2n::<T>(tmp);
-            match T::compare(key, node) {
-                Ordering::Less => tmp = e(tmp).rbt_left.get(),
-                Ordering::Greater => tmp = e(tmp).rbt_right.get(),
-                Ordering::Equal => return Some(node),
-            }
-        }
+pub fn _rb_find<'a, T: RbType>(rbt: &'a RbTree<T>, key: &T::Elem) -> Option<&'a T::Elem> {
+    let mut tmp = rbh_root(rbt);
+    while let Some(node) = tmp {
+        let elem = rb_e2n(node);
+        tmp = match T::compare(key, elem) {
+            Ordering::Less => node.left(),
+            Ordering::Greater => node.right(),
+            Ordering::Equal => return Some(elem),
+        };
     }
     None
 }
 
 /// `_rb_nfind`: the first element whose key is greater than or equal to `key`'s.
-pub fn _rb_nfind<'a, T: RbType>(rbt: &'a RbTree, key: &T::Elem) -> Option<&'a T::Elem> {
-    let mut tmp = rbt.rbt_root.get();
+pub fn _rb_nfind<'a, T: RbType>(rbt: &'a RbTree<T>, key: &T::Elem) -> Option<&'a T::Elem> {
+    let mut tmp = rbh_root(rbt);
     let mut res = None;
-    // SAFETY: as for `_rb_find`.
-    unsafe {
-        while !tmp.is_null() {
-            let node = &*rb_e2n::<T>(tmp);
-            match T::compare(key, node) {
-                Ordering::Less => {
-                    res = Some(node);
-                    tmp = e(tmp).rbt_left.get();
-                }
-                Ordering::Greater => tmp = e(tmp).rbt_right.get(),
-                Ordering::Equal => return Some(node),
+    while let Some(node) = tmp {
+        let elem = rb_e2n(node);
+        tmp = match T::compare(key, elem) {
+            Ordering::Less => {
+                res = Some(elem);
+                node.left()
             }
-        }
+            Ordering::Greater => node.right(),
+            Ordering::Equal => return Some(elem),
+        };
     }
     res
 }
 
-/// `_rb_next`: the in-order successor of `elm`, which must be linked.
-pub fn _rb_next<T: RbType>(elm: &T::Elem) -> Option<&T::Elem> {
-    let mut rbe = rb_n2e::<T>(elm);
-    // SAFETY: every pointer followed is a link of the tree, which only holds live entries.
-    unsafe {
-        if !e(rbe).rbt_right.get().is_null() {
-            rbe = e(rbe).rbt_right.get();
-            while !e(rbe).rbt_left.get().is_null() {
-                rbe = e(rbe).rbt_left.get();
-            }
-        } else {
-            let parent = e(rbe).rbt_parent.get();
-            if !parent.is_null() && rbe == e(parent).rbt_left.get() {
-                rbe = parent;
-            } else {
-                loop {
-                    let parent = e(rbe).rbt_parent.get();
-                    if parent.is_null() || rbe != e(parent).rbt_right.get() {
-                        break;
-                    }
-                    rbe = parent;
-                }
-                rbe = e(rbe).rbt_parent.get();
-            }
+/// The in-order neighbour of `rbe` towards `side` (`Right`: `_rb_next`, `Left`: `_rb_prev`):
+/// the extreme of its subtree on that side, or else the first ancestor reached from the other
+/// side.
+fn rb_step<T: RbType>(rbe: RbNode<'_, T>, side: Side) -> Option<RbNode<'_, T>> {
+    if let Some(mut node) = rbe.child(side) {
+        while let Some(child) = node.child(side.opposite()) {
+            node = child;
         }
-        if rbe.is_null() {
-            None
-        } else {
-            Some(&*rb_e2n::<T>(rbe))
+        return Some(node);
+    }
+
+    let mut rbe = rbe;
+    loop {
+        let parent = rbe.parent()?;
+        if !same(parent.child(side), Some(rbe)) {
+            return Some(parent);
         }
+        rbe = parent;
     }
 }
 
-/// `_rb_prev`: the in-order predecessor of `elm`, which must be linked.
+/// `_rb_next`: the in-order successor of `elm`; `None` for an element in no tree.
+pub fn _rb_next<T: RbType>(elm: &T::Elem) -> Option<&T::Elem> {
+    rb_step(rb_n2e::<T>(elm), Side::Right).map(rb_e2n)
+}
+
+/// `_rb_prev`: the in-order predecessor of `elm`; `None` for an element in no tree.
 pub fn _rb_prev<T: RbType>(elm: &T::Elem) -> Option<&T::Elem> {
-    let mut rbe = rb_n2e::<T>(elm);
-    // SAFETY: as for `_rb_next`, mirrored.
-    unsafe {
-        if !e(rbe).rbt_left.get().is_null() {
-            rbe = e(rbe).rbt_left.get();
-            while !e(rbe).rbt_right.get().is_null() {
-                rbe = e(rbe).rbt_right.get();
-            }
-        } else {
-            let parent = e(rbe).rbt_parent.get();
-            if !parent.is_null() && rbe == e(parent).rbt_right.get() {
-                rbe = parent;
-            } else {
-                loop {
-                    let parent = e(rbe).rbt_parent.get();
-                    if parent.is_null() || rbe != e(parent).rbt_left.get() {
-                        break;
-                    }
-                    rbe = parent;
-                }
-                rbe = e(rbe).rbt_parent.get();
-            }
-        }
-        if rbe.is_null() {
-            None
-        } else {
-            Some(&*rb_e2n::<T>(rbe))
-        }
-    }
+    rb_step(rb_n2e::<T>(elm), Side::Left).map(rb_e2n)
 }
 
 /// `_rb_root`.
-pub fn _rb_root<T: RbType>(rbt: &RbTree) -> Option<&T::Elem> {
-    let rbe = rbt.rbt_root.get();
-    if rbe.is_null() {
-        return None;
+pub fn _rb_root<T: RbType>(rbt: &RbTree<T>) -> Option<&T::Elem> {
+    rbh_root(rbt).map(rb_e2n)
+}
+
+/// The extreme node of the tree on `side`: `_rb_min` (`Left`), `_rb_max` (`Right`).
+fn rb_extreme<T: RbType>(rbt: &RbTree<T>, side: Side) -> Option<&T::Elem> {
+    let mut rbe = rbh_root(rbt)?;
+    while let Some(child) = rbe.child(side) {
+        rbe = child;
     }
-    // SAFETY: a non-null root is a live linked entry.
-    Some(unsafe { &*rb_e2n::<T>(rbe) })
+    Some(rb_e2n(rbe))
 }
 
 /// `_rb_min`: the element with the smallest key.
-pub fn _rb_min<T: RbType>(rbt: &RbTree) -> Option<&T::Elem> {
-    let mut rbe = rbt.rbt_root.get();
-    let mut parent = ptr::null();
-    // SAFETY: every pointer followed is a link of the tree, which only holds live entries.
-    unsafe {
-        while !rbe.is_null() {
-            parent = rbe;
-            rbe = e(rbe).rbt_left.get();
-        }
-        if parent.is_null() {
-            None
-        } else {
-            Some(&*rb_e2n::<T>(parent))
-        }
-    }
+pub fn _rb_min<T: RbType>(rbt: &RbTree<T>) -> Option<&T::Elem> {
+    rb_extreme(rbt, Side::Left)
 }
 
 /// `_rb_max`: the element with the largest key.
-pub fn _rb_max<T: RbType>(rbt: &RbTree) -> Option<&T::Elem> {
-    let mut rbe = rbt.rbt_root.get();
-    let mut parent = ptr::null();
-    // SAFETY: as for `_rb_min`.
-    unsafe {
-        while !rbe.is_null() {
-            parent = rbe;
-            rbe = e(rbe).rbt_right.get();
-        }
-        if parent.is_null() {
-            None
-        } else {
-            Some(&*rb_e2n::<T>(parent))
-        }
-    }
+pub fn _rb_max<T: RbType>(rbt: &RbTree<T>) -> Option<&T::Elem> {
+    rb_extreme(rbt, Side::Right)
 }
 
 /// `_rb_left`: the left child of `node`.
 pub fn _rb_left<T: RbType>(node: &T::Elem) -> Option<&T::Elem> {
-    // SAFETY: `node`'s entry is inside `node`; a non-null link is a live linked entry.
-    unsafe {
-        let rbe = e(rb_n2e::<T>(node)).rbt_left.get();
-        if rbe.is_null() {
-            None
-        } else {
-            Some(&*rb_e2n::<T>(rbe))
-        }
-    }
+    rb_n2e::<T>(node).left().map(rb_e2n)
 }
 
 /// `_rb_right`: the right child of `node`.
 pub fn _rb_right<T: RbType>(node: &T::Elem) -> Option<&T::Elem> {
-    // SAFETY: as for `_rb_left`.
-    unsafe {
-        let rbe = e(rb_n2e::<T>(node)).rbt_right.get();
-        if rbe.is_null() {
-            None
-        } else {
-            Some(&*rb_e2n::<T>(rbe))
-        }
-    }
+    rb_n2e::<T>(node).right().map(rb_e2n)
 }
 
 /// `_rb_parent`: the parent of `node`.
 pub fn _rb_parent<T: RbType>(node: &T::Elem) -> Option<&T::Elem> {
-    // SAFETY: as for `_rb_left`.
-    unsafe {
-        let rbe = e(rb_n2e::<T>(node)).rbt_parent.get();
-        if rbe.is_null() {
-            None
-        } else {
-            Some(&*rb_e2n::<T>(rbe))
-        }
-    }
+    rb_n2e::<T>(node).parent().map(rb_e2n)
 }
 
-fn entry_or_null<T: RbType>(node: Option<&T::Elem>) -> *const RbtEntry {
-    node.map_or(ptr::null(), rb_n2e::<T>)
+/// The link that names `node`'s entry, `None` for none.
+fn entry_or_null<T: RbType>(node: Option<&T::Elem>) -> Option<NonNull<RbtEntry>> {
+    link(node.map(rb_n2e::<T>))
 }
 
 /// `_rb_set_left`: makes `left` the left child of `node` without rebalancing.
 ///
 /// # Safety
 ///
-/// The caller is rebuilding the tree by hand and keeps it consistent.
+/// The caller is rebuilding the tree by hand and keeps it consistent: `left` (and every element
+/// it links) stays valid and in place while linked, as for `_rb_insert`, and the links of the
+/// entries it touches end up naming each other as a tree of this type.
 pub unsafe fn _rb_set_left<T: RbType>(node: &T::Elem, left: Option<&T::Elem>) {
-    // SAFETY: `node`'s entry is inside `node`.
-    unsafe { e(rb_n2e::<T>(node)) }
+    rb_n2e::<T>(node)
+        .entry()
         .rbt_left
         .set(entry_or_null::<T>(left));
 }
@@ -783,8 +812,8 @@ pub unsafe fn _rb_set_left<T: RbType>(node: &T::Elem, left: Option<&T::Elem>) {
 ///
 /// As for [`_rb_set_left`].
 pub unsafe fn _rb_set_right<T: RbType>(node: &T::Elem, right: Option<&T::Elem>) {
-    // SAFETY: `node`'s entry is inside `node`.
-    unsafe { e(rb_n2e::<T>(node)) }
+    rb_n2e::<T>(node)
+        .entry()
         .rbt_right
         .set(entry_or_null::<T>(right));
 }
@@ -795,29 +824,29 @@ pub unsafe fn _rb_set_right<T: RbType>(node: &T::Elem, right: Option<&T::Elem>) 
 ///
 /// As for [`_rb_set_left`].
 pub unsafe fn _rb_set_parent<T: RbType>(node: &T::Elem, parent: Option<&T::Elem>) {
-    // SAFETY: `node`'s entry is inside `node`.
-    unsafe { e(rb_n2e::<T>(node)) }
+    rb_n2e::<T>(node)
+        .entry()
         .rbt_parent
         .set(entry_or_null::<T>(parent));
 }
 
-/// `_rb_poison`: fills the links of an unlinked `node` with `poison`, so a stale use faults.
+/// `_rb_poison`: fills the links of `node`, which has been removed, with `poison`, and marks
+/// it poisoned, so a stale use panics instead of walking a tree. A zero poison writes null
+/// links, which are an unlinked entry's, and so marks nothing.
 pub fn _rb_poison<T: RbType>(node: &T::Elem, poison: usize) {
-    // SAFETY: `node`'s entry is inside `node`.
-    let rbe = unsafe { e(rb_n2e::<T>(node)) };
-    let p = poison as *const RbtEntry;
-    rbe.rbt_parent.set(p);
-    rbe.rbt_left.set(p);
-    rbe.rbt_right.set(p);
+    let rbe = rb_n2e::<T>(node).entry();
+    let value = NonNull::new(ptr::without_provenance_mut::<RbtEntry>(poison));
+    rbe.rbt_poisoned.set(u32::from(value.is_some()));
+    rbe.rbt_parent.set(value);
+    rbe.rbt_left.set(value);
+    rbe.rbt_right.set(value);
 }
 
-/// `_rb_check`: whether every link of `node` still holds `poison`.
+/// `_rb_check`: whether every link of `node` holds `poison`.
 pub fn _rb_check<T: RbType>(node: &T::Elem, poison: usize) -> bool {
-    // SAFETY: `node`'s entry is inside `node`.
-    let rbe = unsafe { e(rb_n2e::<T>(node)) };
-    rbe.rbt_parent.get() as usize == poison
-        && rbe.rbt_left.get() as usize == poison
-        && rbe.rbt_right.get() as usize == poison
+    let rbe = rb_n2e::<T>(node).entry();
+    let holds = |link: &Link<RbtEntry>| link.get().map_or(0, |p| p.addr().get()) == poison;
+    holds(&rbe.rbt_parent) && holds(&rbe.rbt_left) && holds(&rbe.rbt_right)
 }
 /* </CODE> */
 
@@ -1083,6 +1112,303 @@ mod tests {
         }
         assert_eq!(keys(t.iter()), [20, 50, 70]);
         check(&t, false);
+    }
+
+    /// A deterministic xorshift64 generator, so the random sequences are the same every run.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            usize::try_from(self.next() % u64::try_from(n).unwrap()).unwrap()
+        }
+    }
+
+    /// Whether `n`'s entry is as `RbtEntry::new` makes it: no links, black.
+    fn unlinked(n: &Node) -> bool {
+        RbtHead::<Aug>::left(n).is_none()
+            && RbtHead::<Aug>::right(n).is_none()
+            && RbtHead::<Aug>::parent(n).is_none()
+            && n.rbt.color() == RB_BLACK
+    }
+
+    #[test]
+    fn random_sequences_keep_invariants() {
+        const N: usize = 96;
+        let key_of = |i: usize| i32::try_from(i * 2).unwrap();
+        let n: Vec<Node> = (0..N).map(|i| Node::new(key_of(i))).collect();
+        for seed in 1..=8u64 {
+            let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+            let t = RbtHead::<Aug>::new();
+            let mut linked = [false; N];
+            for step in 0..1500 {
+                let i = rng.below(N);
+                // SAFETY: the nodes outlive the tree; `linked` says which are in it.
+                unsafe {
+                    if linked[i] {
+                        let parent = RbtHead::<Aug>::parent(&n[i]);
+                        assert!(ptr::eq(t.remove(&n[i]), &n[i]));
+                        assert!(unlinked(&n[i]), "seed {seed} step {step}: links left");
+                        augment_up(parent);
+                    } else {
+                        assert!(t.insert(&n[i]).is_none());
+                        augment_up(Some(&n[i]));
+                    }
+                }
+                linked[i] = !linked[i];
+
+                // colours, order, parent links, black height and the augmented sizes
+                let model: Vec<i32> = (0..N).filter(|&k| linked[k]).map(key_of).collect();
+                check(&t, true);
+                assert_eq!(keys(t.iter()), model);
+                let mut rev = model.clone();
+                rev.reverse();
+                assert_eq!(keys(t.iter_reverse()), rev);
+                assert_eq!(t.root().map_or(0, |r| r.size.get()), model.len());
+
+                // find and nfind against the model, on keys present, absent and out of range
+                let probe = i32::try_from(rng.below(2 * N + 2)).unwrap() - 1;
+                let want = model.iter().copied().find(|&k| k >= probe);
+                assert_eq!(key(t.nfind(&Node::new(probe))), want);
+                assert_eq!(key(t.find(&Node::new(probe))), want.filter(|&k| k == probe));
+                assert_eq!(key(t.min()), model.first().copied());
+                assert_eq!(key(t.max()), model.last().copied());
+            }
+        }
+    }
+
+    #[test]
+    fn random_removal_while_iterating() {
+        const N: usize = 80;
+        let n: Vec<Node> = (0..N)
+            .map(|i| Node::new(i32::try_from(i).unwrap()))
+            .collect();
+        for seed in 1..=8u64 {
+            let mut rng = Rng(seed);
+            let t = RbtHead::<Plain>::new();
+            // SAFETY: the nodes outlive the tree and start unlinked.
+            unsafe {
+                for node in &n {
+                    t.insert(node);
+                }
+            }
+            let mut kept = Vec::new();
+            let mut visit = |node: &Node| {
+                if rng.below(3) == 0 {
+                    kept.push(node.key);
+                } else {
+                    // SAFETY: `node` is in the tree; the iterator already read its neighbour.
+                    unsafe { t.remove(node) };
+                }
+            };
+            if seed % 2 == 0 {
+                t.iter().for_each(&mut visit);
+            } else {
+                t.iter_reverse().for_each(&mut visit);
+                kept.reverse();
+            }
+            assert_eq!(keys(t.iter()), kept);
+            check(&t, false);
+        }
+    }
+
+    #[test]
+    fn removed_entries_read_as_new() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree; every removed node is linked.
+        unsafe {
+            for node in &n {
+                t.insert(node);
+            }
+            // a node with two children, the root, a leaf
+            let root = t.root().unwrap();
+            for node in [&n[1], root, &n[13]] {
+                t.remove(node);
+                assert!(RbtHead::<Plain>::left(node).is_none());
+                assert!(RbtHead::<Plain>::right(node).is_none());
+                assert!(RbtHead::<Plain>::parent(node).is_none());
+                assert!(RbtHead::<Plain>::next(node).is_none());
+                assert!(RbtHead::<Plain>::prev(node).is_none());
+                assert_eq!(node.rbt.color(), RB_BLACK);
+                check(&t, false);
+            }
+            // and they can go back in
+            for node in [&n[1], &n[0], &n[13]] {
+                assert!(t.insert(node).is_none());
+            }
+        }
+        assert_eq!(keys(t.iter()), sorted());
+        check(&t, false);
+    }
+
+    #[test]
+    fn poison_after_remove_then_reinsert() {
+        // `uvm_mapent_addr_remove` poisons what it removes, `uvm_mapent_alloc` what it
+        // allocates; `uvm_mapent_addr_insert` checks the poison before inserting.
+        const DEADBEEF: usize = 0xdead_beef;
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree; every removed node is linked.
+        unsafe {
+            for node in &n {
+                RbtHead::<Plain>::poison(node, DEADBEEF);
+                assert!(RbtHead::<Plain>::check(node, DEADBEEF));
+                t.insert(node);
+                assert!(!RbtHead::<Plain>::check(node, DEADBEEF));
+            }
+            check(&t, false);
+            for node in &n[..7] {
+                t.remove(node);
+                RbtHead::<Plain>::poison(node, DEADBEEF);
+                assert!(RbtHead::<Plain>::check(node, DEADBEEF));
+                check(&t, false);
+            }
+            assert_eq!(keys(t.iter()).len(), n.len() - 7);
+            for node in &n[..7] {
+                assert!(RbtHead::<Plain>::check(node, DEADBEEF));
+                assert!(t.insert(node).is_none());
+            }
+        }
+        assert_eq!(keys(t.iter()), sorted());
+        check(&t, false);
+        // a zero poison is a null link
+        let lone = Node::new(7);
+        RbtHead::<Plain>::poison(&lone, 0);
+        assert!(RbtHead::<Plain>::check(&lone, 0));
+    }
+
+    // The precondition breaks below panic through `rb_panic`, which unwinds in the host tests so
+    // that `should_panic` sees it (`panic(9)` in the kernel).
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: unlinking an element that is not in this tree")]
+    fn double_remove_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree; the second remove breaks the contract on purpose,
+        // and the tree refuses it before touching any link.
+        unsafe {
+            for node in &n[..3] {
+                t.insert(node);
+            }
+            t.remove(&n[0]);
+            t.remove(&n[0]);
+        }
+    }
+
+    #[test]
+    fn double_remove_leaves_the_tree_alone() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: as above; the panic is caught before the nodes go out of scope.
+        unsafe {
+            for node in &n[..3] {
+                t.insert(node);
+            }
+            t.remove(&n[0]);
+        }
+        let again = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+            // SAFETY: refused before any link is written (the point of the test).
+            unsafe { t.remove(&n[0]) };
+        }));
+        assert!(again.is_err());
+        assert_eq!(keys(t.iter()), [20, 70]);
+        check(&t, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: unlinking an element that is not in this tree")]
+    fn remove_of_a_fresh_element_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        let fresh = Node::new(1234);
+        // SAFETY: the nodes outlive the tree; removing `fresh` breaks the contract on purpose.
+        unsafe {
+            for node in &n {
+                t.insert(node);
+            }
+            t.remove(&fresh);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: unlinking an element its parent does not hold")]
+    fn remove_under_a_parent_that_does_not_hold_it_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        let stray = Node::new(1234);
+        // SAFETY: the nodes outlive the tree; `stray` is given a parent by hand that does not
+        // hold it, which breaks `set_parent`'s contract on purpose.
+        unsafe {
+            for node in &n[..3] {
+                t.insert(node);
+            }
+            RbtHead::<Plain>::set_parent(&stray, t.root());
+            t.remove(&stray);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "links of the poisoned entry")]
+    fn following_a_poisoned_entry_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree and start unlinked.
+        unsafe {
+            for node in &n[..3] {
+                t.insert(node);
+            }
+        }
+        // Poisoning a linked element breaks `RBT_POISON`'s use; walking from it must not
+        // follow the poison.
+        RbtHead::<Plain>::poison(&n[0], 0xdead_beef);
+        let _ = RbtHead::<Plain>::next(&n[0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: red root")]
+    fn a_missing_grandparent_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree; the root is recoloured red by hand, which breaks
+        // the invariants on purpose, so the next fixup finds a red parent with no parent.
+        unsafe {
+            t.insert(&n[0]);
+            n[0].rbt.rbt_color.set(RB_RED);
+            t.insert(&n[1]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: colour word neither RB_BLACK nor RB_RED")]
+    fn an_unknown_colour_word_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree; the colour word is overwritten by hand on purpose.
+        unsafe {
+            t.insert(&n[0]);
+            t.insert(&n[1]);
+            n[0].rbt.rbt_color.set(7);
+            t.insert(&n[2]);
+        }
+    }
+
+    #[test]
+    fn zero_poison_marks_nothing() {
+        let n = Node::new(3);
+        RbtHead::<Plain>::poison(&n, 0);
+        assert!(RbtHead::<Plain>::check(&n, 0));
+        assert_eq!(n.rbt.rbt_poisoned.get(), 0);
+        assert!(RbtHead::<Plain>::next(&n).is_none());
+        RbtHead::<Plain>::poison(&n, 0xdead_beef);
+        assert_ne!(n.rbt.rbt_poisoned.get(), 0);
     }
 }
 /* </TESTS> */

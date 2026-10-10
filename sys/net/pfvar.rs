@@ -1653,9 +1653,12 @@ pub struct PfSrcNode {
 unsafe impl Sync for PfSrcNode {}
 
 // SAFETY: `#[repr(C)]`, integers, `Cell`s of integers and raw words, the hole named `_pad`;
-// the tree entry is three raw pointers and a colour word with its padding: `RbEntry` is
-// `#[repr(C)]` of `Cell<*const>` words and a `u32`, whose 4 trailing bytes are covered by
-// `pf_abi_read`'s zeroing and never read as a value.
+// the tree entry (`RbEntry`, `#[repr(C)]` around an `RbtEntry`) is three link words
+// (`Cell<Option<NonNull<_>>>`, where every value, null included, is valid) and two `Cell<u32>`
+// words, the colour and the poison mark, with no implicit padding (sizes and offsets are
+// asserted in `sys/sys/tree.rs`). So every byte is initialised and any bytes are a valid
+// value, also for a pool item that is neither zeroed nor initialised. pf copies nodes out
+// (`DIOCGETSRCNODES`) and never walks the links of a node built from bytes.
 unsafe impl PfAbi for PfSrcNode {}
 
 impl PfSrcNode {
@@ -2590,9 +2593,11 @@ pub struct PfiKif {
 unsafe impl Sync for PfiKif {}
 
 // SAFETY: `#[repr(C)]`: bytes, `Cell`s of integers and raw words, the hole named `_pad`; the
-// tree entry is three raw pointers and a colour word with its padding (as for `PfSrcNode`,
-// whose 4 trailing bytes are covered by the zeroing and never read as a value), the queue
-// head two raw words. `DIOCIGETIFACES` copies kifs out byte for byte (`pfi_get_ifaces`).
+// tree entry is three link words and two `u32` words with no implicit padding, every bit
+// pattern valid (as for `PfSrcNode`), the queue head two raw words. So every byte is
+// initialised and any bytes are a valid value, also for a pool item that is neither zeroed
+// nor initialised; the only kif built from bytes, `pfi_kif_key`'s zeroed key, is compared and
+// never walked. `DIOCIGETIFACES` copies kifs out byte for byte (`pfi_get_ifaces`).
 unsafe impl PfAbi for PfiKif {}
 
 crate::tree_adapter!(
