@@ -8,26 +8,36 @@ measurable and keeps it from regressing.
   harness, the runtime of primitives). Only there may `unsafe` live. A path joins the list only
   with the user's OK, in a commit of its own, like a budget raise.
 - Every module outside the core is either `forbid` (its `mod` declaration in the parent
-  `mod.rs` carries `#[forbid(unsafe_code)]`, so the compiler refuses any `unsafe` in it) or
-  legacy (inherited, not yet redesigned). The `forbid` count never falls; the legacy total
-  never rises, except in the re-baseline commit of an LZ sync (below).
-- Until `cargo xtask unsafe-report` prints the core, `forbid` and legacy groups (the xtask
-  split of `docs/ZERO_UNSAFE.md` section 9), the per-subsystem rows below are the check.
-
-- `unsafe-budget.toml` holds, per `cargo xtask unsafe-report` row (`kern`, `uvm`, `net`,
-  `dev/pci`, `arch/amd64`, `lib/libkern`, ...), the kernel total (blocks + fn + impl + trait +
-  other) the subsystem may not exceed. Test code is not budgeted.
+  `mod.rs` or crate root, or an ancestor's, carries `#[forbid(unsafe_code)]`, so the compiler
+  refuses any `unsafe` in it) or legacy (inherited, not yet redesigned). The `forbid` count
+  never falls; the legacy total never rises, except in the re-baseline commit of an LZ sync
+  (below).
+- `cargo xtask unsafe-report` prints, beside the per-subsystem rows, the three groups over the
+  kernel counts (test code apart): core (the `unsafe` in the files of `unsafe-core.toml`, per
+  row), `forbid` (the modules so declared, read from the module tree down from every `lib.rs`
+  and `main.rs`, out of all the modules under `sys/` that `lineage.toml` tracks) and legacy
+  (the `unsafe` outside the core). It also prints the shape counts (`StaticCell` uses,
+  `unsafe impl Send`/`Sync`, `Cell<*const|*mut T>`, `UnsafeCell`) per subsystem, per module
+  with `--shapes`; they gate nothing.
+- `unsafe-budget.toml` holds the `[ratchet]` table (`forbid_floor`, `legacy_ceiling`) and, per
+  `cargo xtask unsafe-report` row (`kern`, `uvm`, `net`, `dev/pci`, `arch/amd64`,
+  `lib/libkern`, ...), the kernel total (blocks + fn + impl + trait + other) the subsystem may
+  not exceed; the core's rows among them. Test code is not budgeted.
 - `cargo xtask unsafe-report --check` runs in `just ci` and fails when any subsystem exceeds its
-  budget. `cargo xtask unsafe-report --write` records the totals in `docs/STATUS.md` and lowers
-  the budgets to the current counts; it never raises one.
+  budget, when the `forbid` modules fall below `forbid_floor`, when legacy rises above
+  `legacy_ceiling`, or when a pattern of `unsafe-core.toml` names nothing.
+  `cargo xtask unsafe-report --write` records the totals and the groups in `docs/STATUS.md`,
+  lowers the budgets to the current counts, raises the floor and lowers the ceiling; it never
+  moves any of them the other way.
 - Raising a budget is a commit of its own (`build: raise the unsafe budget of <subsystem> to
   <n>`) with the reason in the body, after the user's OK. A redesign that needs more `unsafe`
   than LZ had is suspect by default.
 - An LZ sync re-baselines the budget (the user's decision of 2026-10-10, after the M16 sync
   brought 122 inherited modules and put 14 rows over or without a budget): once its `lz-sync:`
   commits and the pin bump are in, one `build: re-baseline the unsafe budget after the LZ sync
-  to <12-hex>` commit raises each row to the count the synced tree has, with the before/after
-  table and the LZ range in the body. It covers only what the inherited files and the
+  to <12-hex>` commit raises each row to the count the synced tree has, and `legacy_ceiling`
+  with them (`docs/ZERO_UNSAFE.md`, section 8), with the before/after table and the LZ range in
+  the body; `forbid_floor` never falls. It covers only what the inherited files and the
   cherry-picks into inherited files brought: a row that grew because of an adapted or
   redesigned module is raised only by the user, as above.
 - Every commit whose change moves a subsystem's count carries the trailer

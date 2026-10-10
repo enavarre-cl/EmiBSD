@@ -37,7 +37,10 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
   lines are removed from every native file at N0 (decision 20); the original `<LICENSES>`
   blocks are never touched. The author's ISC block (`scope-and-stubs.md`, Authorship) is removed from
   the native side before the comparison, so a module that differs from LZ only by it stays
-  `inherited`. A module an `applied` record of `lz-sync.toml` names in `modules` is compared
+  `inherited`. So is a line that is exactly `#[forbid(unsafe_code)]` sitting on a `mod name;`
+  declaration (other attributes may come between): the zero-unsafe ratchet, dropped from both
+  sides; an inner `#![forbid]`, any other lint or the attribute on any other item is a change.
+  A module an `applied` record of `lz-sync.toml` names in `modules` is compared
   with that LZ commit (the newest such record) instead of the pin, so a sync is green before
   the pin bump (`lz-sync.md`).
   The first commit that changes the file sets `status = "adapted"` or `"redesigned"` in the
@@ -52,10 +55,12 @@ reason = "absorbed by sys/kern/sched/runqueue.rs"
 - A `redesigned` module keeps the whole licence blocks and the
   `//! Upstream:` lines of every file in its `lz` list, and has one `//! LZ: <path>@<12-hex>`
   line per entry (`rust-kernel.md`, file layout). Outside the core of `unsafe-core.toml` it is
-  also `forbid`: its `mod` declaration carries `#[forbid(unsafe_code)]` (`docs/ZERO_UNSAFE.md`;
-  `lz check` enforces it once the sweep has marked N1's modules). The attribute lives in the
-  parent `mod.rs`, which `lineage.toml` does not track, so an `inherited` module can be `forbid`
-  and stay byte-identical to LZ. A module that needs no redesign and is `forbid` as it stands
+  also `forbid`: its `mod` declaration (or an ancestor's) carries `#[forbid(unsafe_code)]`
+  (`docs/ZERO_UNSAFE.md`; `lz check` enforces it). The attribute lives in the parent `mod.rs`
+  or crate root, never in the module's own file, so an `inherited` module can be `forbid` and
+  stay byte-identical to LZ. Those parents are not modules of `lineage.toml`, with one
+  exception: `sys/lib/libkern/lib.rs` is an `inherited` `[[module]]`, and it stays inherited
+  with its declarations' attributes through the comparison rule above. A module that needs no redesign and is `forbid` as it stands
   may carry a per-file verdict (`reviewed`, with its reason) once the xtask supports it.
 - Every `.rs` under `sys/` except `mod.rs`, `lib.rs`, `main.rs`, `build.rs`, `sys/machine/`,
   `sys/arch/host/` and `sys/stand/` is referenced by exactly one `[[module]]` or `[[extra]]`.

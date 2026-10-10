@@ -42,7 +42,9 @@ paths:
   reference to the C (`unsafe-budget.md`), and the core exposes safe APIs: an `unsafe fn` there is
   for the core's own use, since a caller of it cannot be `forbid`.
 - `Adapter` (`sys/sys/queue.rs`) is implemented only by `queue_adapter!` and `tree_adapter!`;
-  never write an impl by hand (`lz check` refuses one once the xtask supports it).
+  never write an impl by hand, rename the trait, or impl a trait passed through a macro
+  variable (`lz check` refuses all three). The element's field must be exactly the entry
+  type, never a pointer to it (the macro checks it at compile time).
 - Dependencies allowed in `sys/`: `libkern`, `libz`, `bitflags`; dev-only `proptest`. The boot
   loaders' crates (M14) may also use `libsa`, `boot` and `efi` (ours, OpenBSD code); the kernel
   does not depend on them. Lists and trees
