@@ -6,7 +6,7 @@
     ],
     "deny": [
       "Edit(/reference/**)",
-      "Write(/reference/**)"
+      "Edit(reference/**)"
     ]
   }
 }
