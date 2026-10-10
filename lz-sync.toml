@@ -299,3 +299,58 @@ subject = "Merge branch 'main' into worktree-agent-aec5d6538af525b1d"
 modules = []
 status = "not-applicable"
 reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "a42eb1c628d3"
+subject = "dev/ic: port mpireg.h and mpivar.h (LSI Fusion-MPT)"
+modules = ["sys/dev/ic/mpireg.rs", "sys/dev/ic/mpivar.rs"]
+status = "applied"
+emibsd = "05ff0348f004"
+method = "cherry-pick"
+
+[[commit]]
+lz = "258598ba7c86"
+subject = "dev/ic: port mpi.c (mpi(4), LSI Fusion-MPT), wip"
+modules = ["sys/dev/ic/mpi.rs"]
+status = "applied"
+emibsd = "bc099d45a2ef"
+method = "cherry-pick"
+
+[[commit]]
+lz = "7fff369b561e"
+subject = "dev/pci: port mpi_pci.c and attach mpi* at pci? on both archs"
+modules = ["sys/dev/pci/mpi_pci.rs", "sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "5f942fde3bde"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "d7378dab3cd2"
+subject = "build: add smoke-mpi (draft expectations)"
+modules = []
+status = "applied"
+emibsd = "046d0dbed64e"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "da0c75ea68a3"
+subject = "Merge worktree-agent-aec5d6538af525b1d into the mpi branch"
+modules = ["sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "046d0dbed64e"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "0be7c8c28652"
+subject = "dev/ic: mpi(4) done: smoke-mpi on both archs, ports rows ported"
+modules = ["sys/dev/ic/mpi.rs", "sys/dev/pci/mpi_pci.rs"]
+status = "applied"
+emibsd = "df7494b935b3"
+method = "cherry-pick"
+
+[[commit]]
+lz = "c97f4785be67"
+subject = "Merge branch 'worktree-agent-a4daa0d3b74ebc6fd' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
