@@ -371,12 +371,48 @@ pub(crate) fn strip_ident_lines(src: &str) -> String {
     out
 }
 
+/// `src` without the `#[forbid(unsafe_code)]` lines that sit on a `mod name;` declaration
+/// (other attributes may come between): the zero-unsafe ratchet lives on the declarations of
+/// the `mod.rs` files and crate roots (docs/ZERO_UNSAFE.md, section 3), and one crate root
+/// that `lineage.toml` tracks (`sys/lib/libkern/lib.rs`) stays `inherited` with them. Only a
+/// line that is exactly the attribute is dropped; `#![forbid(..)]` and any other lint stay.
+pub(crate) fn strip_forbid_decl_attrs(src: &str) -> String {
+    let lines: Vec<&str> = src.split_inclusive('\n').collect();
+    let is_decl = |l: &str| {
+        let t = l.trim();
+        let t = t.strip_prefix("pub").map_or(t, |rest| {
+            let rest = rest.trim_start();
+            match rest.strip_prefix('(') {
+                Some(r) => r.split_once(')').map_or(rest, |(_, after)| after),
+                None => rest,
+            }
+        });
+        t.trim_start()
+            .strip_prefix("mod ")
+            .is_some_and(|r| r.trim_end().ends_with(';'))
+    };
+    let mut out = String::with_capacity(src.len());
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim() == "#[forbid(unsafe_code)]"
+            && lines[i + 1..]
+                .iter()
+                .find(|l| !l.trim_start().starts_with("#["))
+                .is_some_and(|l| is_decl(l))
+        {
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 /// A module's text as `lz check` compares it with its LZ source: without the RCS ident lines
-/// (decision 20) and the author's block (the authorship rule), and with the blank lines that start or end the
-/// LICENSES zone dropped, and an empty LICENSES zone dropped. Applied to both sides.
+/// (decision 20), the author's block (the authorship rule) and the `forbid` attributes of its
+/// `mod` declarations, with the blank lines that start or end the LICENSES zone dropped, and
+/// an empty LICENSES zone dropped. Applied to both sides.
 fn comparable(src: &str) -> String {
     drop_empty_licenses_zone(&trim_licenses_edges(&strip_author_block(
-        &strip_ident_lines(src),
+        &strip_forbid_decl_attrs(&strip_ident_lines(src)),
     )))
 }
 
@@ -1836,6 +1872,25 @@ mod tests {
         ];
         for src in by_hand {
             assert_eq!(adapter_impls("sys/net/if.rs", &lex(src)), 1, "{src}");
+        }
+    }
+    #[test]
+    fn forbid_attributes_on_declarations_are_not_a_change() {
+        let lz = "#![no_std]\npub mod crc32c;\n#[cfg(test)]\nmod t;\n    pub(crate) mod x;\n";
+        let native = "#![no_std]\n#[forbid(unsafe_code)]\npub mod crc32c;\n#[forbid(unsafe_code)]\n#[cfg(test)]\nmod t;\n    #[forbid(unsafe_code)]\n    pub(crate) mod x;\n";
+        assert_eq!(strip_forbid_decl_attrs(native), lz);
+        assert_eq!(comparable(native), comparable(lz));
+        // Anything else stays a change: an inner attribute, another lint, an attribute on an
+        // item that is not an out-of-line module, a forbid on an inline module.
+        for changed in [
+            "#![forbid(unsafe_code)]\npub mod crc32c;\n",
+            "#[forbid(missing_docs)]\npub mod crc32c;\n",
+            "#[forbid(unsafe_code)]\nfn f() {}\n",
+            "#[forbid(unsafe_code)]\nmod inline {}\n",
+            "#[forbid(unsafe_code)]\n",
+        ] {
+            let kept = strip_forbid_decl_attrs(changed);
+            assert_eq!(kept, changed, "{changed}");
         }
     }
 }
