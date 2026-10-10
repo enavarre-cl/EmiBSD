@@ -338,3 +338,28 @@ subject = "Merge pckbc(4) and pckbd(4) (M16d agent A, early: pcppi needs pckbd_h
 modules = []
 status = "not-applicable"
 reason = "merge commit of the pckbc branch into the M16d branch; its resolution (the amd64 ioconf.rs numbering, sys/dev/isa/mod.rs, the justfile's smokes list, none of them a [[module]]) arrived with the hand-resolved applies of e0a4a28b and 6c1941c1, so the tree equals LZ at this merge"
+
+[[commit]]
+lz = "602141098d1d"
+subject = "dev/pv: port viornd.c, viomb.c and dma_alloc.c"
+modules = ["sys/dev/pv/viomb.rs", "sys/dev/pv/viornd.rs", "sys/kern/dma_alloc.rs", "sys/uvm/uvm_init.rs"]
+status = "applied"
+emibsd = "d8368cdc9122"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "cf3843849639"
+subject = "dev/pv: port viogpu.c, viogpu.h and viocon.c"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/dev/pv/viocon.rs", "sys/dev/pv/viogpu.rs"]
+status = "applied"
+emibsd = "4040f445aa97"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "486e0e43209d"
+subject = "Merge viornd(4), viomb(4), viogpu(4), viocon(4) and dma_alloc (M16d agent B)"
+modules = ["sys/arch/amd64/amd64/conf.rs"]
+status = "applied"
+emibsd = "4040f445aa97"
+method = "cherry-pick-conflicts"
+reason = "merge commit of the virtio branch (viornd, viomb, viogpu, viocon, dma_alloc) into the M16d branch; its resolution (the amd64 conf.rs, the amd64 ioconf.rs numbering, the justfile's smokes list) arrived with the hand-resolved applies of its second parent's commits 60214109 and cf384384, so the tree equals LZ at this merge and lz check compares the amd64 conf.rs with it"
