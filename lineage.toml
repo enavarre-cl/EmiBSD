@@ -5,7 +5,7 @@
 # Edited by hand from then on, in the commit that changes a module.
 
 [meta]
-lz = "f5985f1d055a380e9fe3b38837ad9d668e6d736e"
+lz = "3c62ede688029454763f1734a2cc3748a168b430"
 
 [[module]]
 rust = "sys/arch/amd64/amd64/acpi_machdep.rs"
