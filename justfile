@@ -117,7 +117,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-wd smoke-mpi smoke-sdmmc smoke-em smoke-igb smoke-re smoke-vmx smoke-pcn smoke-ne smoke-fxp smoke-dc smoke-vmwpvs smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm smoke-virtio smoke-viogpu " + \
@@ -1491,6 +1491,23 @@ smoke-smmu: (build-arm64 "--features qemu,multiprocessor") build-init-arm64 efib
         --expect "rc: multi-user" --expect "/dev/sd0a on / type ffs (local)" \
         --expect "m16f-acpi-42" --reject "smmu0"
 
+# M16a: vmwpvs(4) on QEMU's VMware paravirtual SCSI adapter (`--pvscsi`, tools/xtask/src/storage.rs:
+# the adapter after every other device, with a fresh zeroed 64 MiB `scsi-hd` at target 0), amd64
+# only (GENERIC has `vmwpvs* at pci?` on amd64 alone). QEMU's pvscsi does not implement the
+# configuration command (VMWPVS_CMD_CONFIG): the page header keeps the INVPARAM/CHECK status the
+# driver preloads, so attach stops at "get configuration failed" before any ring or scsibus exists,
+# exactly as OpenBSD 8.0 does on the same machine (`cargo xtask diff-openbsd --arch amd64 --pvscsi
+# FILE probe`: 'vmwpvs0 at pci0 dev 4 function 0 "VMware PVSCSI" rev 0x02: msi', 'vmwpvs0: get
+# configuration failed'). The system then comes up multi-user. Part of `smoke`.
+smoke-vmwpvs: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-vmwpvs: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --pvscsi pvscsi-amd64.img \
+        --expect "vmwpvs0 at pci0 dev " --expect "vendor 0x15ad product 0x07c0 rev 0x02: msi" \
+        --expect "vmwpvs0: get configuration failed" --expect "rc: multi-user" \
+        --reject "at vmwpvs0"
+
 # M13: siop(4) on QEMU's LSI 53C895A (`--lsi`, `tools/xtask/src/hwopts.rs`: the adapter
 # after every other device, a fresh zeroed 64 MiB `scsi-hd` at target 0 and, with
 # `--lsi-cd`, the ramdisk's ISO as a `scsi-cd` at target 1). The kernel must attach siop0
@@ -1525,6 +1542,134 @@ smoke-siop: (build-amd64 "--features qemu,multiprocessor")
         --expect '*3: A6' --expect '/dev/rsd1a: ' --expect "siop-written-42" --expect "m13-siop-42" \
         --expect "siop-cmp-42" --expect "1048576 bytes transferred" --expect "m13-raw-42" \
         --expect "m10c-iso-42"
+
+# M16a: pciide(4) and wd(4) on the `pc` machine's PIIX3 IDE controller (`--machine pc --ide`,
+# tools/xtask/src/storage.rs: a fresh zeroed 64 MiB `ide-hd`, primary master), amd64 only (arm64
+# GENERIC has no pciide). OpenBSD 8.0 on the same QEMU: `pciide0 at pci0 dev 1 function 1 "Intel
+# 82371SB IDE" rev 0x00: DMA, channel 0 wired to compatibility, channel 1 wired to
+# compatibility`, `wd0 at pciide0 channel 0 drive 0: <QEMU HARDDISK>`, `wd0: 16-sector PIO,
+# LBA48, 64MB, 131072 sectors`, `wd0(pciide0:0:0): using PIO mode 4, DMA mode 2`, `pciide0:
+# channel 1 ignored (disabled)`. The session runs fdisk(8), disklabel(8) and newfs(8) on wd0,
+# writes a file and a copy of /bin/ksh, unmounts, mounts read-only and reads both back (cmp(1)),
+# and reads 1 MiB raw with dd(1): bus master DMA through the compatibility IRQ 14. Part of
+# `smoke`.
+smoke-wd: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-wd: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --machine pc --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --ide wd-amd64.img \
+        {{disk_login}} \
+        --send-after '# ' --send 'fdisk -iy -f /dev/rwd0c wd0 && fdisk -f /dev/rwd0c wd0\n' \
+        --send-after '# ' --send 'disklabel -w -A wd0 && disklabel wd0\n' \
+        --send-after '# ' --send 'newfs wd0a\n' \
+        --send-after '# ' --send 'mount /dev/wd0a /mnt && echo m16a-wd-$((40+2)) >/mnt/wd.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo wd-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/wd0a /mnt && cat /mnt/wd.txt && cmp /bin/ksh /mnt/ksh && echo wd-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rwd0c of=/dev/null bs=64k count=16\n' \
+        --reject "bus-master DMA error" --reject "lost interrupt" \
+        --expect "pciide0 at pci0 dev 1 function 1 vendor 0x8086 product 0x7010 rev 0x00: DMA, channel 0 wired to compatibility, channel 1 wired to compatibility" \
+        --expect "wd0 at pciide0 channel 0 drive 0: <QEMU HARDDISK>" \
+        --expect "wd0: 16-sector PIO, LBA48, 64MB, 131072 sectors" \
+        --expect "wd0(pciide0:0:0): using PIO mode 4, DMA mode 2" \
+        --expect "pciide0: channel 1 ignored (disabled)" \
+        --expect '/dev/rwd0a: ' --expect "wd-written-42" --expect "m16a-wd-42" --expect "wd-cmp-42" \
+        --expect "1048576 bytes transferred"
+
+# M16a: mpi(4) on QEMU's LSI SAS1068 (`--mptsas`, `tools/xtask/src/storage.rs`: the adapter
+# after every other device and a fresh zeroed 64 MiB `scsi-hd` at target 0), both archs.
+# The kernel must attach mpi0 on the PCI bus with MSI (OpenBSD 8.0 on the same QEMU:
+# `mpi0 at pci0 dev 4 function 0 "Symbios Logic SAS1068" rev 0x00: msi`, `mpi0: QEMU MPT
+# Fusion, firmware 1.50.146.0`, `scsibusN at mpi0: 8 targets`, `sdM at scsibusN targ 0 lun 0:
+# <QEMU, QEMU HARDDISK, 2.5+>`, `sdM: 64MB, 512 bytes/sector, 131072 sectors, thin`). The
+# session runs fdisk(8), disklabel(8) and newfs(8) on the disk, writes a file and a copy of
+# /bin/ksh, unmounts, mounts read-only and reads both back (cmp(1)), and reads 1 MiB raw with
+# dd(1). amd64: mpi0 at pci0 dev 4, scsibus1, sd1 (vioblk's disk is sd0); arm64 (`virt`, the
+# virtio-mmio disks attach first): mpi0 at pci0 dev 1, scsibus2, sd2. Part of `smoke`.
+smoke-mpi: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-mpi: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --mptsas mpi-amd64.img \
+        {{disk_login}} \
+        --send-after '# ' --send 'fdisk -iy -f /dev/rsd1c sd1 && fdisk -f /dev/rsd1c sd1\n' \
+        --send-after '# ' --send 'disklabel -w -A sd1 && disklabel sd1\n' \
+        --send-after '# ' --send 'newfs sd1a\n' \
+        --send-after '# ' --send 'mount /dev/sd1a /mnt && echo m16a-mpi-$((40+2)) >/mnt/mpi.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo mpi-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/sd1a /mnt && cat /mnt/mpi.txt && cmp /bin/ksh /mnt/ksh && echo mpi-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rsd1c of=/dev/null bs=64k count=16\n' \
+        --expect "mpi0 at pci0 dev 4 function 0 vendor 0x1000 product 0x0054 rev 0x00: msi" \
+        --expect "mpi0: QEMU MPT Fusion, firmware 1.50.146.0" \
+        --expect "scsibus1 at mpi0: 8 targets" \
+        --expect "sd1 at scsibus1 targ 0 lun 0: <QEMU, QEMU HARDDISK, 2.5+>" \
+        --expect "sd1: 64MB, 512 bytes/sector, 131072 sectors, thin" \
+        --expect '*3: A6' --expect '/dev/rsd1a: ' --expect "mpi-written-42" --expect "m16a-mpi-42" \
+        --expect "mpi-cmp-42" --expect "1048576 bytes transferred"
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --mptsas mpi-arm64.img \
+        {{disk_login}} \
+        --send-after '# ' --send 'fdisk -iy -f /dev/rsd2c sd2 && fdisk -f /dev/rsd2c sd2\n' \
+        --send-after '# ' --send 'disklabel -w -A sd2 && disklabel sd2\n' \
+        --send-after '# ' --send 'newfs sd2a\n' \
+        --send-after '# ' --send 'mount /dev/sd2a /mnt && echo m16a-mpi-$((40+2)) >/mnt/mpi.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo mpi-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/sd2a /mnt && cat /mnt/mpi.txt && cmp /bin/ksh /mnt/ksh && echo mpi-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rsd2c of=/dev/null bs=64k count=16\n' \
+        --expect "mpi0 at pci0 dev 1 function 0 vendor 0x1000 product 0x0054 rev 0x00: msi" \
+        --expect "mpi0: QEMU MPT Fusion, firmware 1.50.146.0" \
+        --expect "scsibus2 at mpi0: 8 targets" \
+        --expect "sd2 at scsibus2 targ 0 lun 0: <QEMU, QEMU HARDDISK, 2.5+>" \
+        --expect "sd2: 64MB, 512 bytes/sector, 131072 sectors, thin" \
+        --expect '*3: A6' --expect '/dev/rsd2a: ' --expect "mpi-written-42" --expect "m16a-mpi-42" \
+        --expect "mpi-cmp-42" --expect "1048576 bytes transferred"
+
+# M16a: sdhc(4) and the sdmmc(4) stack on QEMU's SD host controller (`--sdhci`,
+# `tools/xtask/src/storage.rs`: `sdhci-pci` after every other device with a fresh zeroed
+# 64 MiB `sd-card`), both archs. The kernel must attach sdhc0 on the PCI bus (OpenBSD 8.0 on
+# the same QEMU: `sdhc0 at pci0 dev 4 function 0 "Red Hat SD/MMC" rev 0x00: apic 0 int 20`
+# on amd64, `: irq` on arm64, `sdhc0: SDHC 2.00, 52 MHz base clock`, `sdmmc0 at sdhc0:
+# 4-bit, sd high-speed, mmc high-speed, dma`, `scsibusN at sdmmc0: 2 targets, initiator 0`,
+# `sdM at scsibusN targ 1 lun 0: <SD/MMC, QEMU!, 0001> removable`, `sdM: 64MB, 512
+# bytes/sector, 131072 sectors`); the card is found by sdmmc0's task thread, which the root
+# mount waits for (config_pending). The session runs fdisk(8), disklabel(8) and newfs(8) on
+# the card, writes a file and a copy of /bin/ksh, unmounts, mounts read-only and reads both
+# back (cmp(1)), and reads 1 MiB raw with dd(1). amd64: scsibus2, sd2 (the card attaches from
+# sdmmc0's thread, after vioblk's sd0 and ahci's sd1, the boot disk); arm64: scsibus2, sd2
+# (`virt`'s virtio-mmio disks attach first). Part of `smoke`.
+smoke-sdmmc: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-sdmmc: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --sdhci sdhc-amd64.img \
+        {{disk_login}} \
+        --send-after '# ' --send 'fdisk -iy -f /dev/rsd2c sd2 && fdisk -f /dev/rsd2c sd2\n' \
+        --send-after '# ' --send 'disklabel -w -A sd2 && disklabel sd2\n' \
+        --send-after '# ' --send 'newfs sd2a\n' \
+        --send-after '# ' --send 'mount /dev/sd2a /mnt && echo m16a-sdmmc-$((40+2)) >/mnt/sd.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo sdmmc-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/sd2a /mnt && cat /mnt/sd.txt && cmp /bin/ksh /mnt/ksh && echo sdmmc-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rsd2c of=/dev/null bs=64k count=16\n' \
+        --expect "sdhc0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x0007 rev 0x00: apic 0 int " \
+        --expect "sdhc0: SDHC 2.00, 52 MHz base clock" \
+        --expect "sdmmc0 at sdhc0: 4-bit, sd high-speed, mmc high-speed, dma" \
+        --expect "scsibus2 at sdmmc0: 2 targets, initiator 0" \
+        --expect "sd2 at scsibus2 targ 1 lun 0: <SD/MMC, QEMU!, 0001> removable" \
+        --expect "sd2: 64MB, 512 bytes/sector, 131072 sectors" \
+        --expect '*3: A6' --expect '/dev/rsd2a: ' --expect "sdmmc-written-42" --expect "m16a-sdmmc-42" \
+        --expect "sdmmc-cmp-42" --expect "1048576 bytes transferred"
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --sdhci sdhc-arm64.img \
+        {{disk_login}} \
+        --send-after '# ' --send 'fdisk -iy -f /dev/rsd2c sd2 && fdisk -f /dev/rsd2c sd2\n' \
+        --send-after '# ' --send 'disklabel -w -A sd2 && disklabel sd2\n' \
+        --send-after '# ' --send 'newfs sd2a\n' \
+        --send-after '# ' --send 'mount /dev/sd2a /mnt && echo m16a-sdmmc-$((40+2)) >/mnt/sd.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo sdmmc-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/sd2a /mnt && cat /mnt/sd.txt && cmp /bin/ksh /mnt/ksh && echo sdmmc-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rsd2c of=/dev/null bs=64k count=16\n' \
+        --expect "sdhc0 at pci0 dev 1 function 0 vendor 0x1b36 product 0x0007 rev 0x00: irq" \
+        --expect "sdhc0: SDHC 2.00, 52 MHz base clock" \
+        --expect "sdmmc0 at sdhc0: 4-bit, sd high-speed, mmc high-speed, dma" \
+        --expect "scsibus2 at sdmmc0: 2 targets, initiator 0" \
+        --expect "sd2 at scsibus2 targ 1 lun 0: <SD/MMC, QEMU!, 0001> removable" \
+        --expect "sd2: 64MB, 512 bytes/sector, 131072 sectors" \
+        --expect '*3: A6' --expect '/dev/rsd2a: ' --expect "sdmmc-written-42" --expect "m16a-sdmmc-42" \
+        --expect "sdmmc-cmp-42" --expect "1048576 bytes transferred"
 
 # M13: em(4), the exit criterion's "em(4) on e1000e answers the M7+ ping". `--nic e1000e`
 # (`tools/xtask/src/hwopts.rs`) puts QEMU's 82574L on the user network in vio0's place, so

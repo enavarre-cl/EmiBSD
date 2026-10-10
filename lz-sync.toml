@@ -278,6 +278,138 @@ status = "not-applicable"
 reason = "LZ's external bugs log (docs/EXTERNAL_BUGS.md: the OpenBSD C slips LZ's ports found, EXT-9 on); native keeps no such log, the slips reach the user through the sync's report (.claude/rules/subagents.md)"
 
 [[commit]]
+lz = "5ac46f5ffe9e"
+subject = "dev/pci: port vmwpvs(4), VMware's paravirtual SCSI adapter"
+modules = ["sys/dev/pci/pcidevs.rs", "sys/dev/pci/vmwpvs.rs"]
+status = "applied"
+emibsd = "7b0e4fbabec0"
+method = "cherry-pick"
+
+[[commit]]
+lz = "5c2fb5d410a8"
+subject = "xtask: put --floppy's image in drive B, where OpenBSD 8.0 finds fd0"
+modules = []
+status = "applied"
+emibsd = "1c104a1bb5bd"
+method = "cherry-pick"
+
+[[commit]]
+lz = "bfd607a37106"
+subject = "Merge branch 'main' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "a42eb1c628d3"
+subject = "dev/ic: port mpireg.h and mpivar.h (LSI Fusion-MPT)"
+modules = ["sys/dev/ic/mpireg.rs", "sys/dev/ic/mpivar.rs"]
+status = "applied"
+emibsd = "05ff0348f004"
+method = "cherry-pick"
+
+[[commit]]
+lz = "258598ba7c86"
+subject = "dev/ic: port mpi.c (mpi(4), LSI Fusion-MPT), wip"
+modules = ["sys/dev/ic/mpi.rs"]
+status = "applied"
+emibsd = "bc099d45a2ef"
+method = "cherry-pick"
+
+[[commit]]
+lz = "7fff369b561e"
+subject = "dev/pci: port mpi_pci.c and attach mpi* at pci? on both archs"
+modules = ["sys/dev/pci/mpi_pci.rs", "sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "5f942fde3bde"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "d7378dab3cd2"
+subject = "build: add smoke-mpi (draft expectations)"
+modules = []
+status = "applied"
+emibsd = "046d0dbed64e"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "da0c75ea68a3"
+subject = "Merge worktree-agent-aec5d6538af525b1d into the mpi branch"
+modules = ["sys/dev/pci/pcidevs.rs"]
+status = "applied"
+emibsd = "046d0dbed64e"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "0be7c8c28652"
+subject = "dev/ic: mpi(4) done: smoke-mpi on both archs, ports rows ported"
+modules = ["sys/dev/ic/mpi.rs", "sys/dev/pci/mpi_pci.rs"]
+status = "applied"
+emibsd = "df7494b935b3"
+method = "cherry-pick"
+
+[[commit]]
+lz = "c97f4785be67"
+subject = "Merge branch 'worktree-agent-a4daa0d3b74ebc6fd' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "13bcb0ca6a03"
+subject = "dev/ata: port the IDE/ATA headers (atareg, atavar, satareg, wdvar, wdc*)"
+modules = ["sys/dev/ata/atareg.rs", "sys/dev/ata/atavar.rs", "sys/dev/ata/satareg.rs", "sys/dev/ata/wdvar.rs", "sys/dev/ic/wdcevent.rs", "sys/dev/ic/wdcreg.rs", "sys/dev/ic/wdcvar.rs"]
+status = "applied"
+emibsd = "91343780468d"
+method = "cherry-pick"
+
+[[commit]]
+lz = "a07e3710a618"
+subject = "Merge branch 'worktree-agent-aec5d6538af525b1d' into worktree-agent-a2364f82ca4b0de05"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "3359ea7ce10c"
+subject = "dev/ic: port wdc.c, the IDE channel core, with ata.c"
+modules = ["sys/dev/ata/ata.rs", "sys/dev/ic/wdc.rs", "sys/dev/ic/wdcvar.rs"]
+status = "applied"
+emibsd = "6f3c1ceff277"
+method = "cherry-pick"
+
+[[commit]]
+lz = "a696f9b3ae3d"
+subject = "dev/ata: port wd(4) and ata_wdc.c, its transfers through wdc"
+modules = ["sys/arch/amd64/amd64/conf.rs", "sys/arch/arm64/arm64/conf.rs", "sys/dev/ata/ata_wdc.rs", "sys/dev/ata/wd.rs", "sys/dev/ic/wdc.rs"]
+status = "applied"
+emibsd = "ff5fb3f57a32"
+method = "cherry-pick"
+
+[[commit]]
+lz = "3a6d783ed3ca"
+subject = "Merge branch 'worktree-agent-a2364f82ca4b0de05' into worktree-agent-aec5d6538af525b1d"
+modules = []
+status = "not-applicable"
+reason = "merge commit; its content arrived with the records of its parents' commits"
+
+[[commit]]
+lz = "fa503323b575"
+subject = "dev/sdmmc: port sdhc(4) and the sdmmc(4) bus"
+modules = ["sys/dev/sdmmc/sdhc.rs", "sys/dev/sdmmc/sdhcreg.rs", "sys/dev/sdmmc/sdhcvar.rs", "sys/dev/sdmmc/sdmmc.rs", "sys/dev/sdmmc/sdmmc_cis.rs", "sys/dev/sdmmc/sdmmc_io.rs", "sys/dev/sdmmc/sdmmc_ioreg.rs", "sys/dev/sdmmc/sdmmc_mem.rs", "sys/dev/sdmmc/sdmmc_scsi.rs", "sys/dev/sdmmc/sdmmcchip.rs", "sys/dev/sdmmc/sdmmcdevs.rs", "sys/dev/sdmmc/sdmmcreg.rs", "sys/dev/sdmmc/sdmmcvar.rs"]
+status = "applied"
+emibsd = "f05fa50cd105"
+method = "cherry-pick"
+
+[[commit]]
+lz = "028991238bda"
+subject = "dev/pci: port sdhc_pci.c, attach sdhc and sdmmc, add smoke-sdmmc"
+modules = ["sys/dev/pci/pcidevs.rs", "sys/dev/pci/sdhc_pci.rs"]
+status = "applied"
+emibsd = "7aa6c65357ec"
+method = "cherry-pick"
+
+[[commit]]
 lz = "03d704b5706c"
 subject = "dev/pci: port eap(4) with midi(4)"
 modules = ["sys/arch/amd64/amd64/conf.rs", "sys/arch/arm64/arm64/conf.rs", "sys/dev/midi.rs", "sys/dev/midi_if.rs", "sys/dev/midivar.rs", "sys/dev/pci/eap.rs", "sys/dev/pci/eapreg.rs", "sys/dev/pci/pcidevs.rs"]
@@ -506,6 +638,22 @@ subject = "docs: M16d met (console, virtio and legacy devices)"
 modules = []
 status = "not-applicable"
 reason = "LZ's M16d close (README, docs/JOURNAL.md, PORTING.md, ROADMAP.md, STATUS.md); native keeps its own docs and milestones"
+
+[[commit]]
+lz = "1b566a71e2d8"
+subject = "dev/pci: port pciide's register headers and the Cypress 82C693 glue"
+modules = ["sys/arch/amd64/pci/pciide_machdep.rs", "sys/dev/pci/cy82c693.rs", "sys/dev/pci/cy82c693reg.rs", "sys/dev/pci/cy82c693var.rs", "sys/dev/pci/pcidevs.rs", "sys/dev/pci/pciide_acard_reg.rs", "sys/dev/pci/pciide_acer_reg.rs", "sys/dev/pci/pciide_amd_reg.rs", "sys/dev/pci/pciide_apollo_reg.rs", "sys/dev/pci/pciide_cmd_reg.rs", "sys/dev/pci/pciide_cy693_reg.rs", "sys/dev/pci/pciide_hpt_reg.rs", "sys/dev/pci/pciide_ite_reg.rs", "sys/dev/pci/pciide_ixp_reg.rs", "sys/dev/pci/pciide_jmicron_reg.rs", "sys/dev/pci/pciide_natsemi_reg.rs", "sys/dev/pci/pciide_nforce_reg.rs", "sys/dev/pci/pciide_piix_reg.rs", "sys/dev/pci/pciide_rdc_reg.rs", "sys/dev/pci/pciide_sis_reg.rs", "sys/dev/pci/pciidereg.rs"]
+status = "applied"
+emibsd = "9c1bf5a2dc9c"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "f344ed85971b"
+subject = "dev/pci: port pciide(4) with every chip of its table"
+modules = ["sys/dev/pci/pciide.rs", "sys/dev/pci/pciide_pdc202xx_reg.rs", "sys/dev/pci/pciide_sii3112_reg.rs", "sys/dev/pci/pciide_svwsata_reg.rs", "sys/dev/pci/pciidevar.rs"]
+status = "applied"
+emibsd = "cf73a489dc6e"
+method = "cherry-pick-conflicts"
 
 [[commit]]
 lz = "8fe7508289c6"

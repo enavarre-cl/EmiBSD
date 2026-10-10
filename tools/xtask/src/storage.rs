@@ -39,7 +39,12 @@
 //! - `--sdhci FILE`: QEMU's SD host controller on PCI (`sdhci-pci`), sdhc(4), with an
 //!   `sd-card` on its bus (QEMU needs a power-of-two card size; [`DISK_BYTES`] is one).
 //! - `--floppy FILE` (amd64): a 3.5" 1.44 MB drive on the ISA floppy controller (`pc` has one
-//!   built in; on `q35` an `isa-fdc` is added on the LPC's ISA bus), fdc(4) and fd(4).
+//!   built in; on `q35` an `isa-fdc` is added on the LPC's ISA bus), fdc(4) and fd(4). The
+//!   drive is unit 1 (drive B): OpenBSD 8.0's fdprobe finds no drive 0 on QEMU's controller
+//!   (its recalibrate status check fails there, on `pc` and `q35` alike) and attaches drive 1
+//!   as fd0, so with the image in drive A it prints `fd0 at fdc0 drive 1: density unknown` and
+//!   fd0 is not configured; with it in drive B (CMOS type 1.44 MB) it prints `fd0 at fdc0
+//!   drive 1: 1.44MB 80 cyl, 2 head, 18 sec` and mount_msdos(8) reads the note (M16a's probe).
 //!
 //! The options are offered on both archs where QEMU has the device, whatever the GENERICs
 //! say, so `diff-openbsd probe` can show what OpenBSD does with them. Every disk is made
@@ -174,7 +179,7 @@ const HBAS: &[Hba] = &[
                 a.push("isa-fdc,id=m16a-fdc".into());
             }
             a.push("-device".into());
-            a.push(format!("floppy,drive={d},unit=0,drive-type=144"));
+            a.push(format!("floppy,drive={d},unit=1,drive-type=144"));
             a
         },
     },

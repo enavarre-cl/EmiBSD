@@ -25,20 +25,27 @@
 //! `virtio_pcireg`) is the virtio transport (`virtio* at pci?`), `nvme_pci` the NVM
 //! Express front-end (`nvme* at pci?`), `ahci_pci` the AHCI SATA front-end (`ahci* at
 //! pci?`), `siop_pci` (with `siop_pci_common`) the Symbios SCSI front-end (`siop* at
-//! pci?`) (M13); `xhci_pci` the xHCI front-end (`xhci* at
+//! pci?`) (M13); `mpi_pci` the LSI Fusion-MPT front-end (`mpi* at pci?`, M16a); `xhci_pci` the xHCI front-end (`xhci* at
 //! pci?`), `auich` the Intel ICH AC'97 audio controller (`auich* at pci?`), `azalia` (with
 //! `azalia_codec`) the HD Audio controller (`azalia* at pci?`) (M12); `puc` (with `pucvar`
 //! and `pucdata`) the "universal" communication card driver (`puc* at pci?`, M13); `if_vmx` (with
 //! `if_vmxreg`) VMware's VMXNET3 NIC (`vmx* at pci?`, M13); `ichiic` (with `ichreg`) and `piixpm` (with
 //! `piixreg`) the ICH and PIIX4 SMBus controllers (`ichiic* at pci?`, `piixpm* at pci?`, M16e); `ehci_pci` the EHCI front-end
 //! (`ehci* at pci?`, M16b); `uhci_pci` the UHCI front-end (`uhci* at pci?`, M16b);
-//! `ohci_pci` the OHCI front-end (`ohci* at pci?`, M16b). The machine side
+//! `ohci_pci` the OHCI front-end (`ohci* at pci?`, M16b); `vmwpvs` VMware's paravirtual SCSI
+//! adapter (`vmwpvs* at pci?`, M16a); `sdhc_pci` the SD Host Controller front-end (`sdhc* at
+//! pci?`, M16a); `pciide` the PCI IDE controllers (`pciide* at pci?`, M16a), with
+//! `pciidereg`, `pciidevar`, the chip headers `pciide_*_reg` and the Cypress 82C693 glue
+//! (`cy82c693`, `cy82c693reg`, `cy82c693var`). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
 pub mod ahci_pci;
 pub mod auich;
 pub mod azalia;
 pub mod azalia_codec;
+pub mod cy82c693;
+pub mod cy82c693reg;
+pub mod cy82c693var;
 pub mod eap;
 pub mod eapreg;
 pub mod ehci_pci;
@@ -57,6 +64,7 @@ pub mod if_pcn;
 pub mod if_re_pci;
 pub mod if_vmx;
 pub mod if_vmxreg;
+pub mod mpi_pci;
 pub mod nvme_pci;
 pub mod ohci_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
@@ -65,6 +73,27 @@ pub mod pci_map;
 pub mod pci_quirks;
 pub mod pci_subr;
 pub mod pcidevs;
+pub mod pciide;
+pub mod pciide_acard_reg;
+pub mod pciide_acer_reg;
+pub mod pciide_amd_reg;
+pub mod pciide_apollo_reg;
+pub mod pciide_cmd_reg;
+pub mod pciide_cy693_reg;
+pub mod pciide_hpt_reg;
+pub mod pciide_ite_reg;
+pub mod pciide_ixp_reg;
+pub mod pciide_jmicron_reg;
+pub mod pciide_natsemi_reg;
+pub mod pciide_nforce_reg;
+pub mod pciide_pdc202xx_reg;
+pub mod pciide_piix_reg;
+pub mod pciide_rdc_reg;
+pub mod pciide_sii3112_reg;
+pub mod pciide_sis_reg;
+pub mod pciide_svwsata_reg;
+pub mod pciidereg;
+pub mod pciidevar;
 pub mod pcireg;
 pub mod pcivar;
 pub mod piixpm;
@@ -74,6 +103,7 @@ pub mod ppbreg;
 pub mod puc;
 pub mod pucdata;
 pub mod pucvar;
+pub mod sdhc_pci;
 pub mod siop_pci;
 pub mod siop_pci_common;
 pub mod uhci_pci;
@@ -81,5 +111,6 @@ pub mod vga_pci;
 pub mod vga_pcivar;
 pub mod virtio_pci;
 pub mod virtio_pcireg;
+pub mod vmwpvs;
 pub mod xhci_pci;
 /* </CODE> */

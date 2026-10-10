@@ -33,7 +33,7 @@
 //! `ums* at uhidev?`, `wsmouse* at ums? mux 0`, `uwacom* at uhidev?` and `wsmouse* at uwacom?
 //! mux 0` (M16b), `uhid* at uhidev?`, `uaudio* at uhub?` and `audio* at uaudio?` (M16b) and `ugen* at uhub?`
 //! (M16b, the last of `uhub?`'s devices:
-//! `ugen` is the generic fallback), `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?`,
+//! `ugen` is the generic fallback), `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?`, `mpi* at pci?` (M16a),
 //! `bios0 at mainbus0`, `acpi0 at bios0`, `acpitimer* at acpi?`, `acpihpet* at acpi?`,
 //! `ioapic* at mainbus?`, `acpimadt0 at acpi?`, `acpiprt* at acpi?` and `acpipci* at
 //! acpi?` (M13), `puc* at pci?` and `com* at puc?` (M13; `com*` takes the units from 4),
@@ -52,6 +52,8 @@
 //! `cdce* at uhub?`, `uftdi* at uhub?` and `ucom* at uftdi?` (M16b),
 //! `pcn* at pci?`, `ne* at pci?`, `fxp* at pci?`, `inphy* at mii?`, `dc* at pci?`,
 //! `lxtphy* at mii?` and `dcphy* at mii?` (M16c),
+//! `vmwpvs* at pci?` (M16a), `sdhc* at pci?` and `sdmmc* at sdhc?` (M16a),
+//! `pciide* at pci? flags 0x0000` and `wd* at pciide? flags 0x0000` (M16a),
 //! `eap* at pci?`, `audio* at eap?` and `midi* at eap?` (M16d), `lpt0 at isa? port 0x378
 //! irq 7` (M16d; `#lpt1` and `#lpt2` are commented out in GENERIC),
 //! `pckbc0 at isa? flags 0x00`, `pckbd* at pckbc?`, `pms* at pckbc?`, `wskbd* at pckbd? mux 1`
@@ -71,9 +73,12 @@
 //! `lm*`, ... are not ported: the scan prints what it finds as not configured), the other
 //! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`,
-//! `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
+//! `fdc0`, `wdc0` and `wdc1` (`disable`), the sensors, ...), `wd* at wdc?` (no `wdc` parent
+//! is configured), `pciide* at jmb?` (jmb(4) is not ported), `atapiscsi* at pciide?`
+//! (atapiscsi(4) is not ported); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re, vmx, pcn, ne, fxp and dc (`rl* at pci?` among them: QEMU's rtl8139 is
-//! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
+//! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci, siop, vmwpvs, mpi, sdhc and pciide, ...), `sdmmc*` at
+//! `rtsx?` and `bwfm*` at `sdmmc?`, every other
 //! device at `mii?` (the other PHY drivers), every
 //! other
 //! `audio*` (at `envy?`, ...), every other `midi*` (at `umidi?`, `envy?`, `mpu?`), `pci*` at
@@ -104,6 +109,7 @@ use crate::dev::acpi::acpiprt::{ACPIPRT_CA, ACPIPRT_CD};
 use crate::dev::acpi::acpitimer::{ACPITIMER_CA, ACPITIMER_CD};
 use crate::dev::acpi::ipmi_acpi::IPMI_ACPI_CA;
 use crate::dev::acpi::tpm::{TPM_CA, TPM_CD};
+use crate::dev::ata::wd::{WD_CA, WD_CD};
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
 use crate::dev::i2c::i2c::{IIC_CA, IIC_CD};
@@ -112,6 +118,7 @@ use crate::dev::ic::com::COM_CD;
 use crate::dev::ic::dc::DC_CD;
 use crate::dev::ic::fxp::FXP_CD;
 use crate::dev::ic::lpt::LPT_CD;
+use crate::dev::ic::mpi::MPI_CD;
 use crate::dev::ic::ne2000::NE_CD;
 use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::ic::pckbc::PCKBC_CD;
@@ -146,16 +153,20 @@ use crate::dev::pci::if_ne_pci::NE_PCI_CA;
 use crate::dev::pci::if_pcn::{PCN_CA, PCN_CD};
 use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
+use crate::dev::pci::mpi_pci::MPI_PCI_CA;
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::ohci_pci::OHCI_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
+use crate::dev::pci::pciide::{PCIIDE_CD, PCIIDE_PCI_CA};
 use crate::dev::pci::piixpm::{PIIXPM_CA, PIIXPM_CD};
 use crate::dev::pci::ppb::{PPB_CA, PPB_CD};
 use crate::dev::pci::puc::{PUC_CD, PUC_PCI_CA};
+use crate::dev::pci::sdhc_pci::SDHC_PCI_CA;
 use crate::dev::pci::siop_pci::SIOP_PCI_CA;
 use crate::dev::pci::uhci_pci::UHCI_PCI_CA;
 use crate::dev::pci::vga_pci::VGA_PCI_CA;
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
+use crate::dev::pci::vmwpvs::{VMWPVS_CA, VMWPVS_CD};
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
 use crate::dev::pckbc::pckbd::{PCKBD_CA, PCKBD_CD};
 use crate::dev::pckbc::pms::{PMS_CA, PMS_CD};
@@ -169,6 +180,8 @@ use crate::dev::pv::viornd::{VIORND_CA, VIORND_CD};
 use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
+use crate::dev::sdmmc::sdhc::SDHC_CD;
+use crate::dev::sdmmc::sdmmc::{SDMMC_CA, SDMMC_CD};
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::usb::ehci::EHCI_CD;
 use crate::dev::usb::if_cdce::{CDCE_CA, CDCE_CD};
@@ -236,8 +249,13 @@ const PV_VIRTIO: &[i16] = &[3];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
 /// `softraid0` (`cfdata[13]`), `umass*` (`cfdata[22]`), `nvme*` (`cfdata[25]`), `vioscsi*`
-/// (`cfdata[26]`), `ahci*` (`cfdata[28]`, through atascsi) and `siop*` (`cfdata[29]`).
-const PV_VIOBLK: &[i16] = &[5, 13, 22, 25, 26, 28, 29];
+/// (`cfdata[26]`), `ahci*` (`cfdata[28]`, through atascsi), `siop*` (`cfdata[29]`) and, M16a,
+/// `vmwpvs*` (`cfdata[96]`), `mpi*` (`cfdata[97]`) and `sdmmc*` (`cfdata[99]`).
+const PV_VIOBLK: &[i16] = &[5, 13, 22, 25, 26, 28, 29, 96, 97, 99];
+
+/// `pv[]` for children of `sdhc*` (`cfdata[98]`) through the `sdmmcbus` attribute
+/// (`conf/files`: `define sdmmcbus {}`, no locators).
+const PV_SDHC: &[i16] = &[98];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[11]`).
 const PV_SCSIBUS: &[i16] = &[11];
@@ -416,13 +434,23 @@ const PV_PCPPI: &[i16] = &[91];
 /// `pv[]` for children of `pms*` (`cfdata[88]`): the `wsmousedev` attribute.
 const PV_PMS: &[i16] = &[88];
 
+/// `pv[]` for children of `pciide*` (`cfdata[100]`, M16a).
+const PV_PCIIDE: &[i16] = &[100];
+
+/// `loc[]` of an entry at `ata` with the defaults `channel = -1`, `drive = -1` (`conf/files`:
+/// `define ata {[channel = -1], [drive = -1]}`).
+const LOC_ATA_UNK: &[i64] = &[-1, -1];
+
+/// `cf_locnames` of an entry at `ata`: `channel`, `drive`.
+const LN_ATA: i32 = 43;
+
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 96 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
+/// `cfdata[]`: 102 entries, one more with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`)
 /// and one more with `viocon`.
 const NCFDATA: usize =
-    96 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
+    102 + cfg!(feature = "viocon") as usize + cfg!(feature = "multiprocessor") as usize;
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
 /// (`machine::autoconf::ioconf_mut`).
@@ -549,7 +577,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_ISA,
         0,
     ),
-    // 11: scsibus* at scsi? (vioblk, umass, nvme, vioscsi, ahci, siop), and at softraid? (GENERIC's `scsibus* at
+    // 11: scsibus* at scsi? (vioblk, umass, nvme, vioscsi, ahci, siop, vmwpvs, mpi, sdmmc), and at softraid? (GENERIC's `scsibus* at
     // softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,
@@ -1501,7 +1529,69 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 96: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
+    // 96: vmwpvs* at pci? (M16a)
+    Cfdata::new(
+        &VMWPVS_CA,
+        &VMWPVS_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 97: mpi* at pci? (M16a)
+    Cfdata::new(
+        &MPI_PCI_CA,
+        &MPI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 98: sdhc* at pci? (M16a)
+    Cfdata::new(
+        &SDHC_PCI_CA,
+        &SDHC_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 99: sdmmc* at sdhc? (M16a)
+    Cfdata::new(&SDMMC_CA, &SDMMC_CD, 0, FSTATE_STAR, &[], 0, PV_SDHC, 0, 0),
+    // 100: pciide* at pci? flags 0x0000 (M16a)
+    Cfdata::new(
+        &PCIIDE_PCI_CA,
+        &PCIIDE_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 101: wd* at pciide? flags 0x0000 (M16a)
+    Cfdata::new(
+        &WD_CA,
+        &WD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_ATA_UNK,
+        0,
+        PV_PCIIDE,
+        LN_ATA,
+        0,
+    ),
+    // 102: viocon* at virtio? (M16d, feature `viocon`: GENERIC has the line commented out)
     #[cfg(feature = "viocon")]
     Cfdata::new(
         &VIOCON_CA,
@@ -1514,7 +1604,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 97 (96 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 103 (102 without `viocon`): cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
@@ -1623,7 +1713,7 @@ pub static PDEVNAMES: [&[u8]; NPDEVINIT] = [
 ];
 
 /// `locnames[]`: every locator name of the entries above, once.
-pub static LOCNAMES: [&[u8]; 24] = [
+pub static LOCNAMES: [&[u8]; 26] = [
     b"bus",
     b"dev",
     b"function",
@@ -1648,12 +1738,14 @@ pub static LOCNAMES: [&[u8]; 24] = [
     b"mux",
     b"portno",
     b"slot",
+    b"channel",
+    b"drive",
 ];
 
 /// `locnamp[]`: one run of indices into `LOCNAMES` per locator attribute, each ended by `-1`
 /// (`config(8)` writes one per parent device; `mkioconf.c`'s XXX asks for this compression).
-pub static LOCNAMP: [i16; 43] = [
+pub static LOCNAMP: [i16; 46] = [
     -1, 0, -1, 1, 2, -1, 3, 4, 5, 6, 7, 8, 9, -1, 10, 11, -1, 3, 12, 13, 14, 15, 16, -1, 17, -1, 3,
-    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1, 23, -1,
+    -1, 18, -1, 19, 20, 21, -1, 19, 21, -1, 21, -1, 22, -1, 23, -1, 24, 25, -1,
 ];
 /* </CODE> */

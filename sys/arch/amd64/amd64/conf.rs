@@ -57,7 +57,7 @@
 //! - A slot whose driver is not ported holds `cdev_notdef()` (`bdev_notdef()`), where the C
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
-//!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
+//!   drivers present are `wd` (0 block, 3 character, M16a; `NWD` is 0 on arm64), `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmouse` (68, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
 //!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `ucom` (66, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`), `viocon` (94, M16d; `NVIOCON` 0 unless feature `viocon`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
@@ -74,6 +74,7 @@
 use core::cell::Cell;
 
 use crate::arch::amd64::amd64::mem::{mmclose, mmioctl, mmmmap, mmopen, mmrw};
+use crate::dev::ata::wd::{wdclose, wddump, wdioctl, wdopen, wdread, wdsize, wdstrategy, wdwrite};
 use crate::dev::audio::{
     NAUDIO, audioclose, audioioctl, audiokqfilter, audioopen, audioread, audiowrite,
 };
@@ -162,6 +163,9 @@ pub const NVIOCON: i32 = if cfg!(feature = "viocon") { 1 } else { 0 };
 /// `NWSDISPLAY`: `wsdisplay0 at efifb?` in GENERIC (M13; its other lines wait for vga, inteldrm, radeondrm, amdgpu and udl).
 pub const NWSDISPLAY: i32 = 1;
 
+/// `NWD`: config(8)'s count for `wd*` (`wd.h`): `wd*` at `wdc?` and `pciide?` in GENERIC (M16a).
+pub const NWD: i32 = 1;
+
 /// An empty block slot.
 const fn bnotdef() -> Cell<Bdevsw> {
     Cell::new(bdev_notdef())
@@ -174,7 +178,10 @@ const fn cnotdef() -> Cell<Cdevsw> {
 
 /// `bdevsw[]`.
 pub static BDEVSW: Devsw<Bdevsw, 20> = Devsw([
-    bnotdef(), // 0: ST506/ESDI/IDE disk (wd: not ported)
+    // 0: ST506/ESDI/IDE disk
+    Cell::new(bdev_disk_init(
+        NWD, wdopen, wdclose, wdstrategy, wdioctl, wddump, wdsize,
+    )),
     bnotdef(), // 1: swap pseudo-device (sw: uvm_swap.c, not ported)
     bnotdef(), // 2: floppy diskette (fd: not ported)
     bnotdef(), // 3
@@ -233,7 +240,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     Cell::new(cdev_mm_init(
         1, mmopen, mmclose, mmrw, mmrw, mmioctl, mmmmap,
     )),
-    cnotdef(), // 3: ST506/ESDI/IDE disk (wd: not ported)
+    // 3: ST506/ESDI/IDE disk
+    Cell::new(cdev_disk_init(
+        NWD, wdopen, wdclose, wdread, wdwrite, wdioctl,
+    )),
     cnotdef(), // 4 was /dev/drum
     // 5: pseudo-tty slave
     Cell::new(cdev_tty_init(

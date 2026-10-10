@@ -95,6 +95,9 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   `cd1`; `MAKEDEV all` makes `cd0` and `cd1`);
 /// - vnode disks (`vnd`, M10c), made by `devices()` from `VND_UNITS` the same way: block 14
 ///   (`bdev_disk_init(NVND,vnd)`, 69 / 67), character 41 (219 / 169), `vnd0`..`vnd3`;
+/// - IDE disks (`wd`, M16a), made by `devices()` from `WD_UNITS` the same way: block `wd` 0
+///   (`bdev_disk_init(NWD,wd)`), character 3, `wd0a`..`wd0p` and `rwd0a`..`rwd0p` for
+///   `wd0`..`wd3` (`MAKEDEV all`'s; `dodisk wd $U 0 3`);
 /// - `bio` is major 79 (`bio` 79 / 79: `/dev/bio`, `MAKEDEV` makes it 0600), minor 0;
 /// - `fuse` is major 92 (`cdev_fuse_init`, 277 / 227: `/dev/fuse0`, cloning, the one node
 ///   libfuse opens; `MAKEDEV`'s `_mcdev(fuse, ...)` makes it 0600), minor 0;
@@ -241,6 +244,13 @@ const UGEN_UNITS: &[u32] = &[0, 1];
 /// `cdevsw[]` major of `ugen` (`cdev_usbdev_init(NUGEN,ugen)`, 63 on amd64 and arm64).
 const UGEN_CHAR_MAJOR: u32 = 63;
 
+/// The `wd` units the image has nodes for: `MAKEDEV all`'s `wd0`..`wd3`.
+const WD_UNITS: &[u32] = &[0, 1, 2, 3];
+
+/// `bdevsw[]` and `cdevsw[]` majors of `wd` (0 and 3 on amd64 and arm64).
+const WD_BLOCK_MAJOR: u32 = 0;
+const WD_CHAR_MAJOR: u32 = 3;
+
 /// `bdevsw[]` and `cdevsw[]` majors of `vnd` (14 and 41 on amd64 and arm64).
 const VND_BLOCK_MAJOR: u32 = 14;
 const VND_CHAR_MAJOR: u32 = 41;
@@ -265,6 +275,11 @@ pub(super) fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
             VND_UNITS
                 .iter()
                 .map(|u| ("vnd", *u, VND_BLOCK_MAJOR, VND_CHAR_MAJOR)),
+        )
+        .chain(
+            WD_UNITS
+                .iter()
+                .map(|u| ("wd", *u, WD_BLOCK_MAJOR, WD_CHAR_MAJOR)),
         );
     for unit in UGEN_UNITS {
         for endpoint in 0..16 {

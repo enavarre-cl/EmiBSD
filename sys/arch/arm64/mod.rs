@@ -1051,6 +1051,26 @@ impl Intr for Machine {
     }
 }
 
+/// arm64 has no `pciide_machdep.c` (its GENERIC has no pciide) and no ISA bus: a
+/// compatibility-mode PCI IDE channel gets no interrupt.
+impl crate::machine::pciide_machdep::PciideMachdep for Machine {
+    fn pciide_machdep_compat_intr_establish(
+        _dev: &'static crate::sys::device::Device,
+        _pa: &crate::dev::pci::pcivar::PciAttachArgs,
+        _chan: i32,
+        _func: fn(*mut c_void) -> i32,
+        _arg: *mut c_void,
+    ) -> Option<NonNull<c_void>> {
+        None
+    }
+
+    unsafe fn pciide_machdep_compat_intr_disestablish(
+        _pc: crate::machine::pci_machdep::PciChipsetTag,
+        _cookie: NonNull<c_void>,
+    ) {
+    }
+}
+
 /// arm64 has no ISA bus: no interrupt line is free and none can be established.
 impl crate::machine::isa_machdep::IsaMachdep for Machine {
     type IsaChipsetTag = *const c_void;

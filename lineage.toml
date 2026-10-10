@@ -477,6 +477,12 @@ lz = ["sys/arch/amd64/pci/pci_machdep.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/arch/amd64/pci/pciide_machdep.rs"
+lz = ["sys/arch/amd64/pci/pciide_machdep.rs"]
+status = "inherited"
+notes = "M16a: the whole file: pciide_machdep_compat_intr_establish (ISA IRQ 14/15, IST_EDGE, IPL_BIO, named after the device) and pciide_machdep_compat_intr_disestablish, reached by pciide.c through machine::pciide_machdep (trait PciideMachdep; arm64, which has no pciide_machdep.c and no ISA bus, and the host establish nothing)"
+
+[[module]]
 rust = "sys/arch/amd64/stand/efiboot/cmd_i386.rs"
 lz = ["sys/arch/amd64/stand/efiboot/cmd_i386.rs"]
 status = "inherited"
@@ -1844,14 +1850,56 @@ lz = ["sys/dev/acpi/tpm.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ata/ata.rs"
+lz = ["sys/dev/ata/ata.rs"]
+status = "inherited"
+notes = "M16a: the whole file: ata_get_params (IDENTIFY into a DmaBuf, dma_alloc not ported; the big-endian swaps under target_endian big; the string fixing in ata_params_fixup), ata_set_mode, ata_dmaerr, ata_perror (snprintf into a byte buffer). ata_get_params/ata_set_mode panic when flags hold neither AT_WAIT nor AT_POLL (exec_on_stack), where the C would leave the transfer pointing into a dead frame; every caller passes one. Host tests (string swaps, error texts, DMA error accounting)"
+
+[[module]]
+rust = "sys/dev/ata/ata_wdc.rs"
+lz = ["sys/dev/ata/ata_wdc.rs"]
+status = "inherited"
+notes = "M16a: the whole file but HIBERNATE (not configured: wd_hibernate_io not compiled): wdcdebug_wd_mask (feature wdcdebug), wdc_ata_bio (&'static ata_bio), wdc_ata_bio_start, _wdc_ata_bio_start (again/do_pio/intr/timeout gotos as labelled blocks and a loop; LBA28, LBA48 and CHS; PIO single/multiple and DMA through the controller hooks, EINVAL falling back to PIO), wdc_ata_bio_intr, wdc_ata_bio_kill_xfer, wdc_ata_bio_done, wdc_ata_ctrl_intr (the RECAL..READY switch with its fallthroughs as a state loop), wdc_ata_err; the label fields read in place (AtaBio::label). Host tests: a task file emulated behind the channel vtbl (one ATA disk): wdcprobe, IDENTIFY, PIO mode selection, a polled READ MULTIPLE after RECAL/SET FEATURES/SET MULTI and a polled WRITE"
+
+[[module]]
+rust = "sys/dev/ata/atareg.rs"
+lz = ["sys/dev/ata/atareg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct ataparams (Ataparams, repr(C), 512 bytes and the word offsets asserted; the byte pairs ordered by target_endian as the C by BYTE_ORDER; from_bytes/as_bytes for the C's bcopy/bcmp of the IDENTIFY block), every WDC_/ATA_/ATAPI_/SATA_ bit, ATAPI_CFG_TYPE as a const fn. Reference-backed test of every define"
+
+[[module]]
 rust = "sys/dev/ata/atascsi.rs"
 lz = ["sys/dev/ata/atascsi.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ata/atavar.rs"
+lz = ["sys/dev/ata/atavar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct ata_drive_datas (AtaDriveDatas: Cells; id an UnsafeCell read in place, written through the unsafe id_mut; chnl_softc kept a void pointer; mixed-case PIO_mode.. kept), DRIVE_*, ACAP_*, NERRS_MAX, NXFER, struct ata_atapi_attach (aa_drv_data a &'static reference), T_ATA/T_ATAPI, ATA_CONFIG_*, struct wdc_command (WdcCommand: Cells, shared with the channel while it runs; data a raw pointer), AT_*, WDC_COMPLETE/QUEUED/TRY_AGAIN, CMD_OK/ERR/AGAIN; the prototypes are wdc.rs's and ata.rs's. Reference-backed test of every define"
+
+[[module]]
 rust = "sys/dev/ata/pmreg.rs"
 lz = ["sys/dev/ata/pmreg.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/ata/satareg.rs"
+lz = ["sys/dev/ata/satareg.rs"]
+status = "inherited"
+notes = "M16a: license: NetBSD Foundation BSD-2, kept whole; the whole header: the SStatus, SError and SControl values (u32, mixed-case C names kept), SControl_PMP as a const fn. Reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/ata/wd.rs"
+lz = ["sys/dev/ata/wd.rs"]
+status = "inherited"
+notes = "M16a: the whole driver but B_FORMAT (not defined: wdformat), WD_DUMP_NOT_TRUSTED (not defined) and HIBERNATE: wd_ca/wd_cd, wdprobe, wdattach (model string in wd_model), wdactivate, wddetach, wdstrategy, wdstart, __wdstart, wddone, wdrestart, wdread/wdwrite (physio), wdopen (wdopen_noproc for wdsize), wdclose, wdgetdefaultlabel, wdgetdisklabel (the label built in a local and installed as sd.rs does), wdioctl (DIOCRLDINFO's label malloc'ed as in the C; the rest to wdc_ioctl), wdsize, wddump (nothing calls it yet: dumpsys not ported), wd_get_params (always on sc_params, as every caller), wd_flushcache (keeps the C's test of ERR_NODEV against the AT_* flags), wd_standby. bdevsw 0 / cdevsw 3 on both archs (NWD 1 on amd64, 0 on arm64 as GENERIC). Host tests (model string, strncpy)"
+
+[[module]]
+rust = "sys/dev/ata/wdvar.rs"
+lz = ["sys/dev/ata/wdvar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct ata_bio (AtaBio: Cells; lp the in-core label read in place by AtaBio::label; databuf a raw pointer; wd a NonNull), ATA_* bio flags, the error codes, struct wd_softc (WdSoftc, repr(C) Softc; sc_params an UnsafeCell with params/params_mut), WDF_*, the drive states RECAL..READY; wdc_ata_bio is ata_wdc.rs's, wddone wd.rs's, wd_hibernate_io not compiled (HIBERNATE not configured). Reference-backed test of every define"
 
 [[module]]
 rust = "sys/dev/audio.rs"
@@ -2151,6 +2199,24 @@ lz = ["sys/dev/ic/mc6845reg.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/ic/mpi.rs"
+lz = ["sys/dev/ic/mpi.rs"]
+status = "inherited"
+notes = "M16a: the whole driver, no stubs: mpi_attach (unwinding as a labelled block), the doorbell handshake (mpi_init, reset_soft/hard, handshake_send/recv, iocfacts, iocinit), portfacts, portenable, fwupload, manufacturing, get_raid, the ccb pool and iopool (mpi_get_ccb/put_ccb), reply frames, mpi_start/poll/wait/reply/intr, the scsibus adapter (scsi_cmd, scsi_cmd_done, load_xs with SGE chaining, scsi_probe with the virtual-volume and SAS ATAPI checks, scsi_ioctl), the configuration pages (mpi_req_cfg_header/page generic over basic and extended headers, SPI port/device, SAS iou, FC port, coalescing), events (eventnotify/ack, SAS device status, detach, FC rescan task), SPI domain validation (squash_ppr, run_ppr, ppr, inq), bio(4) (BIOCINQ/VOL/DISK, ioctl_cache for DIOCGCACHE/SCACHE) and the volume sensors. MPI_DEBUG (DPRINTF, the page-0 read in mpi_ppr) is not defined and not ported. ccb_cookie is an enum and mpi_poll's rv is ccb_poll_rv (the C leaves the address of a dead stack variable in the ccb after a timeout); C bugs kept: mpi_ioctl_cache reads action_status from the rcb (not its reply), the ccb leaks when mpi_poll fails in portenable/cfg_header/cfg_page/ioctl_cache, mpi_ioctl_vol copies 32 bytes from the 8-byte vendor, mpi_ioctl_disk's strlcpy runs on from vendor_id. Host tests: header kinds, dword views, SGE flags. QEMU (`just smoke-mpi`, both archs): mpi0 (MSI) attaches QEMU's SAS1068, scsibus 8 targets, sd1 (amd64) / sd2 (arm64) 64MB; fdisk/disklabel/newfs/mount/cmp/dd as OpenBSD 8.0 does on the same QEMU"
+
+[[module]]
+rust = "sys/dev/ic/mpireg.rs"
+lz = ["sys/dev/ic/mpireg.rs"]
+status = "inherited"
+notes = "M16a: the whole header, generated from it and checked: every register, SGE flag, function, IOCStatus, event and config page constant (typed by use: register offsets usize, functions and whoinit u8, IOCStatus u16, flags the width of their member) and every message and page structure (repr(C), or repr(C, packed) where a member is unaligned; sizes and offsets asserted at compile time); the five function-like macros are const fns; the valueless #if notyet MPI_SCSIIO_ERR_STATUS_* block is not ported; mpi_msg_eventack_reply keeps the C's u32 ioc_status at offset 14 (22 bytes packed, 24 in C, size unused). just test-ref compares every define with the header"
+
+[[module]]
+rust = "sys/dev/ic/mpivar.rs"
+lz = ["sys/dev/ic/mpivar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct mpi_dmamem (malloc'ed, &'static), mpi_ccb_bundle (repr(C)), mpi_rcb, mpi_ccb (ccb_cookie is an enum: transfer, poll, wait mutex; mpi_poll's rv is ccb_poll_rv), mpi_softc (Cells; sc_nccbs added to bound the ccb index); MPI_DEBUG not defined and not ported"
+
+[[module]]
 rust = "sys/dev/ic/ne2000.rs"
 lz = ["sys/dev/ic/ne2000.rs"]
 status = "inherited"
@@ -2302,6 +2368,30 @@ rust = "sys/dev/ic/vgavar.rs"
 lz = ["sys/dev/ic/vgavar.rs"]
 status = "inherited"
 license = "Carnegie Mellon notice"
+
+[[module]]
+rust = "sys/dev/ic/wdc.rs"
+lz = ["sys/dev/ic/wdc.rs"]
+status = "inherited"
+notes = "M16a: the whole file: wdc_cd, wdc_default_vtbl and the default register functions (an odd byte count's last word through a bounce, where the C touches the byte past the buffer), wdprint, wdc_disable/enable_intr, wdc_set_drive, wdc_floating_bus/wdc_preata_drive/wdc_ata_present (bool), wdcprobe, wdc_alloc_queue (the xfer pool and wdc_xfer_iopool on first use) / wdc_free_queue (unsafe), wdcattach (&'static channel), wdcstart, wdcdetach, wdcintr, wdc_reset_channel, wdcreset (bool), wdc_do_reset, __wdcwait_reset, wdc_wait_for_status (Err(ETIMEDOUT) for -1), wdc_dmawait (Err(ENXIO)/Err(ETIMEDOUT)), wdctimeout, wdc_probe_caps, wdc_output/input_bytes (Option slices), wdc_print_caps (its message is #if 0), wdc_print_current_modes, wdc_downgrade_mode (bool), wdc_exec_command (unsafe fn: the command must outlive the transfer, which AT_WAIT/AT_POLL guarantee), __wdccommand_start/intr/done, wdccommand, wdccommandext, wdccommandshort, wdc_exec_xfer, wdc_xfer_get/put, wdc_scrub_xfer (unsafe, by pointer), wdc_get_xfer, wdc_free_xfer, wdc_kill_pending, __wdcerror, wdcbit_bucket, wdc_ioc_ata_cmd (dma_alloc not ported: scsiconf's DmaBuf), wdc_ioctl (ATAIOCCOMMAND; ATAIOGETTRACE with WDCDEBUG). option WDCDEBUG is feature wdcdebug: WDCDEBUG_PRINT is wdcdebug_print! (arguments type-checked in a never-called closure without it), wdc_log/wdc_get_log/ATAIOGETTRACE compiled only with it; WDCNDELAY_DEBUG (#if 0) a comment. at_poll an AtomicU16. Calls through NULL hooks panic. Host tests (ata_wdc.rs) run wdcprobe, IDENTIFY, mode selection and polled transfers on a task file emulated behind a vtbl"
+
+[[module]]
+rust = "sys/dev/ic/wdcevent.rs"
+lz = ["sys/dev/ic/wdcevent.rs"]
+status = "inherited"
+notes = "M16a: license: Sapuntzakis BSD-3, kept whole; enum wdcevent_type (WdceventType, repr(u8)) and the WDC_LOG_* helpers: with feature wdcdebug (option WDCDEBUG) they record through wdc.rs's wdc_log, without it they are empty functions as the C's empty macros. WDC_LOG_ATAPI_CMD logs at most the 18 command bytes its 20-byte record holds (the C would overrun it)"
+
+[[module]]
+rust = "sys/dev/ic/wdcreg.rs"
+lz = ["sys/dev/ic/wdcreg.rs"]
+status = "inherited"
+notes = "M16a: license: Regents BSD-3, kept whole; the whole header: WDCTL_*, WDCS_* with WDCS_BITS (%b), WDCE_*, the WDCC_ commands, SET_FEATURES and WDSF_*, WDSD_*, the ATAPI_ commands, WDCI_* and PHASE_* (all u8). Reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/ic/wdcvar.rs"
+lz = ["sys/dev/ic/wdcvar.rs"]
+status = "inherited"
+notes = "M16a: license: NetBSD Foundation BSD-2, kept whole; the whole header: struct channel_queue (TAILQ of WdcXferChain), struct channel_softc (ChannelSoftc, repr(C) so a front-end embeds it first: Cells, bus tags/handles Cell<Option> with panicking accessors), enum wdc_regs as the newtype WdcRegs with the wdr_* constants (equal values), WDC_NREG, struct channel_softc_vtbl (raw multi transfers take Option<slice>, None the bit bucket) and the CHP_* macros as ChannelSoftc methods, struct wdc_softc (WdcSoftc, repr(C) Softc; dma hooks unsafe fns over dma_arg, dma_init returning Result; channels a slice), struct wdc_xfer (WdcXfer: cmd a void pointer, chp a NonNull; struct atapi_return_args opaque), every WDCF_/WDC_/C_ constant, wdcwait/wait_for_drq/wait_for_unbusy/wait_for_ready as functions (Err(ETIMEDOUT) for -1). Reference-backed test of every define"
 
 [[module]]
 rust = "sys/dev/ipmi.rs"
@@ -2546,6 +2636,24 @@ lz = ["sys/dev/pci/azalia_codec.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/pci/cy82c693.rs"
+lz = ["sys/dev/pci/cy82c693.rs"]
+status = "inherited"
+notes = "M16a: the whole file (cy82c693_init, cy82c693_read, cy82c693_write), pciide's cy693 glue (files.pci: pciide needs cy82c693); cyhc_handle/cyhc_initialized are one StaticCell<Option<Cy82c693Handle>> written once at autoconf time; cy82c693_init's panic on a second call with another tag is not made (bus space tags have no equality in the machine contract; its one caller passes its PCI bus's I/O tag)"
+
+[[module]]
+rust = "sys/dev/pci/cy82c693reg.rs"
+lz = ["sys/dev/pci/cy82c693reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (CYHC_CONFIG_ADDR/DATA as BusAddr, the CONFIG_* register indexes). Reference-backed test"
+
+[[module]]
+rust = "sys/dev/pci/cy82c693var.rs"
+lz = ["sys/dev/pci/cy82c693var.rs"]
+status = "inherited"
+notes = "M16a: struct cy82c693_handle (Cy82c693Handle, Copy); the prototypes are cy82c693.rs's"
+
+[[module]]
 rust = "sys/dev/pci/eap.rs"
 lz = ["sys/dev/pci/eap.rs"]
 status = "inherited"
@@ -2642,6 +2750,12 @@ lz = ["sys/dev/pci/if_vmxreg.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/pci/mpi_pci.rs"
+lz = ["sys/dev/pci/mpi_pci.rs"]
+status = "inherited"
+notes = "M16a: the whole file: struct mpi_pci_softc (repr(C), the mpi softc first; Softc), mpi_pci_ca, mpi_devices[] (22 Symbios MPT chips; their PCI_PRODUCT_SYMBIOS_* ids added to pcidevs.rs with a reference-backed test), mpi_pci_match, mpi_pci_attach (first memory BAR, ROM disabled, MSI else INTx at IPL_BIO|IPL_MPSAFE, MPI_F_SPI for the 1030), mpi_pci_detach. The __sparc64__ scsi-initiator-id walk is not ported. mpi* at pci? is cfdata[85] on amd64 and cfdata[70] on arm64 (both GENERICs have it), a parent of scsibus*"
+
+[[module]]
 rust = "sys/dev/pci/nvme_pci.rs"
 lz = ["sys/dev/pci/nvme_pci.rs"]
 status = "inherited"
@@ -2676,7 +2790,133 @@ status = "inherited"
 rust = "sys/dev/pci/pcidevs.rs"
 lz = ["sys/dev/pci/pcidevs.rs"]
 status = "inherited"
-notes = "generated by devlist2h.awk from sys/dev/pci/pcidevs (BSD-4-clause, Demetriou, accepted at M2; 350 vendors, 9600 products, 640 KB). M7b: only the IDs ported code names (PCI_VENDOR_OPENBSD/CIRRUS/AMD/QUMRANET/INTEL/INVALID, the three AMD xHCI products pci_set_powerstate knows, PCI_PRODUCT_CIRRUS_CL_PD6729, PCI_PRODUCT_INTEL_82371FB_ISA, PCI_PRODUCT_OPENBSD_CONTROL for virtio_pci), as u32, added by hand; the rest waits for a devlist2h-like generator in tools/xtask; reference-backed test; M13a: PCI_VENDOR_APPLE and PCI_PRODUCT_APPLE_NVME1/2/3 (nvme_pci.c); M12: PCI_VENDOR_FRESCO, PCI_PRODUCT_FRESCO_FL1000, PCI_PRODUCT_FRESCO_FL1400 (xhci_pci's MSI quirk); M12 auich: the AC97 controllers auich.c names (PCI_VENDOR_SIS, PCI_VENDOR_NVIDIA and the 22 PCI_PRODUCT_*_ACA/AC97 IDs of Intel, SiS, NVIDIA and AMD); M12 (azalia): PCI_VENDOR_DELL and PCI_VENDOR_HP (azalia_codec.c's subsystem checks) and the 79 HD Audio controller products azalia.c names (ATI SB450/SBx00, AMD 15h/17h/Hudson-2, NVIDIA MCP51..MCP89, Intel 82801FB..PTL), in the reference-backed test; M13 (ahci): PCI_VENDOR_ATI/ASMEDIA/SAMSUNG2/VIATECH/ZHAOXIN and the 37 products of ahci_pci.c's ahci_devices[]; M13 (siop): PCI_VENDOR_SYMBIOS and the 14 PCI_PRODUCT_SYMBIOS_* products siop_pci_common.c names, in the reference-backed test; M13 (puc): the 213 vendors and products pucdata.c and puc.c name (PCI_VENDOR_EXAR, PCI_PRODUCT_EXAR_XR17V352/354, Red Hat's three PCI_PRODUCT_REDHAT_SERIAL*, ...; their own reference-backed test); M13 (em): the 198 Intel ids of if_em.c's em_devices[], in its order, with a reference-backed test; M13 (vmx): PCI_VENDOR_VMWARE and PCI_PRODUCT_VMWARE_NET_3 (if_vmx.c's vmx_devices[]), in the reference-backed test; M13 (vga): PCI_PRODUCT_INTEL_US15W_IGD, US15L_IGD, GMA600_0, GMA600_8, MDFLD_IGD_0, GMA3600_0 (vga_pci.c's vga_devs[]), in the reference-backed test; M14 (arm64 acpipci): PCI_VENDOR_QUALCOMM, PCI_PRODUCT_QUALCOMM_SC8280XP_PCIE (the swizzle quirk), in the reference-backed test; M16e (ichiic, piixpm): PCI_VENDOR_RCC, PCI_VENDOR_SMSC and the 76 SMBus and power-management products ichiic.c and piixpm.c name (inserted before PCI_VENDOR_ATI), in their own reference-backed test"
+notes = "generated by devlist2h.awk from sys/dev/pci/pcidevs (BSD-4-clause, Demetriou, accepted at M2; 350 vendors, 9600 products, 640 KB). M7b: only the IDs ported code names (PCI_VENDOR_OPENBSD/CIRRUS/AMD/QUMRANET/INTEL/INVALID, the three AMD xHCI products pci_set_powerstate knows, PCI_PRODUCT_CIRRUS_CL_PD6729, PCI_PRODUCT_INTEL_82371FB_ISA, PCI_PRODUCT_OPENBSD_CONTROL for virtio_pci), as u32, added by hand; the rest waits for a devlist2h-like generator in tools/xtask; reference-backed test; M13a: PCI_VENDOR_APPLE and PCI_PRODUCT_APPLE_NVME1/2/3 (nvme_pci.c); M12: PCI_VENDOR_FRESCO, PCI_PRODUCT_FRESCO_FL1000, PCI_PRODUCT_FRESCO_FL1400 (xhci_pci's MSI quirk); M12 auich: the AC97 controllers auich.c names (PCI_VENDOR_SIS, PCI_VENDOR_NVIDIA and the 22 PCI_PRODUCT_*_ACA/AC97 IDs of Intel, SiS, NVIDIA and AMD); M12 (azalia): PCI_VENDOR_DELL and PCI_VENDOR_HP (azalia_codec.c's subsystem checks) and the 79 HD Audio controller products azalia.c names (ATI SB450/SBx00, AMD 15h/17h/Hudson-2, NVIDIA MCP51..MCP89, Intel 82801FB..PTL), in the reference-backed test; M13 (ahci): PCI_VENDOR_ATI/ASMEDIA/SAMSUNG2/VIATECH/ZHAOXIN and the 37 products of ahci_pci.c's ahci_devices[]; M13 (siop): PCI_VENDOR_SYMBIOS and the 14 PCI_PRODUCT_SYMBIOS_* products siop_pci_common.c names, in the reference-backed test; M13 (puc): the 213 vendors and products pucdata.c and puc.c name (PCI_VENDOR_EXAR, PCI_PRODUCT_EXAR_XR17V352/354, Red Hat's three PCI_PRODUCT_REDHAT_SERIAL*, ...; their own reference-backed test); M13 (em): the 198 Intel ids of if_em.c's em_devices[], in its order, with a reference-backed test; M13 (vmx): PCI_VENDOR_VMWARE and PCI_PRODUCT_VMWARE_NET_3 (if_vmx.c's vmx_devices[]), in the reference-backed test; M13 (vga): PCI_PRODUCT_INTEL_US15W_IGD, US15L_IGD, GMA600_0, GMA600_8, MDFLD_IGD_0, GMA3600_0 (vga_pci.c's vga_devs[]), in the reference-backed test; M14 (arm64 acpipci): PCI_VENDOR_QUALCOMM, PCI_PRODUCT_QUALCOMM_SC8280XP_PCIE (the swizzle quirk), in the reference-backed test; M16a (mpi): the 22 PCI_PRODUCT_SYMBIOS_* products mpi_pci.c names (1030, SAS1064..SAS1066, FC909..FC949E), in their own reference-backed test; M16e (ichiic, piixpm): PCI_VENDOR_RCC, PCI_VENDOR_SMSC and the 76 SMBus and power-management products ichiic.c and piixpm.c name (inserted before PCI_VENDOR_ATI), in their own reference-backed test; M16a (sdhc_pci): PCI_PRODUCT_REALTEK_RTS5209, PCI_VENDOR_RICOH with PCI_PRODUCT_RICOH_R5U822/R5U823, PCI_VENDOR_TI with PCI_PRODUCT_TI_PCI7XX1_FLASH/SD, PCI_VENDOR_ENE with PCI_PRODUCT_ENE_SDCARD, PCI_VENDOR_GENESYS with PCI_PRODUCT_GENESYS_GL9755, in their own reference-backed test; M16a (pciide): the 305 vendor and product IDs pciide.c's chip table and chip maps name that were missing, appended in one block, in their own reference-backed test"
+
+[[module]]
+rust = "sys/dev/pci/pciide.rs"
+lz = ["sys/dev/pci/pciide.rs"]
+status = "inherited"
+notes = "M16a: the whole driver, every chip of its table (247 product rows of 18 vendors; the __i386__ CS5535/gcsc row not compiled): the core (pciide_pci_read/write, lookup, match, attach, detach, activate with its per-chip save/restore by fn_addr_eq, compat and native register mapping, bus master DMA mapping, the interrupt handlers, the DMA register accessors, descriptor tables and pciide_dma_init/start/finish over bus_dma, chansetup/mapchan/candisable, compat interrupt through machine::pciide_machdep), default_chip_map, sata, piix/piixsata (PIIX..ICH7), amd756, apollo, cmd/cmd0643_9/cmd680, sii3112/sii3114, cy693, sis/sis96x, natsemi/ns_scx200, acer, hpt, pdc202xx/pdc20268/pdcsata (PDC203xx/205xx), serverworks/svwsata, acard, nforce, artisea, ite, ixp, jmicron, phison, sch, rdc. pciide_jmb_ca is ported but unused (jmb(4) is not). Chip private data (sc_cookie) malloc'ed and written whole, a failed malloc panics (the C dereferences NULL), its accessors check the chip map; the channel of a ChannelSoftc is found by address (pciide_cp) after a checked softc cast (pciide_sc). Kept as in the C: pciide_unmapregs_compat's ctl unmap through cmd_ioh, cmd680's two timing bytes to one register, hpt's compatchan reset, cy693's DMA_mode -1, rdc_setup_channel's PATR clearing. amd64 only in ioconf (pciide* at pci? flags 0x0000, cfdata[86]); QEMU pc's PIIX3 (8086:7010) attaches as on OpenBSD 8.0 (just smoke-wd). Host tests (lookup, table, PIIX timings, SiS bridges)"
+
+[[module]]
+rust = "sys/dev/pci/pciide_acard_reg.rs"
+lz = ["sys/dev/pci/pciide_acard_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (ATP850/860 timing, UDMA and control registers; the act/rec/udma_conf tables as u8 arrays). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_acer_reg.rs"
+lz = ["sys/dev/pci/pciide_acer_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (ACER_* registers, acer_udma/acer_pio as u8 arrays); acer_dma under #ifdef unused not compiled as in the C. Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_amd_reg.rs"
+lz = ["sys/dev/pci/pciide_amd_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (AMD756_* registers and timing tables; AMD756_CHIPREV_DISABLEDMA a const fn returning bool). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_apollo_reg.rs"
+lz = ["sys/dev/pci/pciide_apollo_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (APO_* registers, the apollo udma/pio tables as u8 arrays; APO_IDECONF_FIFO_TRSH keeps the C's `<< 1 + 24` precedence, unused). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_cmd_reg.rs"
+lz = ["sys/dev/pci/pciide_cmd_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (CMD_* registers, CMD_DATA_TIM as an if, the 0643-9 timing tables as u8 arrays: 0xA9 & co. are written as bytes, never sign-extended). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_cy693_reg.rs"
+lz = ["sys/dev/pci/pciide_cy693_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (CY_* registers, cy_pio_pulse/rec; cy_dma_* under #ifdef unused not compiled), struct pciide_cy (PciideCy, Cells, the handle a &'static Cy82c693Handle). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_hpt_reg.rs"
+lz = ["sys/dev/pci/pciide_hpt_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (HPT* registers and the 366/370/372/374 timing tables). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_ite_reg.rs"
+lz = ["sys/dev/pci/pciide_ite_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (IT_* registers; IT_TIM as an if). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_ixp_reg.rs"
+lz = ["sys/dev/pci/pciide_ixp_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (IXP_* registers and timing tables; the IXP_UDMA_ENABLE/DISABLE, IXP_SET_MODE/TIMING statement macros as functions over &mut u32). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_jmicron_reg.rs"
+lz = ["sys/dev/pci/pciide_jmicron_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (JMICRON_* registers; JMICRON_CHAN_EN as an if). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_natsemi_reg.rs"
+lz = ["sys/dev/pci/pciide_natsemi_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (PC87415 NATSEMI_* and SCx200 registers, their timing tables). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_nforce_reg.rs"
+lz = ["sys/dev/pci/pciide_nforce_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (NFORCE_* registers, nforce_pio/udma tables). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_pdc202xx_reg.rs"
+lz = ["sys/dev/pci/pciide_pdc202xx_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (PDC2xx/PDC262/PDC268/PDC203xx/PDC205xx registers and timing tables; SCONTROL_WRITE and SSTATUS_READ as functions over a PciidePdcsata), struct pciide_pdcsata (PciidePdcsata, Option tags/handles), wdc_pdc203xx_vtbl over pciide.rs's pdc203xx_read_reg/write_reg. Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_piix_reg.rs"
+lz = ["sys/dev/pci/pciide_piix_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (PIIX_* IDE timing, slave timing, UDMA and config registers, the ISP/RTC/SCT tables as u8 arrays, ICH5-7 SATA map/PI/PCS bits). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_rdc_reg.rs"
+lz = ["sys/dev/pci/pciide_rdc_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (RDCIDE_* registers and setup/hold/udma tables). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_sii3112_reg.rs"
+lz = ["sys/dev/pci/pciide_sii3112_reg.rs"]
+status = "inherited"
+notes = "M16a: license: Wasabi Systems BSD-4, kept whole; the whole header: the configuration-space registers, satalink_ba5_regmap[] (SATALINK_BA5_REGMAP of SatalinkBa5Regmap, member names kept), ba5_SIS, IDEDMA_CMD_INT_STEER, struct pciide_satalink (PciideSatalink), the static ba5_read_4_ind/ba5_read_4/ba5_write_4_ind/ba5_write_4 (the cookie through satalink(), which checks the chip map), BA5_READ_4/BA5_WRITE_4 written out at their uses, wdc_sii3114_vtbl. Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_sis_reg.rs"
+lz = ["sys/dev/pci/pciide_sis_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (SIS_* registers, SIS_TIM133 as an if, struct pciide_sis as PciideSis, the timing tables). Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciide_svwsata_reg.rs"
+lz = ["sys/dev/pci/pciide_svwsata_reg.rs"]
+status = "inherited"
+notes = "M16a: the whole header (SVWSATA_* offsets), struct pciide_svwsata (PciideSvwsata), wdc_svwsata_vtbl over pciide.rs's svwsata_read_reg/write_reg/lba48_write_reg. Reference-backed test of every plain define"
+
+[[module]]
+rust = "sys/dev/pci/pciidereg.rs"
+lz = ["sys/dev/pci/pciidereg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: PCIIDE_NUM_CHANNELS, the PCIIDE_REG_*/INTERFACE_*/CHAN_EN/COMPAT_* macros as const fns (config offsets i32, compat addresses BusAddr), PCIIDE_CHANNEL_NAME (&'static str), the IDEDMA_* bus master registers (offsets BusSize, the 8-bit register bits u8), struct idedma_table (IdedmaTable, repr(C), 8 bytes), NIDEDMA_TABLES, the Intel SCH timing registers. Host and reference-backed tests"
+
+[[module]]
+rust = "sys/dev/pci/pciidevar.rs"
+lz = ["sys/dev/pci/pciidevar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: PCIIDE_MAX_CHANNELS, struct pciide_softc (PciideSoftc, repr(C) Softc, the WdcSoftc first; Cells, tags/handles Options with panicking accessors, sc_pp an Option, the DMA register hooks fn pointers) and struct pciide_channel (PciideChannel, repr(C), the ChannelSoftc first) with struct pciide_dma_maps (&'static bus DMA maps, the table a raw pointer); the PCIIDE_DMA*_READ/WRITE macros are PciideSoftc methods; the prototypes are pciide.rs's, pciide_machdep_compat_intr_* the machine's (machine::pciide_machdep); gcsc_chip_map (__i386__) has no counterpart"
 
 [[module]]
 rust = "sys/dev/pci/pcireg.rs"
@@ -2724,6 +2964,12 @@ lz = ["sys/dev/pci/pucvar.rs"]
 status = "inherited"
 
 [[module]]
+rust = "sys/dev/pci/sdhc_pci.rs"
+lz = ["sys/dev/pci/sdhc_pci.rs"]
+status = "inherited"
+notes = "M16a: the whole file: struct sdhc_pci_softc (repr(C), sdhc softc first), sdhc_pci_ca, match (class SYSTEM/SDHC, the Ricoh R5U822/823, not the RTS5209; sdhc_pci_match_ids host-tested), attach (TI takecontroller, ENE NOPWR0, Ricoh fix, GL9755 init, MSI else INTx at IPL_SDMMC, one sdhc_host_found per BAR of the slot info), activate, sdhc_pci_conf_write (byte merge host-tested), the GL9755 PLL/SSC hooks (cd/wp-inverted from the device tree where PCITAG_NODE is non-zero). sdhc* at pci? and sdmmc* at sdhc? on both archs; just smoke-sdmmc (QEMU sdhci-pci + 64 MB sd-card): sdhc0 at pci0 dev 4 (amd64, apic 0 int 20) / dev 1 (arm64, irq), SDHC 2.00 52 MHz, sdmmc0 4-bit sd/mmc high-speed dma (ADMA2), scsibus2 at sdmmc0: 2 targets, sd2 <SD/MMC, QEMU!, 0001> removable 64MB; fdisk/disklabel/newfs/mount/cp/cmp/dd as OpenBSD 8.0 on the same QEMU"
+
+[[module]]
 rust = "sys/dev/pci/siop_pci.rs"
 lz = ["sys/dev/pci/siop_pci.rs"]
 status = "inherited"
@@ -2759,6 +3005,12 @@ status = "inherited"
 rust = "sys/dev/pci/virtio_pcireg.rs"
 lz = ["sys/dev/pci/virtio_pcireg.rs"]
 status = "inherited"
+
+[[module]]
+rust = "sys/dev/pci/vmwpvs.rs"
+lz = ["sys/dev/pci/vmwpvs.rs"]
+status = "inherited"
+notes = "M16a: vmwpvs(4), whole file, amd64 GENERIC only; QEMU's pvscsi has no VMWPVS_CMD_CONFIG, so attach stops at 'get configuration failed' exactly as OpenBSD 8.0 does on the same QEMU (smoke-vmwpvs); a completion naming no opening panics where the C indexes past sc_ccbs; a CDB over 16 bytes is cut to the request's 16"
 
 [[module]]
 rust = "sys/dev/pci/xhci_pci.rs"
@@ -2930,6 +3182,84 @@ lz = ["sys/dev/rnd.rs"]
 status = "adapted"
 adapted_by = ["sys/crypto/chacha_private.rs", "sys/crypto/sha2.rs"]
 notes = "M16d: the whole file: the entropy input ring (rand_event, rnd_event_space, rnd_event_prod/cons, add_event_data, enqueue_randomness with the rnd_cold path and rnd_timeout), add_entropy_words (twisted GFSR, twist_table), dequeue_randomness, extract_entropy (SHA-512 of the pool copy), suspend_randomness/resume_randomness (no caller: subr_suspend.c not ported), the ChaCha20 generator (_rs_init, _rs_seed, _rs_stir, _rs_stir_if_needed, _rs_rekey, _rs_random_buf, _rs_random_u32 under rndlock IPL_HIGH), _rs_clearseed (km_alloc kv_any/kp_none at kd_prefer, pmap_kenter_pa), arc4random, arc4random_buf, arc4random_ctx_new/free/buf (malloc M_TEMP), arc4random_uniform, rnd_init, rnd_reinit (rnd_task on systq, rndreinit_timeout 10 min), random_start (__guard_local warning, clearseed, msgbuf and etext words, good-seed lines), randomopen/close/read/write/kqfilter/ioctl and the filtops (cdevsw 45), sys_getentropy. entropy_pool0 and rs_buf0 in .openbsd.randomdata (PT_OPENBSD_RANDOMIZE in both kernel.ld), read volatile. Deviations: the C's lock-free shared words are Relaxed atomics; add_entropy_words' two statics live in EntropyPool with the pool; extract_entropy hashes block by block; the generator state is a StaticCell under rndlock, which suspend/resume_randomness also take; _rs_clearseed panics on an unmapped seed page; arc4random_ctx_new returns None (callers ENOMEM) if malloc fails. Boot seed: boot(8)/efiboot fills the segment (loadrandom, mdrandom, fwrandom; RB_GOODRANDOM); Limine fills nothing (unported! in sys/stand/mod.rs; random_start prints the C's no-entropy warning). Licence BSD-3 with a GPL alternative, the BSD terms apply (block now verbatim from the pin); host tests (ChaCha keystream vector, rekey/fill, pool mixing, input ring, uniform bound)"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdhc.rs"
+lz = ["sys/dev/sdmmc/sdhc.rs"]
+status = "inherited"
+notes = "M16a: the whole file but SDHC_DEBUG (sdhc_dump_regs not compiled, DPRINTFs comments); DIAGNOSTIC is feature diagnostic: the 32-bit-access read/write helpers with the shadow registers, sdhc_host_found (spec version, base clock, voltages, max block length, ADMA2 page via sdhc_adma_alloc, config_found of sdmmc; its 1 is EIO), sdhc_activate, sdhc_shutdown (takes the softc), the chip functions (host_reset, ocr, maxblklen, card_detect, bus_power with sdhc_select_vdd, bus_clock with sdhc_clock_divisor, bus_width, card_intr_mask/ack, signal_voltage, exec_command, hibernate_init (a Clone of the host)), start_command (transfer mode and command registers as host-tested helpers; ADMA2 descriptors written unaligned/volatile), transfer_data (DMA or PIO with unaligned words), soft_reset, wait_intr_cold/wait_intr, sdhc_intr, sdhc_needs_discover; an interrupt that needs the bus before config_found returns panics where the C passes NULL"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdhcreg.rs"
+lz = ["sys/dev/sdmmc/sdhcreg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: the standard register set (offsets as BusSize, bits at their register's width), the PCI interface classes, the clock-divisor and capability macros as functions, the %b strings (byte strings, debug only), struct sdhc_adma2_descriptor32/64 (repr(C, packed), sizes checked); reference-backed test of every define; host test of the macros"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdhcvar.rs"
+lz = ["sys/dev/sdmmc/sdhcvar.rs"]
+status = "inherited"
+notes = "M16a: struct sdhc_softc (repr(C) Softc; sc_host the attachment's array of host pointers, read through SdhcSoftc::host; the hooks are Option<fn(&SdhcSoftc, ..)> type aliases), the SDHC_F_* flags; the prototypes live in sdhc.rs; reference-backed test"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc.rs"
+lz = ["sys/dev/sdmmc/sdmmc.rs"]
+status = "inherited"
+notes = "M16a: the whole file but SDMMC_IOCTL (not configured: sdmmc_ioctl and its bio_register not compiled) and SDMMC_DEBUG (sdmmc_dump_command not compiled, DPRINTFs comments): sdmmc_ca/cd, match/attach (kthread_create_deferred, config_pending)/detach/activate, sdmmc_holds_root_device, the task thread and queue (add/del/needs_discover/discover_task), card attach/detach, enable/disable, set_bus_power (lowest common voltage as sdmmc_lowest_ocr, host-tested), function alloc/free, scan, init, sdmmc_delay, app/mmc commands, go_idle_state, send_if_cond, set_relative_addr, select_card. 0/1 returns are Result<(), Errno> (EIO); the task thread's Proc is stored when kthread_create returns"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_cis.rs"
+lz = ["sys/dev/sdmmc/sdmmc_cis.rs"]
+status = "inherited"
+notes = "M16a: the whole file: sdmmc_cisptr, sdmmc_read_cis (the tuple walk as sdmmc_parse_cis over a read function, host-tested), sdmmc_print_cis, sdmmc_check_cis_quirks (Spectec SDW-820 strings as Cis1Info::Static); Result for the C's 0/1"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_io.rs"
+lz = ["sys/dev/sdmmc/sdmmc_io.rs"]
+status = "inherited"
+notes = "M16a: the whole file: SDIO enable (CMD5), scan, init, function ready/enable/disable, attach of function drivers through config_found_sm with sdmmc_submatch (skips scsibus) and sdmmc_print, detach, CMD52/CMD53 (argument builders host-tested), the 1/2/4-byte, multi and region accesses (slices), xchg, reset, send_op_cond, card interrupt enable/disable/establish/disestablish, sdmmc_card_intr, sdmmc_intr_task, set_blocklen/bus_width/highspeed; sdmmc_verbose a static atomic (0). sdmmc_io_rw_direct releases sc_lock on a select failure as the C does (see M16a External bugs)"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_ioreg.rs"
+lz = ["sys/dev/sdmmc/sdmmc_ioreg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: SDIO commands, CMD52/CMD53 argument fields, the I/O OCR, CCCR, FBR, CIS addresses and tuple codes; SD_R5_DATA, MMC_R4/R5, SD_IO_OCR_NUM_FUNCTIONS, SD_IO_FBR_BASE as functions; reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_mem.rs"
+lz = ["sys/dev/sdmmc/sdmmc_mem.rs"]
+status = "inherited"
+notes = "M16a: the whole file but HIBERNATE (sdmmc_mem_hibernate_write not compiled) and SDMMC_DEBUG (sdmmc_print_cid not compiled, DPRINTFs comments): OCR negotiation (send_op_cond returns the OCR), 1.8 V switch, scan (CID/RCA/CSD), decode_csd/cid, SCR (send/decode, sdmmc_scr_response host-tested), cxd data, bus width, SD/MMC switch (sdmmc_switch_arg host-tested), be512_to_bitfield512, transfer mode, tuning, sd_init, mmc_init, set_blocklen, single/multi block reads and writes with or without DMA (unsafe: raw data pointer). sdmmc_mem_init drops select_card/set_blocklen's result as the C does (it overwrites error); mmc_init ignores the chip bus width's result as the C does (overwritten); scratch buffers malloc'ed M_NOWAIT as in C"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmc_scsi.rs"
+lz = ["sys/dev/sdmmc/sdmmc_scsi.rs"]
+status = "inherited"
+notes = "M16a: the two prototypes, defined in sdmmc_scsi.rs (shared with sdmmc_scsi.c, one licence block: the two notices are the same); M16a: the whole file but HIBERNATE (sdmmc_scsi_hibernate_io not compiled) and SDMMC_DEBUG (DPRINTFs comments): sdmmc_switch (scsi_cmd, minphys), scsi_attach/detach (scsibus at sdmmc: target 0 the host, one target per card), CCBs (alloc/free, the iopool's io_get/io_put as unsafe fns), decode_rw, sdmmc_scsi_cmd (INQUIRY, READ CAPACITY, TUR/START_STOP/SYNC no-ops, READ/WRITE 6/10 queued on the slot thread or run at once when polled), sdmmc_inquiry (reply built by sdmmc_inquiry_data, host-tested: <SD/MMC, QEMU!, 0001> removable), start/complete/done_xs, stimeout. The target is bounds-checked before sc_tgt is indexed"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmcchip.rs"
+lz = ["sys/dev/sdmmc/sdmmcchip.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct sdmmc_chip_functions (the members a controller may leave NULL are Options; a call through a missing one panics where the C jumps to 0; Result<(), Errno> for 0/errno; card_detect a bool), the sdmmc_chip_* macros as functions, the clock/voltage/timing selectors, struct sdmmcbus_attach_args; reference-backed test"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmcdevs.rs"
+lz = ["sys/dev/sdmmc/sdmmcdevs.rs"]
+status = "inherited"
+notes = "M16a: the whole generated header (10 vendors, 33 products, u16), written by hand with the generated names and values (devlist2h.awk not ported); the generator's banner kept above the licence zone; reference-backed test of every define"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmcreg.rs"
+lz = ["sys/dev/sdmmc/sdmmcreg.rs"]
+status = "inherited"
+notes = "M16a: the whole header: MMC/SD commands, OCR and R1 bits, EXT_CSD, CSD/CID/SCR field macros and SFUNC_STATUS_GROUP as lower-case functions, __bitfield/MMC_RSP_BITS over the response words' memory bytes (a range past the words reads zero bits); host tests (CSD 2.0 of QEMU's 64 MB card, CID name, RCA) and a reference-backed test"
+
+[[module]]
+rust = "sys/dev/sdmmc/sdmmcvar.rs"
+lz = ["sys/dev/sdmmc/sdmmcvar.rs"]
+status = "inherited"
+notes = "M16a: the whole header: struct sdmmc_csd/cid/scr, sdmmc_response, struct sdmmc_task (TAILQ via queue_adapter), struct sdmmc_command (plain, &mut to exec_command; c_error an Option<Errno>), struct sdmmc_cis (cis1_info[] as Cis1Info: an offset into cis1_info_buf or a static string, so the struct stays Copy), struct sdmmc_function (allocated whole; decoded registers in Cells under sc_lock), struct sdmmc_softc (repr(C) Softc; sc_scsibus the C's void *), struct sdmmc_attach_args (repr(C), scsibus args first), SCF_*/SFF_*/SMF_*/SMC_CAPS_*, IPL_SDMMC, the ioctl structs and numbers (from the C's LP64 sizes, unused: SDMMC_IOCTL not configured); the task/spl/assert macros as functions; reference-backed test"
 
 [[module]]
 rust = "sys/dev/softraid.rs"
