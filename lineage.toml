@@ -6053,7 +6053,7 @@ status = "inherited"
 [[module]]
 rust = "sys/sys/queue.rs"
 lz = ["sys/sys/queue.rs"]
-status = "inherited"
+status = "redesigned"
 
 [[module]]
 rust = "sys/sys/reboot.rs"
