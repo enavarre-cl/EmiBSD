@@ -30,7 +30,9 @@ pub mod ata_wdc;
 pub mod atareg;
 pub mod atascsi;
 pub mod atavar;
+#[forbid(unsafe_code)]
 pub mod pmreg;
+#[forbid(unsafe_code)]
 pub mod satareg;
 pub mod wd;
 pub mod wdvar;

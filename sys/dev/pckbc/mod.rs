@@ -23,10 +23,14 @@
 //! answers in `pmsreg`).
 
 pub mod pckbd;
+#[forbid(unsafe_code)]
 pub mod pckbdreg;
+#[forbid(unsafe_code)]
 pub mod pckbdvar;
 pub mod pms;
+#[forbid(unsafe_code)]
 pub mod pmsreg;
 #[rustfmt::skip] // generated from the C, licence block verbatim
+#[forbid(unsafe_code)]
 pub mod wskbdmap_mfii;
 /* </CODE> */

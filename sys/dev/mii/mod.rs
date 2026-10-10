@@ -26,17 +26,22 @@
 
 pub mod dcphy;
 pub mod inphy;
+#[forbid(unsafe_code)]
 pub mod inphyreg;
 pub mod lxtphy;
+#[forbid(unsafe_code)]
 pub mod lxtphyreg;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/mii/mii.c
 pub mod mii;
 pub mod mii_physubr;
+#[forbid(unsafe_code)]
 pub mod miidevs;
 pub mod miivar;
 pub mod rgephy;
+#[forbid(unsafe_code)]
 pub mod rgephyreg;
 pub mod rlphy;
 pub mod ukphy;
+#[forbid(unsafe_code)]
 pub mod ukphy_subr;
 /* </CODE> */

@@ -38,19 +38,33 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+#[forbid(unsafe_code)]
 pub mod adler32;
+#[forbid(unsafe_code)]
 pub mod compress;
+#[forbid(unsafe_code)]
 pub mod crc32;
+#[forbid(unsafe_code)]
 pub mod deflate;
+#[forbid(unsafe_code)]
 pub mod infback;
+#[forbid(unsafe_code)]
 mod inffast;
+#[forbid(unsafe_code)]
 mod inffixed;
+#[forbid(unsafe_code)]
 pub mod inflate;
+#[forbid(unsafe_code)]
 mod inftrees;
+#[forbid(unsafe_code)]
 mod trees;
+#[forbid(unsafe_code)]
 pub mod zconf;
+#[forbid(unsafe_code)]
 pub mod zlib;
+#[forbid(unsafe_code)]
 pub mod zopenbsd;
+#[forbid(unsafe_code)]
 pub mod zutil;
 
 pub use adler32::{adler32, adler32_combine};

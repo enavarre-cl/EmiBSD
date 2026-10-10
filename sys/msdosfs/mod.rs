@@ -27,7 +27,9 @@ pub mod bootsect;
 pub mod bpb;
 pub mod denode;
 pub mod direntry;
+#[forbid(unsafe_code)]
 pub mod fat;
+#[forbid(unsafe_code)]
 pub mod msdosfs_conv;
 pub mod msdosfs_denode;
 pub mod msdosfs_fat;

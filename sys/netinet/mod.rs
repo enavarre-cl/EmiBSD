@@ -23,25 +23,32 @@
 //! because `in` is a Rust keyword (`docs/C_TO_RUST.md`).
 
 pub mod icmp6;
+#[forbid(unsafe_code)]
 pub mod icmp_var;
 pub mod if_ether;
 pub mod igmp;
+#[forbid(unsafe_code)]
 pub mod igmp_var;
 pub mod in4_cksum;
 pub mod in_;
 pub mod in_cksum;
 pub mod in_pcb;
+#[forbid(unsafe_code)]
 pub mod in_proto;
+#[forbid(unsafe_code)]
 pub mod in_systm;
 pub mod in_var;
+#[forbid(unsafe_code)]
 pub mod inet_nat64;
 pub mod ip;
+#[forbid(unsafe_code)]
 pub mod ip6;
 pub mod ip_ah;
 pub mod ip_divert;
 pub mod ip_ecn;
 pub mod ip_esp;
 pub mod ip_icmp;
+#[forbid(unsafe_code)]
 pub mod ip_id;
 pub mod ip_input;
 pub mod ip_ipcomp;
@@ -55,15 +62,19 @@ pub mod ipsec_output;
 pub mod raw_ip;
 pub mod tcp;
 pub mod tcp_debug;
+#[forbid(unsafe_code)]
 pub mod tcp_fsm;
 pub mod tcp_input;
 pub mod tcp_output;
+#[forbid(unsafe_code)]
 pub mod tcp_seq;
 pub mod tcp_subr;
 pub mod tcp_timer;
 pub mod tcp_usrreq;
 pub mod tcp_var;
+#[forbid(unsafe_code)]
 pub mod udp;
 pub mod udp_usrreq;
+#[forbid(unsafe_code)]
 pub mod udp_var;
 /* </CODE> */

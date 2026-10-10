@@ -33,6 +33,7 @@ pub mod in6;
 pub mod in6_cksum;
 pub mod in6_ifattach;
 pub mod in6_pcb;
+#[forbid(unsafe_code)]
 pub mod in6_proto;
 pub mod in6_src;
 pub mod in6_var;
@@ -42,8 +43,10 @@ pub mod ip6_id;
 pub mod ip6_input;
 pub mod ip6_output;
 pub mod ip6_var;
+#[forbid(unsafe_code)]
 pub mod ip6protosw;
 pub mod mld6;
+#[forbid(unsafe_code)]
 pub mod mld6_var;
 pub mod nd6;
 pub mod nd6_nbr;

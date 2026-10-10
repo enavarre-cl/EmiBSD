@@ -30,14 +30,17 @@
 
 pub mod if_vio;
 pub mod vioblk;
+#[forbid(unsafe_code)]
 pub mod vioblkreg;
 pub mod viocon;
 pub mod viogpu;
 pub mod viomb;
 pub mod viornd;
 pub mod vioscsi;
+#[forbid(unsafe_code)]
 pub mod vioscsireg;
 pub mod virtio;
+#[forbid(unsafe_code)]
 pub mod virtioreg;
 pub mod virtiovar;
 /* </CODE> */

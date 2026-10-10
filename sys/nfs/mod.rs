@@ -49,17 +49,20 @@ pub mod nfs_srvcache;
 pub mod nfs_srvsubs;
 pub mod nfs_subs;
 pub mod nfs_syscalls;
+#[forbid(unsafe_code)]
 pub mod nfs_var;
 #[cfg(feature = "nfsclient")]
 pub mod nfs_vfsops;
 #[cfg(feature = "nfsclient")]
 pub mod nfs_vnops;
+#[forbid(unsafe_code)]
 pub mod nfsdiskless;
 pub mod nfsm_subs;
 pub mod nfsmount;
 pub mod nfsnode;
 pub mod nfsproto;
 pub mod nfsrvcache;
+#[forbid(unsafe_code)]
 pub mod rpcv2;
 pub mod xdr_subs;
 /* </CODE> */

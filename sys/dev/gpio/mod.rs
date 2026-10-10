@@ -24,5 +24,6 @@
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/gpio/gpio.c
 pub mod gpio;
+#[forbid(unsafe_code)]
 pub mod gpiovar;
 /* </CODE> */

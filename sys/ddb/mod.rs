@@ -24,13 +24,18 @@
 //! Most of its sources carry the Mach license (Carnegie Mellon).
 
 pub mod db_command;
+#[forbid(unsafe_code)]
 pub mod db_expr;
 pub mod db_input;
 pub mod db_lex;
+#[forbid(unsafe_code)]
 pub mod db_output;
+#[forbid(unsafe_code)]
 pub mod db_run;
+#[forbid(unsafe_code)]
 pub mod db_trap;
 pub mod db_usrreq;
+#[forbid(unsafe_code)]
 pub mod db_var;
 pub mod db_variables;
 /* </CODE> */

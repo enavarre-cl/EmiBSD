@@ -19,5 +19,6 @@
 //! The receive bundling microcode of the Intel EtherExpress PRO/100 (fxp(4)): OpenBSD
 //! `sys/dev/microcode/fxp/`. `rcvbundl` is `rcvbundl.h`.
 
+#[forbid(unsafe_code)]
 pub mod rcvbundl;
 /* </CODE> */

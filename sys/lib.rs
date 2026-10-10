@@ -60,6 +60,7 @@ pub mod ufs;
 pub mod uvm;
 
 #[cfg(test)]
+#[forbid(unsafe_code)]
 pub(crate) mod reftest;
 
 /// Kernel panic entry point for bare-metal targets: `panic!("...")` anywhere in the kernel is

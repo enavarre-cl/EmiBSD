@@ -21,43 +21,63 @@
 
 pub mod ac97;
 pub mod ahci;
+#[forbid(unsafe_code)]
 pub mod ahcireg;
 pub mod ahcivar;
+#[forbid(unsafe_code)]
 pub mod am79900reg;
+#[forbid(unsafe_code)]
 pub mod ax88190reg;
 pub mod com;
+#[forbid(unsafe_code)]
 pub mod comreg;
 pub mod comvar;
 pub mod dc;
 pub mod dcreg;
 pub mod dp8390;
+#[forbid(unsafe_code)]
 pub mod dp8390reg;
 pub mod dp8390var;
 pub mod fxp;
+#[forbid(unsafe_code)]
 pub mod fxpreg;
 pub mod fxpvar;
+#[forbid(unsafe_code)]
 pub mod i8042reg;
+#[forbid(unsafe_code)]
 pub mod i8237reg;
+#[forbid(unsafe_code)]
 pub mod i8253reg;
+#[forbid(unsafe_code)]
 pub mod lancereg;
 pub mod lpt;
+#[forbid(unsafe_code)]
 pub mod lptreg;
 pub mod lptvar;
+#[forbid(unsafe_code)]
 pub mod mc146818reg;
+#[forbid(unsafe_code)]
 pub mod mc6845reg;
 pub mod mpi;
+#[forbid(unsafe_code)]
 pub mod mpireg;
 pub mod mpivar;
 pub mod ne2000;
+#[forbid(unsafe_code)]
 pub mod ne2000reg;
 pub mod ne2000var;
+#[forbid(unsafe_code)]
 pub mod nec765reg;
+#[forbid(unsafe_code)]
 pub mod ns16550reg;
 pub mod nvme;
+#[forbid(unsafe_code)]
 pub mod nvmeio;
 pub mod nvmereg;
 pub mod nvmevar;
+#[forbid(unsafe_code)]
 pub mod pcdisplay;
+#[forbid(unsafe_code)]
 pub mod pcdisplay_chars;
 pub mod pcdisplay_subr;
 pub mod pcdisplayvar;
@@ -65,20 +85,27 @@ pub mod pckbc;
 pub mod pckbcvar;
 pub mod pluart;
 pub mod re;
+#[forbid(unsafe_code)]
 pub mod rtl80x9;
+#[forbid(unsafe_code)]
 pub mod rtl80x9reg;
 pub mod rtl81x9reg;
 pub mod siop;
 pub mod siop_common;
+#[forbid(unsafe_code)]
 pub mod siopreg;
 pub mod siopvar;
 pub mod siopvar_common;
 pub mod vga;
+#[forbid(unsafe_code)]
 pub mod vga_subr;
+#[forbid(unsafe_code)]
 pub mod vgareg;
 pub mod vgavar;
 pub mod wdc;
+#[forbid(unsafe_code)]
 pub mod wdcevent;
+#[forbid(unsafe_code)]
 pub mod wdcreg;
 pub mod wdcvar;
 /* </CODE> */

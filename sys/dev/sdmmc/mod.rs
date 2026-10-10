@@ -25,17 +25,22 @@
 //! are their headers.
 
 pub mod sdhc;
+#[forbid(unsafe_code)]
 pub mod sdhcreg;
 pub mod sdhcvar;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/sdmmc/sdmmc.c
 pub mod sdmmc;
+#[forbid(unsafe_code)]
 pub mod sdmmc_cis;
 pub mod sdmmc_io;
+#[forbid(unsafe_code)]
 pub mod sdmmc_ioreg;
 pub mod sdmmc_mem;
 pub mod sdmmc_scsi;
 pub mod sdmmcchip;
+#[forbid(unsafe_code)]
 pub mod sdmmcdevs;
+#[forbid(unsafe_code)]
 pub mod sdmmcreg;
 pub mod sdmmcvar;
 /* </CODE> */

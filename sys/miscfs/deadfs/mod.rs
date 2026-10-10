@@ -20,5 +20,6 @@
 //! The dead file system: OpenBSD `sys/miscfs/deadfs/`, the vnode operations `vclean` leaves
 //! on a revoked vnode.
 
+#[forbid(unsafe_code)]
 pub mod dead_vnops;
 /* </CODE> */

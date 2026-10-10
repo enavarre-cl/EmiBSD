@@ -27,5 +27,6 @@ pub mod fdt;
 pub mod ofw_gpio;
 pub mod ofw_misc;
 pub mod ofw_pinctrl;
+#[forbid(unsafe_code)]
 pub mod openfirm;
 /* </CODE> */

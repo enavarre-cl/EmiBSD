@@ -30,6 +30,7 @@
 pub mod ecma167_udf;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/isofs/udf/udf.h
 pub mod udf;
+#[forbid(unsafe_code)]
 pub mod udf_extern;
 pub mod udf_subr;
 pub mod udf_vfsops;

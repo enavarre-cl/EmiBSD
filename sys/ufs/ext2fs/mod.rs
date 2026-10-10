@@ -39,14 +39,18 @@ pub mod ext2fs;
 pub mod ext2fs_alloc;
 pub mod ext2fs_balloc;
 pub mod ext2fs_bmap;
+#[forbid(unsafe_code)]
 pub mod ext2fs_bswap;
 pub mod ext2fs_dinode;
+#[forbid(unsafe_code)]
 pub mod ext2fs_dir;
 pub mod ext2fs_extents;
+#[forbid(unsafe_code)]
 pub mod ext2fs_extern;
 pub mod ext2fs_inode;
 pub mod ext2fs_lookup;
 pub mod ext2fs_readwrite;
+#[forbid(unsafe_code)]
 pub mod ext2fs_subr;
 pub mod ext2fs_vfsops;
 pub mod ext2fs_vnops;

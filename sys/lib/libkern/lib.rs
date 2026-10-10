@@ -72,17 +72,27 @@
 #[cfg(test)]
 extern crate std;
 
+#[forbid(unsafe_code)]
 pub mod crc32c;
 pub mod explicit_bzero;
+#[forbid(unsafe_code)]
 pub mod getsn;
+#[forbid(unsafe_code)]
 pub mod random;
+#[forbid(unsafe_code)]
 pub mod scanc;
+#[forbid(unsafe_code)]
 pub mod skpc;
 pub mod staticcell;
+#[forbid(unsafe_code)]
 pub mod strlcat;
+#[forbid(unsafe_code)]
 pub mod strlcpy;
+#[forbid(unsafe_code)]
 pub mod strncasecmp;
+#[forbid(unsafe_code)]
 pub mod strnlen;
+#[forbid(unsafe_code)]
 pub mod timingsafe_bcmp;
 
 pub use crc32c::crc32c;

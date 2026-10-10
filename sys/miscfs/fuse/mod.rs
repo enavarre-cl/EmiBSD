@@ -27,6 +27,7 @@
 //! `fuse_vnops`. `FUSE_DEBUG` is off, as in GENERIC: the `DPRINTF`s are not compiled.
 
 pub mod fuse_device;
+#[forbid(unsafe_code)]
 pub mod fuse_file;
 pub mod fuse_ihash;
 pub mod fuse_lookup;

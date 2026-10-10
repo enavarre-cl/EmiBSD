@@ -31,18 +31,23 @@ pub mod fd;
 pub mod fdc;
 #[cfg(machine_x86)]
 pub mod fdlink;
+#[forbid(unsafe_code)]
 pub mod fdreg;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/isa/isa.c
 pub mod isa;
 pub mod isadma;
+#[forbid(unsafe_code)]
 pub mod isadmareg;
 pub mod isadmavar;
+#[forbid(unsafe_code)]
 pub mod isareg;
 pub mod isavar;
 pub mod lpt_isa;
 pub mod pckbc_isa;
 pub mod pcppi;
+#[forbid(unsafe_code)]
 pub mod pcppireg;
+#[forbid(unsafe_code)]
 pub mod pcppivar;
 pub mod spkr;
 pub mod spkrio;

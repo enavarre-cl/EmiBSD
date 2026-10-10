@@ -28,12 +28,15 @@
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/ntfs/ntfs.h
 pub mod ntfs;
+#[forbid(unsafe_code)]
 pub mod ntfs_compr;
+#[forbid(unsafe_code)]
 pub mod ntfs_conv;
 pub mod ntfs_ihash;
 pub mod ntfs_inode;
 pub mod ntfs_subr;
 pub mod ntfs_vfsops;
 pub mod ntfs_vnops;
+#[forbid(unsafe_code)]
 pub mod ntfsmount;
 /* </CODE> */

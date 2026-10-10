@@ -36,6 +36,7 @@ pub mod plgpio;
 pub mod plrtc;
 pub mod pluart_fdt;
 pub mod psci;
+#[forbid(unsafe_code)]
 pub mod pscivar;
 pub mod simplefb;
 pub mod virtio_mmio;

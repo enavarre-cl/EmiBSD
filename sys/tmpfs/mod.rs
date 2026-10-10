@@ -27,8 +27,10 @@
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/tmpfs/tmpfs.h
 pub mod tmpfs;
+#[forbid(unsafe_code)]
 pub mod tmpfs_fifoops;
 pub mod tmpfs_mem;
+#[forbid(unsafe_code)]
 pub mod tmpfs_specops;
 pub mod tmpfs_subr;
 pub mod tmpfs_vfsops;

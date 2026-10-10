@@ -42,11 +42,15 @@
 //! `wscons_features` the small headers they use, and `wscons_callbacks` the calls between
 //! wsdisplay and wskbd.
 
+#[forbid(unsafe_code)]
 pub mod ascii;
 #[cfg(test)]
 pub(crate) mod testutil;
+#[forbid(unsafe_code)]
 pub mod unicode;
+#[forbid(unsafe_code)]
 pub mod wscons_callbacks;
+#[forbid(unsafe_code)]
 pub mod wscons_features;
 pub mod wsconsio;
 pub mod wsdisplay;
@@ -54,24 +58,33 @@ pub mod wsdisplay_compat_usl;
 pub mod wsdisplay_usl_io;
 pub mod wsdisplayvar;
 pub mod wsemul_dumb;
+#[forbid(unsafe_code)]
 pub mod wsemul_subr;
 pub mod wsemul_vt100;
+#[forbid(unsafe_code)]
 pub mod wsemul_vt100_chars;
 pub mod wsemul_vt100_keys;
+#[forbid(unsafe_code)]
 pub mod wsemul_vt100_subr;
 pub mod wsemul_vt100var;
+#[forbid(unsafe_code)]
 pub mod wsemulconf;
 pub mod wsemulvar;
 pub mod wsevent;
 pub mod wseventvar;
 pub mod wskbd;
+#[forbid(unsafe_code)]
 pub mod wskbdraw;
 pub mod wskbdutil;
+#[forbid(unsafe_code)]
 pub mod wskbdvar;
+#[forbid(unsafe_code)]
 pub mod wsksymdef;
+#[forbid(unsafe_code)]
 pub mod wsksymvar;
 pub mod wsmouse;
 pub mod wsmouseinput;
+#[forbid(unsafe_code)]
 pub mod wsmousevar;
 pub mod wsmux;
 pub mod wsmuxvar;

@@ -42,20 +42,28 @@
 pub mod ahci_pci;
 pub mod auich;
 pub mod azalia;
+#[forbid(unsafe_code)]
 pub mod azalia_codec;
 pub mod cy82c693;
+#[forbid(unsafe_code)]
 pub mod cy82c693reg;
+#[forbid(unsafe_code)]
 pub mod cy82c693var;
 pub mod eap;
+#[forbid(unsafe_code)]
 pub mod eapreg;
 pub mod ehci_pci;
+#[forbid(unsafe_code)]
 pub mod gcu_reg;
+#[forbid(unsafe_code)]
 pub mod gcu_var;
 pub mod ichiic;
+#[forbid(unsafe_code)]
 pub mod ichreg;
 pub mod if_dc_pci;
 pub mod if_em;
 pub mod if_em_hw;
+#[forbid(unsafe_code)]
 pub mod if_em_osdep;
 pub mod if_em_soc;
 pub mod if_fxp_pci;
@@ -63,6 +71,7 @@ pub mod if_ne_pci;
 pub mod if_pcn;
 pub mod if_re_pci;
 pub mod if_vmx;
+#[forbid(unsafe_code)]
 pub mod if_vmxreg;
 pub mod mpi_pci;
 pub mod nvme_pci;
@@ -70,37 +79,62 @@ pub mod ohci_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
 pub mod pci;
 pub mod pci_map;
+#[forbid(unsafe_code)]
 pub mod pci_quirks;
+#[forbid(unsafe_code)]
 pub mod pci_subr;
+#[forbid(unsafe_code)]
 pub mod pcidevs;
 pub mod pciide;
+#[forbid(unsafe_code)]
 pub mod pciide_acard_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_acer_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_amd_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_apollo_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_cmd_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_cy693_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_hpt_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_ite_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_ixp_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_jmicron_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_natsemi_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_nforce_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_pdc202xx_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_piix_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_rdc_reg;
 pub mod pciide_sii3112_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_sis_reg;
+#[forbid(unsafe_code)]
 pub mod pciide_svwsata_reg;
+#[forbid(unsafe_code)]
 pub mod pciidereg;
 pub mod pciidevar;
+#[forbid(unsafe_code)]
 pub mod pcireg;
 pub mod pcivar;
 pub mod piixpm;
+#[forbid(unsafe_code)]
 pub mod piixreg;
 pub mod ppb;
+#[forbid(unsafe_code)]
 pub mod ppbreg;
 pub mod puc;
+#[forbid(unsafe_code)]
 pub mod pucdata;
 pub mod pucvar;
 pub mod sdhc_pci;
@@ -110,6 +144,7 @@ pub mod uhci_pci;
 pub mod vga_pci;
 pub mod vga_pcivar;
 pub mod virtio_pci;
+#[forbid(unsafe_code)]
 pub mod virtio_pcireg;
 pub mod vmwpvs;
 pub mod xhci_pci;

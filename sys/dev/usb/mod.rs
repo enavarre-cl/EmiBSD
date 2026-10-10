@@ -36,21 +36,26 @@ pub mod ohcireg;
 pub mod ohcivar;
 pub mod uaudio;
 pub mod ucom;
+#[forbid(unsafe_code)]
 pub mod ucomvar;
 pub mod uftdi;
+#[forbid(unsafe_code)]
 pub mod uftdireg;
 pub mod ugen;
 pub mod uhci;
 pub mod uhcireg;
 pub mod uhcivar;
 pub mod uhid;
+#[forbid(unsafe_code)]
 pub mod uhid_rdesc;
 pub mod uhidev;
 pub mod uhub;
 pub mod ukbd;
 #[rustfmt::skip] // generated from the C, licence block verbatim (a trailing blank included)
+#[forbid(unsafe_code)]
 pub mod ukbdmap;
 pub mod umass;
+#[forbid(unsafe_code)]
 pub mod umass_quirks;
 pub mod umass_scsi;
 pub mod umassvar;
@@ -58,17 +63,22 @@ pub mod ums;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/usb/usb.c
 pub mod usb;
 pub mod usb_mem;
+#[forbid(unsafe_code)]
 pub mod usb_quirks;
 pub mod usb_subr;
 pub mod usbcdc;
+#[forbid(unsafe_code)]
 pub mod usbdevs;
 pub mod usbdi;
+#[forbid(unsafe_code)]
 pub mod usbdi_util;
 pub mod usbdivar;
 pub mod usbhid;
+#[forbid(unsafe_code)]
 pub mod usbpcap;
 pub mod uwacom;
 pub mod xhci;
+#[forbid(unsafe_code)]
 pub mod xhcireg;
 pub mod xhcivar;
 /* </CODE> */

@@ -24,7 +24,9 @@
 //! `param.c`, and `vers.rs`, the strings `newvers.sh` would generate (built from what
 //! `build.rs` passes).
 
+#[forbid(unsafe_code)]
 pub mod param;
 pub mod swapgeneric;
+#[forbid(unsafe_code)]
 pub mod vers;
 /* </CODE> */

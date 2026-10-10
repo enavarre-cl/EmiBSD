@@ -24,12 +24,16 @@
 //! `malloc(9)` and `selftest` the boot-time checks under feature `qemu` (`ports.toml`,
 //! `[[extra]]`).
 
+#[forbid(unsafe_code)]
 pub mod clock_subr;
+#[forbid(unsafe_code)]
 pub mod dma_alloc;
 pub mod exec_elf;
+#[forbid(unsafe_code)]
 pub mod exec_script;
 pub mod exec_subr;
 pub mod init_main;
+#[forbid(unsafe_code)]
 pub mod init_sysent;
 pub mod kern_acct;
 pub mod kern_bufq;
@@ -45,6 +49,7 @@ pub mod kern_kthread;
 pub mod kern_lock;
 pub mod kern_malloc;
 pub mod kern_physio;
+#[forbid(unsafe_code)]
 pub mod kern_pledge;
 pub mod kern_proc;
 pub mod kern_prot;
@@ -83,13 +88,16 @@ pub mod subr_prof;
 pub mod subr_tree;
 #[cfg(feature = "boot_config")]
 pub mod subr_userconf;
+#[forbid(unsafe_code)]
 pub mod subr_xxx;
 pub mod sys_futex;
 pub mod sys_generic;
 pub mod sys_pipe;
 pub mod sys_socket;
+#[forbid(unsafe_code)]
 pub mod syscalls;
 pub mod tty;
+#[forbid(unsafe_code)]
 pub mod tty_conf;
 pub mod tty_pty;
 pub mod tty_subr;
@@ -97,15 +105,18 @@ pub mod tty_tty;
 pub mod uipc_domain;
 pub mod uipc_mbuf;
 pub mod uipc_mbuf2;
+#[forbid(unsafe_code)]
 pub mod uipc_proto;
 pub mod uipc_socket;
 pub mod uipc_socket2;
 pub mod uipc_syscalls;
 pub mod uipc_usrreq;
+#[forbid(unsafe_code)]
 pub mod unported;
 pub mod vfs_bio;
 pub mod vfs_biomem;
 pub mod vfs_cache;
+#[forbid(unsafe_code)]
 pub mod vfs_default;
 pub mod vfs_getcwd;
 pub mod vfs_init;
@@ -115,5 +126,6 @@ pub mod vfs_subr;
 pub mod vfs_sync;
 pub mod vfs_syscalls;
 pub mod vfs_vnops;
+#[forbid(unsafe_code)]
 pub mod vfs_vops;
 /* </CODE> */

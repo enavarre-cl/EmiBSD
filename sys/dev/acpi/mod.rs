@@ -26,17 +26,22 @@
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/acpi/acpi.c
 pub mod acpi;
 pub mod acpicpu_x86;
+#[forbid(unsafe_code)]
 pub mod acpidev;
 pub mod acpidmar;
 pub mod acpihpet;
 pub mod acpimadt;
 pub mod acpimcfg;
 pub mod acpiprt;
+#[forbid(unsafe_code)]
 pub mod acpireg;
 pub mod acpitimer;
+#[forbid(unsafe_code)]
 pub mod acpiutil;
 pub mod acpivar;
+#[forbid(unsafe_code)]
 pub mod amd_iommu;
+#[forbid(unsafe_code)]
 pub mod amltypes;
 pub mod dsdt;
 pub mod ipmi_acpi;

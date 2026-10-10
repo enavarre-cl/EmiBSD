@@ -23,5 +23,6 @@
 //! drivers are not).
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/microcode/siop/siop.out
+#[forbid(unsafe_code)]
 pub mod siop;
 /* </CODE> */

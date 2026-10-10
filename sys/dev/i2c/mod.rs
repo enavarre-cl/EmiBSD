@@ -28,6 +28,7 @@
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/i2c/i2c.c
 pub mod i2c;
 pub mod i2c_exec;
+#[forbid(unsafe_code)]
 pub mod i2c_io;
 pub mod i2c_scan;
 pub mod i2cvar;

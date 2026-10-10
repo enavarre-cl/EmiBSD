@@ -40,12 +40,17 @@ pub mod uvm_mmap;
 pub mod uvm_object;
 pub mod uvm_page;
 pub mod uvm_pager;
+#[forbid(unsafe_code)]
 pub mod uvm_param;
+#[forbid(unsafe_code)]
 pub mod uvm_pdaemon;
 pub mod uvm_percpu;
+#[forbid(unsafe_code)]
 pub mod uvm_pmap;
 pub mod uvm_pmemrange;
+#[forbid(unsafe_code)]
 pub mod uvm_swap;
+#[forbid(unsafe_code)]
 pub mod uvm_unix;
 pub mod uvm_vnode;
 pub mod uvmexp;

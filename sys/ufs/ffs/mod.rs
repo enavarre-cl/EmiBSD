@@ -25,9 +25,11 @@
 
 pub mod ffs_alloc;
 pub mod ffs_balloc;
+#[forbid(unsafe_code)]
 pub mod ffs_extern;
 pub mod ffs_inode;
 pub mod ffs_subr;
+#[forbid(unsafe_code)]
 pub mod ffs_tables;
 pub mod ffs_vfsops;
 pub mod ffs_vnops;

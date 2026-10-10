@@ -23,6 +23,7 @@
 //! An MFS is an FFS (`ufs/ffs`) whose "disk" is a block of memory in the process that
 //! mounted it (`mount_mfs(8)`), which stays in the kernel serving the file system's I/O.
 
+#[forbid(unsafe_code)]
 pub mod mfs_extern;
 pub mod mfs_vfsops;
 pub mod mfs_vnops;

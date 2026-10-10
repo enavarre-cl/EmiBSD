@@ -25,12 +25,15 @@
 
 pub mod art;
 pub mod bpf;
+#[forbid(unsafe_code)]
 pub mod bpf_filter;
 pub mod bpfdesc;
+#[forbid(unsafe_code)]
 pub mod ethertypes;
 pub mod fq_codel;
 pub mod hfsc;
 pub mod if_;
+#[forbid(unsafe_code)]
 pub mod if_arp;
 pub mod if_dl;
 pub mod if_enc;
@@ -40,14 +43,17 @@ pub mod if_media;
 pub mod if_pflog;
 pub mod if_pflow;
 pub mod if_pfsync;
+#[forbid(unsafe_code)]
 pub mod if_types;
 pub mod if_var;
 pub mod if_wg;
 pub mod ifq;
+#[forbid(unsafe_code)]
 pub mod netisr;
 pub mod pf;
 pub mod pf_if;
 pub mod pf_ioctl;
+#[forbid(unsafe_code)]
 pub mod pf_lb;
 pub mod pf_norm;
 pub mod pf_osfp;

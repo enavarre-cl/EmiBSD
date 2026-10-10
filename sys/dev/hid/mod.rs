@@ -25,8 +25,10 @@
 //! (multitouch, consumer control) are not ported yet.
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: dev/hid/hid.c
+#[forbid(unsafe_code)]
 pub mod hid;
 pub mod hidkbd;
 pub mod hidms;
+#[forbid(unsafe_code)]
 pub mod hidmsvar;
 /* </CODE> */

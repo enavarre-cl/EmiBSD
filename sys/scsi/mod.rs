@@ -29,9 +29,11 @@
 pub mod cd;
 pub mod scsi_all;
 pub mod scsi_base;
+#[forbid(unsafe_code)]
 pub mod scsi_debug;
 pub mod scsi_disk;
 pub mod scsi_ioctl;
+#[forbid(unsafe_code)]
 pub mod scsi_message;
 pub mod scsiconf;
 pub mod sd;
