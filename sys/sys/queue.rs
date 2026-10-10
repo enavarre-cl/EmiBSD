@@ -139,9 +139,12 @@
 //! - [`Adapter`] is a safe trait and `queue_adapter!` expands a plain `impl`
 //!   (`docs/ZERO_UNSAFE.md`, decision 7), so a module that declares a list can be compiled
 //!   under `#[forbid(unsafe_code)]`. The contract `container_of` trusts (`OFFSET` is the offset
-//!   of the field `entry` projects) is kept by the macro, which computes both from one field
-//!   name, and `cargo xtask lz check` refuses any `impl Adapter` written by hand: the one place
-//!   where a CI check, not the compiler, upholds a premise of a `SAFETY:` argument.
+//!   of the field `entry` projects, and that entry lies inside the element) is kept by the
+//!   macro, which computes both from one field name and checks at compile time, through
+//!   `addr_of!`, that the field's type is exactly the entry type (a `&field` return would
+//!   deref-coerce a `Box` or a reference to the entry behind it); `cargo xtask lz check`
+//!   refuses any `impl Adapter` written by hand: the one place where a CI check, not the
+//!   compiler, upholds a premise of a `SAFETY:` argument (the adapter premise).
 
 use core::cell::Cell;
 use core::marker::PhantomData;
@@ -155,6 +158,30 @@ const Q_INVALID: usize = usize::MAX;
 
 /// Generates a zero-sized [`Adapter`] type: `queue_adapter!(pub ProcList: Proc, p_list =>
 /// ListEntry<Proc>)` says that `ProcList` lists `Proc`s through their `p_list` field.
+///
+/// The field's type must be exactly the entry type: a field that only dereferences to it (a
+/// `Box`, a reference, an `Arc`, any `Deref`) would make `OFFSET` the offset of the pointer
+/// while `entry` returned the entry behind it, so the macro refuses it at compile time.
+///
+/// ```
+/// use bsd::queue_adapter;
+/// use bsd::sys::queue::TailqEntry;
+/// struct Node {
+///     link: TailqEntry<Node>,
+/// }
+/// queue_adapter!(Good: Node, link => TailqEntry<Node>);
+/// fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// use bsd::queue_adapter;
+/// use bsd::sys::queue::TailqEntry;
+/// struct Node {
+///     link: std::boxed::Box<TailqEntry<Node>>,
+/// }
+/// queue_adapter!(Bad: Node, link => TailqEntry<Node>);
+/// fn main() {}
+/// ```
 #[macro_export]
 macro_rules! queue_adapter {
     ($(#[$meta:meta])* $vis:vis $name:ident: $elem:ty, $field:ident => $entry:ty) => {
@@ -170,6 +197,11 @@ macro_rules! queue_adapter {
             const OFFSET: usize = ::core::mem::offset_of!($elem, $field);
 
             fn entry(elem: &$elem) -> &$entry {
+                // The field's type is exactly `$entry`: a raw pointer never deref-coerces, so
+                // this line does not compile for a field that only dereferences to the entry
+                // (where the `&elem.$field` below would coerce and `OFFSET` would name the
+                // pointer, not the entry). Compile time only; it generates no code.
+                let _: *const $entry = ::core::ptr::addr_of!(elem.$field);
                 &elem.$field
             }
         }
@@ -243,7 +275,11 @@ impl<P> Link<P> {
         // `# Safety`). The reference lives as long as the borrow the reader was given. The
         // poison is never dereferenced: the assertion above stops it under `diagnostic`, the
         // only configuration that writes it. `P` is only read through `&` (its links are
-        // `Cell`s).
+        // `Cell`s). A back link (`P = Link<T>`) is made by `link_of`, so it names the next link
+        // inside its element's own storage, with that element's provenance; that holds because
+        // `A::entry` returns a field of the element itself, of exactly the entry type (the
+        // adapter premise: only `queue_adapter!` and `tree_adapter!` implement `Adapter`, the
+        // field type checked at compile time, and `cargo xtask lz check` refuses other impls).
         Some(unsafe { p.as_ref() })
     }
 }
@@ -1138,8 +1174,9 @@ impl<A: TailqAdapter> TailqHead<A> {
         // SAFETY: a `Some` `tqh_last` is made by `link_of` from the last element of this queue
         // (`insert_*`, `remove`, `replace`, `concat` keep it so), so it is that element's
         // `tqe_next` with the provenance of the whole element; `container_of` steps back by the
-        // entry's offset to the element, which is linked and therefore live. The reference
-        // lives as long as the borrow of the head.
+        // entry's offset (`A::OFFSET`, the offset of the very entry `link_of` took the link
+        // from, by the adapter premise of `Adapter`'s contract) to the element, which is
+        // linked and therefore live. The reference lives as long as the borrow of the head.
         Some(unsafe { elem.as_ref() })
     }
 
@@ -1167,8 +1204,10 @@ impl<A: TailqAdapter> TailqHead<A> {
         // tail queue would name that head's `tqh_first`, which is not excluded here). Then its
         // `tqe_prev` names this head's `tqh_first` (excluded above) or, made by `link_of`, the
         // `tqe_next` of the previous element with that element's provenance; `container_of`
-        // steps back by the entry's offset to it, and it is linked, so live. An element in no
-        // queue has `None` (never linked, or cleared by `remove`).
+        // steps back by the entry's offset to it (`A::OFFSET`, the offset of the very entry
+        // `link_of` took the link from, by the adapter premise of `Adapter`'s contract), and it
+        // is linked, so live. An element in no queue has `None` (never linked, or cleared by
+        // `remove`).
         Some(unsafe { elem.as_ref() })
     }
 
@@ -1414,8 +1453,10 @@ impl<A: StailqAdapter> StailqHead<A> {
         let elem = container_of::<A>(self.stqh_last.get()?)?;
         // SAFETY: a `Some` `stqh_last` is made by `link_of` from the last element of this
         // queue, so it is that element's `stqe_next` with the provenance of the whole element;
-        // `container_of` steps back by the entry's offset to the element, which is linked and
-        // therefore live. The reference lives as long as the borrow of the head.
+        // `container_of` steps back by the entry's offset (`A::OFFSET`, the offset of the very
+        // entry `link_of` took the link from, by the adapter premise of `Adapter`'s contract)
+        // to the element, which is linked and therefore live. The reference lives as long as
+        // the borrow of the head.
         Some(unsafe { elem.as_ref() })
     }
 
@@ -1592,9 +1633,14 @@ impl<'a, A: StailqAdapter> Iterator for StailqIter<'a, A> {
 /// `entry` returns the entry embedded in `elem` at offset `OFFSET`, the same one every time,
 /// and nothing else; [`container_of`] trusts it to step back from a link to its element. The
 /// trait is safe (`docs/ZERO_UNSAFE.md`, decision 7), so the compiler does not hold an
-/// implementer to this: [`crate::queue_adapter!`] alone implements it, with `OFFSET` the
-/// `offset_of!` of the very field `entry` projects (and `tree_adapter!` expands to it), and
-/// `cargo xtask lz check`, in `just ci`, refuses an impl written anywhere else.
+/// implementer to this. The adapter premise, which [`link_of`], [`container_of`], the back links
+/// and the readers that step back rely on: [`crate::queue_adapter!`] alone implements it (and
+/// `tree_adapter!` expands to it), with `OFFSET` the `offset_of!` of the very field `entry`
+/// projects and that field's type checked at compile time to be exactly `Entry` (not a pointer
+/// that dereferences to one), and `cargo xtask lz check`, in `just ci`, refuses an impl written
+/// anywhere else, a rename of the trait, and an impl whose trait is a macro variable. The
+/// check reads tokens: a tripwire over the source rather than a proof, so a way around it
+/// it cannot see is still the reviewer's to refuse.
 pub trait Adapter {
     /// The element type (`struct type` in C).
     type Elem;
@@ -1727,7 +1773,12 @@ fn invalidate<P>(link: &Link<P>) {
 }
 
 /// The next link inside `elem`'s entry, carrying the provenance of the whole element rather than
-/// of the link's field, so that [`container_of`] may step back from it to the element.
+/// of the link's field, so that [`container_of`] may step back from it to the element. The
+/// element's provenance covers the link only because the entry lies inside `elem`'s own
+/// storage: `A::entry` returns a field of `elem` of exactly the entry type, not an entry behind
+/// a pointer. That is the adapter premise of [`Adapter`]'s contract: only `queue_adapter!`
+/// (and `tree_adapter!`, through it) implement it, the field type checked at compile time, and
+/// `cargo xtask lz check` refuses other impls.
 fn link_of<A: Adapter>(elem: &A::Elem) -> NonNull<Link<A::Elem>>
 where
     A::Entry: NextEntry<A::Elem>,
