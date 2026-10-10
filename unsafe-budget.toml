@@ -93,12 +93,12 @@ name = "dev/pci"
 total = 737
 
 [[subsystem]]
-name = "dev/puc"
-total = 4
-
-[[subsystem]]
 name = "dev/pckbc"
 total = 28
+
+[[subsystem]]
+name = "dev/puc"
+total = 4
 
 [[subsystem]]
 name = "dev/pv"
@@ -134,7 +134,7 @@ total = 89
 
 [[subsystem]]
 name = "kern"
-total = 1180
+total = 1146
 
 [[subsystem]]
 name = "lib/libkern"
@@ -190,7 +190,7 @@ total = 235
 
 [[subsystem]]
 name = "sys"
-total = 394
+total = 330
 
 [[subsystem]]
 name = "tmpfs"
