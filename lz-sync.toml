@@ -732,3 +732,56 @@ subject = "Merge branch 'main' into worktree-agent-aec5d6538af525b1d"
 modules = []
 status = "not-applicable"
 reason = "merge commit of main (8fe75082, LZ's porting rule) into the M16a coordinator branch; it brings only that rules file, recorded not-applicable"
+
+[[commit]]
+lz = "1504fd3090db"
+subject = "xtask: let the makefs shim's ownership table hold 8192 entries"
+modules = []
+status = "applied"
+emibsd = "7e4a384a42b0"
+method = "cherry-pick"
+
+[[commit]]
+lz = "6e866cbdb6af"
+subject = "docs: M16a met (storage drivers)"
+modules = []
+status = "not-applicable"
+reason = "LZ's milestone-close docs (README, EXTERNAL_BUGS, JOURNAL, PORTING, ROADMAP, STATUS for M16a); native keeps its own docs"
+
+[[commit]]
+lz = "3e2f74c27f5a"
+subject = "xtask: make install80.img and cd80.iso, add their smokes"
+modules = []
+status = "applied"
+emibsd = "b082e4039c2e"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "14920801afd9"
+subject = "docs: M16g and M16 met (install images; QEMU drivers)"
+modules = []
+status = "not-applicable"
+reason = "LZ's milestone-close docs (README, JOURNAL, ROADMAP, STATUS for M16g and M16); native keeps its own docs"
+
+[[commit]]
+lz = "b0901dd3d73a"
+subject = "rules: define subagent roles, their memory, /port and /progress"
+modules = []
+status = "applied"
+emibsd = "acf8449ddf26"
+method = "reimplemented"
+reason = "native adopted LZ's subagent set-up as its own commit acf8449ddf26 (rules: define subagent roles, their memory, /redesign and /progress): the roles, memories, the common contract and /progress reworked for the redesign (redesigner, mechanical, reviewer; /redesign in place of /port; no external-bugs role)"
+
+[[commit]]
+lz = "1d4f1a397859"
+subject = "build: add the hardware lab tools (relay box, netboot configs)"
+modules = []
+status = "not-applicable"
+reason = "native's target is QEMU (CLAUDE.md); the hardware lab is LZ's"
+
+[[commit]]
+lz = "3c62ede68802"
+subject = "rules: add the hardware lab rule"
+modules = []
+status = "not-applicable"
+reason = "native's target is QEMU (CLAUDE.md); the hardware lab is LZ's"
