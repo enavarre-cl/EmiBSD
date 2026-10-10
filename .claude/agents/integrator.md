@@ -33,8 +33,9 @@ and the HANDOFF.md your prompt names, completely.
      both sides' entries kept, cfdata renumbered, `NCFDATA` and the MP `cpu*` index updated.
    - docs: STATUS (under 30 lines), ROADMAP, README, JOURNAL; README's lineage table and
      STATUS's summary line are regenerated with `cargo xtask lz status --write`, never by hand.
-   - `.claude/agent-memory/*/MEMORY.md`: both sides' lines, exact duplicates dropped, the
-     file's own order kept.
+   - `.claude/agent-memory/*/MEMORY.md`: `.gitattributes` merges them with git's `union`
+     driver (both sides' lines, no conflict); after the merge drop exact duplicates, keeping the
+     file's own order.
    A merge of a branch in a `security-review.md` area is `--no-ff` and its merge commit carries
    the reviewer's `Security-Review:` paragraph your prompt gives.
 3. After a branch that changed `tools/xtask/src/userland*`, run `just userland` before any

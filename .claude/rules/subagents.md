@@ -31,7 +31,8 @@ is never told this repository exists, `reference-readonly.md`).
 An agent with memory keeps `.claude/agent-memory/<agent>/MEMORY.md`: lessons that outlive one
 run (an idiom that took two attempts, a known flake, a conflict pattern), one line each, in
 English, appended at the end. It is committed with the tree, so a worktree agent's lines travel
-on its branch and the `integrator` merges them (both sides kept, duplicates dropped). Task
+on its branch and merge by git's `union` driver (`.gitattributes`: both sides kept, no
+conflict); whoever merges drops exact duplicates afterwards. Task
 state (branches, hashes, what is left) goes in `HANDOFF.md`, never in memory. The `reviewer`
 has none on purpose: it reads every change with fresh eyes. `agent-memory-local/` is not used.
 
