@@ -4181,7 +4181,22 @@ notes = "M5-a: profclock_period and profclock (addupc_intr reported, struct proc
 [[module]]
 rust = "sys/kern/subr_tree.rs"
 lz = ["sys/kern/subr_tree.rs"]
-status = "inherited"
+status = "redesigned"
+
+[[module.fn]]
+lz = "sys/kern/subr_tree.rs::e"
+native = ["RbNode::entry"]
+kind = "renamed"
+
+[[module.fn]]
+lz = "sys/kern/subr_tree.rs::rbe_rotate_left"
+native = ["rbe_rotate"]
+kind = "merged"
+
+[[module.fn]]
+lz = "sys/kern/subr_tree.rs::rbe_rotate_right"
+native = ["rbe_rotate"]
+kind = "merged"
 
 [[module]]
 rust = "sys/kern/subr_userconf.rs"

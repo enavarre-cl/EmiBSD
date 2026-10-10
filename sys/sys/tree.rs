@@ -73,10 +73,11 @@
 //! [`TreeAdapter`], made by [`crate::tree_adapter!`]. Readers are safe, mutators `unsafe` with
 //! the C precondition as their contract, as in `queue.rs`.
 //!
-//! Every splay link is a [`Link`]: `None` or a pointer to a live element. That is the
-//! invariant the safe readers stand on. The `unsafe` mutators uphold it through their callers'
-//! contract (an element stays valid and in place while it is linked), and a removed element is
-//! left holding no links, so no link outlives what it points at.
+//! Every link is a [`Link`]: `None` or a pointer to a live element (splay trees) or entry
+//! (red-black trees). That is the invariant the safe readers stand on. The `unsafe` mutators uphold it through their callers'
+//! contract (an element stays valid and in place while it is linked), a removed element is
+//! left holding no links, so no link outlives what it points at, and the links of a poisoned
+//! red-black entry are never followed.
 //!
 //! ## Deviations
 //! - `RB_*` and `RBT_*` are one algorithm, `kern/subr_tree.rs`; an `RB_ENTRY` is an `RbtEntry`
@@ -88,7 +89,7 @@
 //!   `name_SPLAY_MINMAX` with `Equal` (the C would loop for ever).
 //!
 //! ## Redesign
-//! - Links are typed, `Cell<Option<NonNull<T>>>` ([`Link`]), instead of `Cell<*const T>`: an
+//! - Links are typed, `Cell<Option<NonNull<T>>>` ([`Link`]), instead of cells of `*const T`: an
 //!   absent link is `None`, not a null pointer to compare, and a present one can only have come
 //!   from a reference.
 //! - Splay trees: one dereference in the whole family, `splay_follow`, whose soundness argument
@@ -99,11 +100,20 @@
 //!   `assemble`. `SPLAY_REMOVE` leaves the unlinked element holding no links (the C leaves
 //!   them stale), so `SPLAY_NEXT`, `SPLAY_LEFT` and `SPLAY_RIGHT` on it answer `None` instead
 //!   of walking into the tree it left. [`SplayIter`] holds a reference, not a raw pointer.
+//! - Red-black trees: [`RbtEntry`]'s links are typed too, its colour is an enum (`Color`;
+//!   [`RbtEntry::color`] still answers `RB_BLACK` or `RB_RED`), and a flag in the C
+//!   structure's padding (the size is asserted) marks a poisoned entry, whose links the
+//!   algorithm never follows. [`RbTree`] is typed by the [`RbType`] that walks it, so a tree
+//!   cannot be read with another adapter's offset. The algorithm is safe code over typed
+//!   handles (`kern/subr_tree.rs`), with its two dereferences there; this file's `unsafe` is the
+//!   mutators' contracts and the two `RbType` implementations. `RB_REMOVE` and `RBT_REMOVE`
+//!   leave the element as [`RbtEntry::new`] makes it. [`RbIter`] and [`RbIterReverse`] hold
+//!   references, not raw pointers.
 
 use core::cell::Cell;
 use core::cmp::Ordering;
 use core::marker::PhantomData;
-use core::ptr::{self, NonNull};
+use core::ptr::NonNull;
 
 use crate::kern::subr_tree::{
     _rb_check, _rb_find, _rb_insert, _rb_left, _rb_max, _rb_min, _rb_next, _rb_nfind, _rb_parent,
@@ -471,30 +481,45 @@ impl<'a, A: SplayAdapter> Iterator for SplayIter<'a, A> {
  * Red-black trees: the entry and tree shared by RBT_* and RB_*.
  */
 
+/// The colour of a red-black node (`RB_BLACK`, `RB_RED`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Color {
+    Black,
+    Red,
+}
+
 /// `struct rb_entry`: the links an element embeds to be in a red-black tree. They point at
-/// other entries; the element is `t_offset` bytes before its entry.
+/// other entries; the element is `t_offset` bytes before its entry. An entry in no tree holds
+/// no links (as `new` makes it, and as `_rb_remove` leaves it), or is poisoned.
 #[repr(C)]
 pub struct RbtEntry {
-    pub(crate) rbt_parent: Cell<*const RbtEntry>,
-    pub(crate) rbt_left: Cell<*const RbtEntry>,
-    pub(crate) rbt_right: Cell<*const RbtEntry>,
-    pub(crate) rbt_color: Cell<u32>,
+    pub(crate) rbt_parent: Link<RbtEntry>,
+    pub(crate) rbt_left: Link<RbtEntry>,
+    pub(crate) rbt_right: Link<RbtEntry>,
+    pub(crate) rbt_color: Cell<Color>,
+    /// Set by `RBT_POISON`: the links hold the poison value, not pointers, and are never
+    /// followed. It lives in what is padding in the C structure.
+    pub(crate) rbt_poisoned: Cell<bool>,
 }
 
 impl RbtEntry {
     /// An entry that is in no tree.
     pub const fn new() -> Self {
         Self {
-            rbt_parent: Cell::new(ptr::null()),
-            rbt_left: Cell::new(ptr::null()),
-            rbt_right: Cell::new(ptr::null()),
-            rbt_color: Cell::new(RB_BLACK),
+            rbt_parent: Cell::new(None),
+            rbt_left: Cell::new(None),
+            rbt_right: Cell::new(None),
+            rbt_color: Cell::new(Color::Black),
+            rbt_poisoned: Cell::new(false),
         }
     }
 
     /// The node's colour, `RB_RED` or `RB_BLACK`.
     pub fn color(&self) -> u32 {
-        self.rbt_color.get()
+        match self.rbt_color.get() {
+            Color::Black => RB_BLACK,
+            Color::Red => RB_RED,
+        }
     }
 }
 
@@ -504,31 +529,35 @@ impl Default for RbtEntry {
     }
 }
 
-/// `struct rb_tree`: the root link.
-pub struct RbTree {
-    pub(crate) rbt_root: Cell<*const RbtEntry>,
+/// `struct rb_tree`: the root link of a red-black tree of `T`, an [`RbType`]. The type
+/// parameter ties the tree to the one `RbType` (comparator and entry offset) that walks it.
+pub struct RbTree<T> {
+    pub(crate) rbt_root: Link<RbtEntry>,
+    _type: PhantomData<fn() -> T>,
 }
 
-impl RbTree {
+impl<T> RbTree<T> {
     /// An empty tree.
     pub const fn new() -> Self {
         Self {
-            rbt_root: Cell::new(ptr::null()),
+            rbt_root: Cell::new(None),
+            _type: PhantomData,
         }
     }
 
-    /// `_rb_init`.
+    /// `_rb_init`: empties the tree without touching the elements, which keep their links:
+    /// meant for a tree that is empty or whose elements are abandoned (`uvm_map_teardown`).
     pub fn init(&self) {
-        self.rbt_root.set(ptr::null());
+        self.rbt_root.set(None);
     }
 
     /// `_rb_empty`.
     pub fn is_empty(&self) -> bool {
-        self.rbt_root.get().is_null()
+        self.rbt_root.get().is_none()
     }
 }
 
-impl Default for RbTree {
+impl<T> Default for RbTree<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -561,7 +590,9 @@ impl<T> Default for RbEntry<T> {
 /// `_name##_RBT_INFO`: the `struct rb_type` of an `RBT_*` adapter.
 pub struct RbtInfo<A>(PhantomData<A>);
 
-// SAFETY: `A::OFFSET` is the offset of `A::Entry`, an `RbtEntry`, inside `A::Elem`.
+// SAFETY: `Adapter`'s contract (upheld by `queue_adapter!`, which `tree_adapter!` expands to)
+// makes `A::OFFSET` the offset of the field `A::entry` projects, of type `A::Entry`; an
+// `RbtAdapter` has `Entry = RbtEntry`, so an `RbtEntry` lies at `OFFSET` in every `A::Elem`.
 unsafe impl<A: RbtAdapter> RbType for RbtInfo<A> {
     type Elem = A::Elem;
     const OFFSET: usize = A::OFFSET;
@@ -579,8 +610,9 @@ unsafe impl<A: RbtAdapter> RbType for RbtInfo<A> {
 /// The `struct rb_type` of an `RB_*` adapter.
 pub struct RbInfo<A>(PhantomData<A>);
 
-// SAFETY: `A::OFFSET` is the offset of `A::Entry`, an `RbEntry` whose first (`#[repr(C)]`)
-// field is an `RbtEntry`, inside `A::Elem`.
+// SAFETY: as for `RbtInfo`, `A::OFFSET` is the offset of an `A::Entry` inside every
+// `A::Elem`; for an `RbAdapter` that is an `RbEntry`, whose first field, at offset 0
+// (`#[repr(C)]`, asserted at the end of this file), is an `RbtEntry`.
 unsafe impl<A: RbAdapter> RbType for RbInfo<A> {
     type Elem = A::Elem;
     const OFFSET: usize = A::OFFSET;
@@ -597,8 +629,7 @@ unsafe impl<A: RbAdapter> RbType for RbInfo<A> {
 
 /// `RBT_HEAD(name, type)`: a red-black tree of `A::Elem` run by `kern/subr_tree.rs`.
 pub struct RbtHead<A: Adapter> {
-    rbh_root: RbTree,
-    _adapter: PhantomData<A>,
+    rbh_root: RbTree<RbtInfo<A>>,
 }
 
 impl<A: RbtAdapter> RbtHead<A> {
@@ -606,11 +637,11 @@ impl<A: RbtAdapter> RbtHead<A> {
     pub const fn new() -> Self {
         Self {
             rbh_root: RbTree::new(),
-            _adapter: PhantomData,
         }
     }
 
-    /// `RBT_INIT`: empties the tree without touching the elements.
+    /// `RBT_INIT`: empties the tree without touching the elements, which keep their links:
+    /// meant for a tree that is empty or whose elements are abandoned.
     pub fn init(&self) {
         self.rbh_root.init();
     }
@@ -620,19 +651,23 @@ impl<A: RbtAdapter> RbtHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in no tree of `A` and stays valid and in place until unlinked.
+    /// `elem` is in no tree of `A` (unlinked, or poisoned), and stays valid and in place until
+    /// it is removed (or, if the tree is abandoned by [`init`](Self::init), for as long as an
+    /// element of the abandoned tree is still read through this API): the tree's links point at
+    /// it.
     pub unsafe fn insert(&self, elem: &A::Elem) -> Option<&A::Elem> {
-        // SAFETY: forwarded.
+        // SAFETY: the caller's promise is `_rb_insert`'s precondition, word for word; the tree
+        // is this head's, typed by the same `RbType`.
         unsafe { _rb_insert::<RbtInfo<A>>(&self.rbh_root, elem) }
     }
 
-    /// `RBT_REMOVE`: unlinks `elem` and returns it.
+    /// `RBT_REMOVE`: unlinks `elem` and returns it; `elem` is left holding no links.
     ///
     /// # Safety
     ///
-    /// `elem` is in this tree.
+    /// `elem` is in this tree. Once removed, no link of the tree points at it any more.
     pub unsafe fn remove<'a>(&self, elem: &'a A::Elem) -> &'a A::Elem {
-        // SAFETY: forwarded.
+        // SAFETY: the caller's promise is `_rb_remove`'s precondition; the tree is this head's.
         unsafe { _rb_remove::<RbtInfo<A>>(&self.rbh_root, elem) }
     }
 
@@ -695,9 +730,11 @@ impl<A: RbtAdapter> RbtHead<A> {
     ///
     /// # Safety
     ///
-    /// The caller is rebuilding the tree by hand and keeps it consistent.
+    /// The caller is rebuilding the tree by hand and keeps it consistent: `left` (and every
+    /// element it links) stays valid and in place while linked, as for [`insert`](Self::insert),
+    /// and the links it touches end up naming each other as a tree of `A`.
     pub unsafe fn set_left(elem: &A::Elem, left: Option<&A::Elem>) {
-        // SAFETY: forwarded.
+        // SAFETY: the caller's promise is `_rb_set_left`'s precondition.
         unsafe { _rb_set_left::<RbtInfo<A>>(elem, left) };
     }
 
@@ -707,7 +744,7 @@ impl<A: RbtAdapter> RbtHead<A> {
     ///
     /// As for [`set_left`](Self::set_left).
     pub unsafe fn set_right(elem: &A::Elem, right: Option<&A::Elem>) {
-        // SAFETY: forwarded.
+        // SAFETY: the caller's promise is `_rb_set_right`'s precondition.
         unsafe { _rb_set_right::<RbtInfo<A>>(elem, right) };
     }
 
@@ -717,11 +754,13 @@ impl<A: RbtAdapter> RbtHead<A> {
     ///
     /// As for [`set_left`](Self::set_left).
     pub unsafe fn set_parent(elem: &A::Elem, parent: Option<&A::Elem>) {
-        // SAFETY: forwarded.
+        // SAFETY: the caller's promise is `_rb_set_parent`'s precondition.
         unsafe { _rb_set_parent::<RbtInfo<A>>(elem, parent) };
     }
 
-    /// `RBT_POISON`: fills the links of an unlinked `elem` with `poison`.
+    /// `RBT_POISON`: fills the links of `elem`, which has been removed, with `poison`, and
+    /// marks it poisoned: following its links then panics, where the C would fault on the
+    /// poison address, until it is inserted again.
     pub fn poison(elem: &A::Elem, poison: usize) {
         _rb_poison::<RbtInfo<A>>(elem, poison);
     }
@@ -733,18 +772,12 @@ impl<A: RbtAdapter> RbtHead<A> {
 
     /// `RBT_FOREACH` and `RBT_FOREACH_SAFE`.
     pub fn iter(&self) -> RbIter<'_, RbtInfo<A>> {
-        RbIter {
-            cur: self.min().map_or(ptr::null(), |e| e),
-            _tree: PhantomData,
-        }
+        RbIter { cur: self.min() }
     }
 
     /// `RBT_FOREACH_REVERSE` and `RBT_FOREACH_REVERSE_SAFE`.
     pub fn iter_reverse(&self) -> RbIterReverse<'_, RbtInfo<A>> {
-        RbIterReverse {
-            cur: self.max().map_or(ptr::null(), |e| e),
-            _tree: PhantomData,
-        }
+        RbIterReverse { cur: self.max() }
     }
 }
 
@@ -757,8 +790,7 @@ impl<A: RbtAdapter> Default for RbtHead<A> {
 /// `RB_HEAD(name, type)`: a classic red-black tree of `A::Elem`, served by the same algorithm
 /// as [`RbtHead`].
 pub struct RbHead<A: Adapter> {
-    rbh_root: RbTree,
-    _adapter: PhantomData<A>,
+    rbh_root: RbTree<RbInfo<A>>,
 }
 
 impl<A: RbAdapter> RbHead<A> {
@@ -766,11 +798,11 @@ impl<A: RbAdapter> RbHead<A> {
     pub const fn new() -> Self {
         Self {
             rbh_root: RbTree::new(),
-            _adapter: PhantomData,
         }
     }
 
-    /// `RB_INIT`: empties the tree without touching the elements.
+    /// `RB_INIT`: empties the tree without touching the elements, which keep their links:
+    /// meant for a tree that is empty or whose elements are abandoned.
     pub fn init(&self) {
         self.rbh_root.init();
     }
@@ -780,19 +812,23 @@ impl<A: RbAdapter> RbHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in no tree of `A` and stays valid and in place until unlinked.
+    /// `elem` is in no tree of `A` (unlinked, or poisoned), and stays valid and in place until
+    /// it is removed (or, if the tree is abandoned by [`init`](Self::init), for as long as an
+    /// element of the abandoned tree is still read through this API): the tree's links point at
+    /// it.
     pub unsafe fn insert(&self, elem: &A::Elem) -> Option<&A::Elem> {
-        // SAFETY: forwarded.
+        // SAFETY: the caller's promise is `_rb_insert`'s precondition, word for word; the tree
+        // is this head's, typed by the same `RbType`.
         unsafe { _rb_insert::<RbInfo<A>>(&self.rbh_root, elem) }
     }
 
-    /// `RB_REMOVE`: unlinks `elem` and returns it.
+    /// `RB_REMOVE`: unlinks `elem` and returns it; `elem` is left holding no links.
     ///
     /// # Safety
     ///
-    /// `elem` is in this tree.
+    /// `elem` is in this tree. Once removed, no link of the tree points at it any more.
     pub unsafe fn remove<'a>(&self, elem: &'a A::Elem) -> &'a A::Elem {
-        // SAFETY: forwarded.
+        // SAFETY: the caller's promise is `_rb_remove`'s precondition; the tree is this head's.
         unsafe { _rb_remove::<RbInfo<A>>(&self.rbh_root, elem) }
     }
 
@@ -858,18 +894,12 @@ impl<A: RbAdapter> RbHead<A> {
 
     /// `RB_FOREACH` and `RB_FOREACH_SAFE`.
     pub fn iter(&self) -> RbIter<'_, RbInfo<A>> {
-        RbIter {
-            cur: self.min().map_or(ptr::null(), |e| e),
-            _tree: PhantomData,
-        }
+        RbIter { cur: self.min() }
     }
 
     /// `RB_FOREACH_REVERSE` and `RB_FOREACH_REVERSE_SAFE`.
     pub fn iter_reverse(&self) -> RbIterReverse<'_, RbInfo<A>> {
-        RbIterReverse {
-            cur: self.max().map_or(ptr::null(), |e| e),
-            _tree: PhantomData,
-        }
+        RbIterReverse { cur: self.max() }
     }
 }
 
@@ -882,34 +912,30 @@ impl<A: RbAdapter> Default for RbHead<A> {
 /// In-order iterator over a red-black tree; the successor is read before the current element
 /// is yielded, so the current element may be unlinked while iterating.
 pub struct RbIter<'a, T: RbType> {
-    cur: *const T::Elem,
-    _tree: PhantomData<&'a T::Elem>,
+    cur: Option<&'a T::Elem>,
 }
 
 impl<'a, T: RbType> Iterator for RbIter<'a, T> {
     type Item = &'a T::Elem;
 
     fn next(&mut self) -> Option<&'a T::Elem> {
-        // SAFETY: a linked element is valid until unlinked.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = _rb_next::<T>(cur).map_or(ptr::null(), |e| e);
+        let cur = self.cur?;
+        self.cur = _rb_next::<T>(cur);
         Some(cur)
     }
 }
 
 /// Reverse in-order iterator over a red-black tree; see [`RbIter`].
 pub struct RbIterReverse<'a, T: RbType> {
-    cur: *const T::Elem,
-    _tree: PhantomData<&'a T::Elem>,
+    cur: Option<&'a T::Elem>,
 }
 
 impl<'a, T: RbType> Iterator for RbIterReverse<'a, T> {
     type Item = &'a T::Elem;
 
     fn next(&mut self) -> Option<&'a T::Elem> {
-        // SAFETY: a linked element is valid until unlinked.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = _rb_prev::<T>(cur).map_or(ptr::null(), |e| e);
+        let cur = self.cur?;
+        self.cur = _rb_prev::<T>(cur);
         Some(cur)
     }
 }
@@ -950,6 +976,8 @@ fn splay_follow<T>(link: &Link<T>) -> Option<&T> {
 
 // `RbInfo` relies on the `RbtEntry` being first in an `RbEntry`.
 const _: () = assert!(core::mem::offset_of!(RbEntry<u8>, inner) == 0);
+// An `RbtEntry` is the C's `struct rb_entry` in size: the poison flag sits in its padding.
+const _: () = assert!(core::mem::size_of::<RbtEntry>() == 4 * core::mem::size_of::<usize>());
 /* </CODE> */
 
 /* <TESTS> */
@@ -958,6 +986,7 @@ mod tests {
     // Tests of `tree.rs` (splay trees and the classic `RB_*` API); see there.
 
     use core::cmp::Ordering;
+    use core::ptr;
     use std::vec::Vec;
 
     use super::*;
@@ -1303,6 +1332,63 @@ mod tests {
         let expect: Vec<i32> = sorted().into_iter().filter(|k| k % 10 != 5).collect();
         assert_eq!(keys(t.iter()), expect);
         check_rb(&t);
+    }
+
+    #[test]
+    fn rb_random_sequences() {
+        const N: usize = 64;
+        let n: Vec<Node> = (0..N)
+            .map(|k| Node::new(i32::try_from(k).unwrap()))
+            .collect();
+        for seed in 1..=8u64 {
+            let mut rng = Rng(seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
+            let t = RbHead::<Rb>::new();
+            let mut linked = [false; N];
+            for _ in 0..1000 {
+                let i = rng.below(N);
+                // SAFETY: the nodes outlive the tree; `linked` says which are in it.
+                unsafe {
+                    if linked[i] {
+                        assert!(ptr::eq(t.remove(&n[i]), &n[i]));
+                        assert!(RbHead::<Rb>::parent(&n[i]).is_none());
+                        assert!(RbHead::<Rb>::left(&n[i]).is_none());
+                        assert!(RbHead::<Rb>::right(&n[i]).is_none());
+                    } else {
+                        assert!(t.insert(&n[i]).is_none());
+                        // a second element with the same key is refused
+                        let twin = Node::new(n[i].key);
+                        assert!(ptr::eq(t.insert(&twin).unwrap(), &n[i]));
+                    }
+                }
+                linked[i] = !linked[i];
+                check_rb(&t);
+                let expect: Vec<i32> = (0..N)
+                    .filter(|&k| linked[k])
+                    .map(|k| i32::try_from(k).unwrap())
+                    .collect();
+                assert_eq!(keys(t.iter()), expect);
+                let probe = i32::try_from(rng.below(N + 1)).unwrap();
+                assert_eq!(
+                    key(t.nfind(&Node::new(probe))),
+                    expect.iter().copied().find(|&k| k >= probe)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rb_entry_keeps_the_c_size() {
+        // three links and the colour; the poison flag sits in the padding
+        assert_eq!(
+            core::mem::size_of::<RbtEntry>(),
+            4 * core::mem::size_of::<usize>()
+        );
+        assert_eq!(
+            core::mem::size_of::<RbTree<RbInfo<Rb>>>(),
+            core::mem::size_of::<usize>()
+        );
+        let e = RbtEntry::new();
+        assert_eq!(e.color(), RB_BLACK);
     }
 }
 /* </TESTS> */
