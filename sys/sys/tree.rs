@@ -100,10 +100,11 @@
 //!   `assemble`. `SPLAY_REMOVE` leaves the unlinked element holding no links (the C leaves
 //!   them stale), so `SPLAY_NEXT`, `SPLAY_LEFT` and `SPLAY_RIGHT` on it answer `None` instead
 //!   of walking into the tree it left. [`SplayIter`] holds a reference, not a raw pointer.
-//! - Red-black trees: [`RbtEntry`]'s links are typed too, its colour is an enum (`Color`;
-//!   [`RbtEntry::color`] still answers `RB_BLACK` or `RB_RED`), and a flag in the C
-//!   structure's padding (the size is asserted) marks a poisoned entry, whose links the
-//!   algorithm never follows. [`RbTree`] is typed by the [`RbType`] that walks it, so a tree
+//! - Red-black trees: [`RbtEntry`]'s links are typed too; its colour stays the C's word,
+//!   read by the algorithm as an enum (`Color`), and a second word, where the C structure has
+//!   padding, marks a poisoned entry, whose links the algorithm never follows. Size and offsets
+//!   are asserted; no implicit padding and no invalid bit pattern is left, which pf's byte
+//!   copies of `PfSrcNode` and `PfiKif` need. [`RbTree`] is typed by the [`RbType`] that walks it, so a tree
 //!   cannot be read with another adapter's offset. The algorithm is safe code over typed
 //!   handles (`kern/subr_tree.rs`), with its two dereferences there; this file's `unsafe` is the
 //!   mutators' contracts and the two `RbType` implementations. `RB_REMOVE` and `RBT_REMOVE`
@@ -396,6 +397,11 @@ impl<A: SplayAdapter> SplayHead<A> {
     ///
     /// `elem` is in this tree, or in no splay tree of `A`. Once removed, the element that had
     /// `elem`'s key is no longer pointed at by the tree, so it may be freed.
+    ///
+    /// The types do not enforce the rest (gaps inherited from LZ): no reference to the element
+    /// obtained from this tree (`find`, `next`, an iterator, ...) may be used once it is freed,
+    /// and nothing may take `&mut` of a linked element, which the tree reads and writes through
+    /// shared references.
     pub unsafe fn remove<'a>(&self, elem: &'a A::Elem) -> Option<&'a A::Elem> {
         let root = self.splay_by(|node| A::compare(elem, node))?;
         if A::compare(elem, root) != Ordering::Equal {
@@ -461,7 +467,8 @@ impl<A: SplayAdapter> Default for SplayHead<A> {
 }
 
 /// In-order iterator over a [`SplayHead`]; the successor is found before the current element
-/// is yielded.
+/// is yielded, so the current element may be unlinked while iterating; removing the next one
+/// is a caller bug (the iteration then ends quietly after it).
 pub struct SplayIter<'a, A: Adapter> {
     head: &'a SplayHead<A>,
     cur: Option<&'a A::Elem>,
@@ -481,25 +488,44 @@ impl<'a, A: SplayAdapter> Iterator for SplayIter<'a, A> {
  * Red-black trees: the entry and tree shared by RBT_* and RB_*.
  */
 
-/// The colour of a red-black node (`RB_BLACK`, `RB_RED`).
+/// The colour of a red-black node, as the algorithm sees the entry's colour word.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Color {
+    /// `RB_BLACK`.
     Black,
+    /// `RB_RED`.
     Red,
+}
+
+impl Color {
+    /// The colour word the C stores (`RB_BLACK`, `RB_RED`).
+    pub(crate) const fn word(self) -> u32 {
+        match self {
+            Color::Black => RB_BLACK,
+            Color::Red => RB_RED,
+        }
+    }
 }
 
 /// `struct rb_entry`: the links an element embeds to be in a red-black tree. They point at
 /// other entries; the element is `t_offset` bytes before its entry. An entry in no tree holds
 /// no links (as `new` makes it, and as `_rb_remove` leaves it), or is poisoned.
+///
+/// The layout is the C's, three link words and the colour word at the same offsets, with the
+/// C's trailing padding made a word of its own: no implicit padding is left, and every bit
+/// pattern of every field is a valid value. pf copies structures that embed an entry to and
+/// from userland byte for byte (`PfAbi`, `sys/net/pfvar.rs`) and relies on both.
 #[repr(C)]
 pub struct RbtEntry {
     pub(crate) rbt_parent: Link<RbtEntry>,
     pub(crate) rbt_left: Link<RbtEntry>,
     pub(crate) rbt_right: Link<RbtEntry>,
-    pub(crate) rbt_color: Cell<Color>,
-    /// Set by `RBT_POISON`: the links hold the poison value, not pointers, and are never
-    /// followed. It lives in what is padding in the C structure.
-    pub(crate) rbt_poisoned: Cell<bool>,
+    /// `rbt_color`: `RB_BLACK` or `RB_RED`; the algorithm reads it as a [`Color`] and treats
+    /// any other value as a corrupt tree.
+    pub(crate) rbt_color: Cell<u32>,
+    /// Non-zero once `RBT_POISON` wrote a non-zero value into the links: they hold that value,
+    /// not pointers, and are never followed. It fills what is padding in the C structure.
+    pub(crate) rbt_poisoned: Cell<u32>,
 }
 
 impl RbtEntry {
@@ -509,17 +535,14 @@ impl RbtEntry {
             rbt_parent: Cell::new(None),
             rbt_left: Cell::new(None),
             rbt_right: Cell::new(None),
-            rbt_color: Cell::new(Color::Black),
-            rbt_poisoned: Cell::new(false),
+            rbt_color: Cell::new(RB_BLACK),
+            rbt_poisoned: Cell::new(0),
         }
     }
 
-    /// The node's colour, `RB_RED` or `RB_BLACK`.
+    /// The node's colour word, `RB_RED` or `RB_BLACK` (`RB_COLOR`).
     pub fn color(&self) -> u32 {
-        match self.rbt_color.get() {
-            Color::Black => RB_BLACK,
-            Color::Red => RB_RED,
-        }
+        self.rbt_color.get()
     }
 }
 
@@ -666,6 +689,11 @@ impl<A: RbtAdapter> RbtHead<A> {
     /// # Safety
     ///
     /// `elem` is in this tree. Once removed, no link of the tree points at it any more.
+    ///
+    /// The types do not enforce the rest (gaps inherited from LZ): no reference to the element
+    /// obtained from this tree (`find`, `next`, an iterator, ...) may be used once it is freed,
+    /// and nothing may take `&mut` of a linked element, which the tree reads and writes through
+    /// shared references.
     pub unsafe fn remove<'a>(&self, elem: &'a A::Elem) -> &'a A::Elem {
         // SAFETY: the caller's promise is `_rb_remove`'s precondition; the tree is this head's.
         unsafe { _rb_remove::<RbtInfo<A>>(&self.rbh_root, elem) }
@@ -827,6 +855,11 @@ impl<A: RbAdapter> RbHead<A> {
     /// # Safety
     ///
     /// `elem` is in this tree. Once removed, no link of the tree points at it any more.
+    ///
+    /// The types do not enforce the rest (gaps inherited from LZ): no reference to the element
+    /// obtained from this tree (`find`, `next`, an iterator, ...) may be used once it is freed,
+    /// and nothing may take `&mut` of a linked element, which the tree reads and writes through
+    /// shared references.
     pub unsafe fn remove<'a>(&self, elem: &'a A::Elem) -> &'a A::Elem {
         // SAFETY: the caller's promise is `_rb_remove`'s precondition; the tree is this head's.
         unsafe { _rb_remove::<RbInfo<A>>(&self.rbh_root, elem) }
@@ -910,7 +943,9 @@ impl<A: RbAdapter> Default for RbHead<A> {
 }
 
 /// In-order iterator over a red-black tree; the successor is read before the current element
-/// is yielded, so the current element may be unlinked while iterating.
+/// is yielded, so the current element may be unlinked while iterating (`*_FOREACH_SAFE`).
+/// Removing the next element instead is a caller bug, as in C: its links are cleared, so the
+/// iteration then ends quietly after it.
 pub struct RbIter<'a, T: RbType> {
     cur: Option<&'a T::Elem>,
 }
@@ -976,8 +1011,15 @@ fn splay_follow<T>(link: &Link<T>) -> Option<&T> {
 
 // `RbInfo` relies on the `RbtEntry` being first in an `RbEntry`.
 const _: () = assert!(core::mem::offset_of!(RbEntry<u8>, inner) == 0);
-// An `RbtEntry` is the C's `struct rb_entry` in size: the poison flag sits in its padding.
+// An `RbtEntry` is the C's `struct rb_entry` in size and in the colour word's place; the poison
+// word fills the C's trailing padding, so none is left (`PfAbi`).
 const _: () = assert!(core::mem::size_of::<RbtEntry>() == 4 * core::mem::size_of::<usize>());
+const _: () =
+    assert!(core::mem::offset_of!(RbtEntry, rbt_color) == 3 * core::mem::size_of::<usize>());
+const _: () = assert!(
+    core::mem::offset_of!(RbtEntry, rbt_poisoned)
+        == 3 * core::mem::size_of::<usize>() + core::mem::size_of::<u32>()
+);
 /* </CODE> */
 
 /* <TESTS> */

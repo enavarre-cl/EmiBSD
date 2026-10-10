@@ -104,18 +104,20 @@
 //! - `_rb_remove` leaves the unlinked entry as `RbtEntry::new` makes it (no links, black);
 //!   the C leaves its links stale, which `RBT_INIT(9)` defines nothing for, and which would
 //!   let the safe readers walk from it into memory it no longer owns.
-//! - `_rb_poison` marks the entry poisoned (a flag in the C structure's padding) besides
+//! - `_rb_poison` marks the entry poisoned (a word where the C structure has padding) besides
 //!   writing the value into its links; following a poisoned entry's links panics, where the C
 //!   would fault on the poison address (`_rb_check` still reads the raw values). A structure
-//!   the algorithm relies on that is missing (a red root, a black node without a sibling) also
-//!   panics, where the C would dereference null.
+//!   the algorithm relies on that is missing (a red root, a black node without a sibling, a
+//!   colour word that is neither colour) also panics, where the C would dereference null, and
+//!   so does unlinking an element its parent (or the root) does not hold: an element removed
+//!   twice or never inserted, which in the C silently corrupts the tree. The panics go
+//!   through `rb_panic`, `panic(9)` in the kernel and an unwinding panic in the host tests.
 
 use core::cmp::Ordering;
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 
-use crate::kern::subr_prf::panic;
-use crate::sys::tree::{Color, Link, RbTree, RbtEntry};
+use crate::sys::tree::{Color, Link, RB_BLACK, RB_RED, RbTree, RbtEntry};
 
 /// Which child of a node: the C's mirrored halves of each step are one path over it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -180,7 +182,7 @@ impl<'a, T: RbType> RbNode<'a, T> {
     /// not pointers (the C would fault on it).
     fn links(self) -> &'a RbtEntry {
         let rbe = self.entry();
-        if rbe.rbt_poisoned.get() {
+        if rbe.rbt_poisoned.get() != 0 {
             rb_poisoned(rbe);
         }
         rbe
@@ -225,14 +227,19 @@ impl<'a, T: RbType> RbNode<'a, T> {
         self.entry().rbt_parent.set(link(parent));
     }
 
-    /// `RBE_COLOR`.
+    /// `RBE_COLOR`, read as a [`Color`]; a word that is neither `RB_BLACK` nor `RB_RED` is a
+    /// corrupt tree.
     fn color(self) -> Color {
-        self.entry().rbt_color.get()
+        match self.entry().rbt_color.get() {
+            RB_BLACK => Color::Black,
+            RB_RED => Color::Red,
+            _ => rb_corrupt("colour word neither RB_BLACK nor RB_RED"),
+        }
     }
 
     /// Sets `RBE_COLOR`.
     fn set_color(self, color: Color) {
-        self.entry().rbt_color.set(color);
+        self.entry().rbt_color.set(color.word());
     }
 
     /// The side of `self` that `child` hangs on (the C's `child == RBE_LEFT(self)` test).
@@ -241,6 +248,17 @@ impl<'a, T: RbType> RbNode<'a, T> {
             Side::Left
         } else {
             Side::Right
+        }
+    }
+
+    /// The side of `self` that `child` hangs on, checked: `None` when `child` is neither.
+    fn child_side(self, child: RbNode<'_, T>) -> Option<Side> {
+        if same(self.left(), Some(child)) {
+            Some(Side::Left)
+        } else if same(self.right(), Some(child)) {
+            Some(Side::Right)
+        } else {
+            None
         }
     }
 
@@ -260,8 +278,8 @@ impl<'a, T: RbType> RbNode<'a, T> {
         rbe.rbt_parent.set(None);
         rbe.rbt_left.set(None);
         rbe.rbt_right.set(None);
-        rbe.rbt_color.set(Color::Black);
-        rbe.rbt_poisoned.set(false);
+        rbe.rbt_color.set(RB_BLACK);
+        rbe.rbt_poisoned.set(0);
     }
 }
 
@@ -301,9 +319,26 @@ fn is_red<T: RbType>(node: Option<RbNode<'_, T>>) -> bool {
     node.is_some_and(|node| node.color() == Color::Red)
 }
 
+/// What the C does by dereferencing `NULL` or a poison value when a caller breaks a
+/// precondition: a kernel panic, in every configuration (`docs/IDIOMS.md`, the same shape as
+/// `queue.rs`'s).
+#[cold]
+#[cfg(not(test))]
+fn rb_panic(args: core::fmt::Arguments<'_>) -> ! {
+    crate::kern::subr_prf::panic(args)
+}
+
+/// The host tests' `rb_panic`: an unwinding panic, so that `#[should_panic]` sees it (the
+/// host's `panic(9)` ends the test process through `boot`).
+#[cold]
+#[cfg(test)]
+fn rb_panic(args: core::fmt::Arguments<'_>) -> ! {
+    std::panic!("{args}")
+}
+
 /// A poisoned entry's links were about to be followed.
 fn rb_poisoned(rbe: &RbtEntry) -> ! {
-    panic(format_args!(
+    rb_panic(format_args!(
         "rb tree: links of the poisoned entry {:p} followed",
         ptr::from_ref(rbe)
     ))
@@ -312,7 +347,7 @@ fn rb_poisoned(rbe: &RbtEntry) -> ! {
 /// The tree lacks a structure the algorithm relies on: it was relinked by hand inconsistently,
 /// or an element was used against its contract.
 fn rb_corrupt(what: &str) -> ! {
-    panic(format_args!("rb tree corrupt: {what}"))
+    rb_panic(format_args!("rb tree corrupt: {what}"))
 }
 
 /// `rb_n2e`: the entry inside `node`, as a handle.
@@ -351,6 +386,9 @@ fn rbh_set_root<T: RbType>(rbt: &RbTree<T>, node: Option<RbNode<'_, T>>) {
 }
 
 /// Points `parent`'s link to `old` at `new` instead, or the root when `old` has no parent.
+/// Checks that the link it replaces does name `old`: an element removed twice, or never
+/// inserted, has no parent (`rbe_remove` clears what it unlinks) and is not the root, and
+/// replacing the root then would empty a tree whose elements are still linked.
 fn rbe_replace_child<T: RbType>(
     rbt: &RbTree<T>,
     parent: Option<RbNode<'_, T>>,
@@ -358,8 +396,12 @@ fn rbe_replace_child<T: RbType>(
     new: Option<RbNode<'_, T>>,
 ) {
     match parent {
-        Some(parent) => parent.set_child(parent.side_of(old), new),
-        None => rbh_set_root(rbt, new),
+        Some(parent) => match parent.child_side(old) {
+            Some(side) => parent.set_child(side, new),
+            None => rb_corrupt("unlinking an element its parent does not hold"),
+        },
+        None if same(rbh_root(rbt), Some(old)) => rbh_set_root(rbt, new),
+        None => rb_corrupt("unlinking an element that is not in this tree"),
     }
 }
 
@@ -591,7 +633,13 @@ fn rbe_remove<'a, T: RbType>(rbt: &'a RbTree<T>, old: RbNode<'a, T>) -> RbNode<'
 /// # Safety
 ///
 /// `elm` is in `rbt`. Once removed, no link of the tree points at it any more, so it may be
-/// freed or moved.
+/// freed or moved. (An element in no tree is refused with a panic, where the C would corrupt
+/// the tree.)
+///
+/// The types do not enforce the rest (gaps inherited from LZ): no reference to the element
+/// obtained from the tree (`_rb_find`, `_rb_next`, ...) may be used once it is freed, and
+/// nothing may take `&mut` of a linked element, which the tree reads and writes through shared
+/// references.
 pub unsafe fn _rb_remove<'a, T: RbType>(rbt: &RbTree<T>, elm: &'a T::Elem) -> &'a T::Elem {
     rbe_remove(rbt, rb_n2e::<T>(elm));
     elm
@@ -783,11 +831,12 @@ pub unsafe fn _rb_set_parent<T: RbType>(node: &T::Elem, parent: Option<&T::Elem>
 }
 
 /// `_rb_poison`: fills the links of `node`, which has been removed, with `poison`, and marks
-/// it poisoned, so a stale use panics instead of walking a tree.
+/// it poisoned, so a stale use panics instead of walking a tree. A zero poison writes null
+/// links, which are an unlinked entry's, and so marks nothing.
 pub fn _rb_poison<T: RbType>(node: &T::Elem, poison: usize) {
     let rbe = rb_n2e::<T>(node).entry();
     let value = NonNull::new(ptr::without_provenance_mut::<RbtEntry>(poison));
-    rbe.rbt_poisoned.set(true);
+    rbe.rbt_poisoned.set(u32::from(value.is_some()));
     rbe.rbt_parent.set(value);
     rbe.rbt_left.set(value);
     rbe.rbt_right.set(value);
@@ -1233,6 +1282,133 @@ mod tests {
         let lone = Node::new(7);
         RbtHead::<Plain>::poison(&lone, 0);
         assert!(RbtHead::<Plain>::check(&lone, 0));
+    }
+
+    // The precondition breaks below panic through `rb_panic`, which unwinds in the host tests so
+    // that `should_panic` sees it (`panic(9)` in the kernel).
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: unlinking an element that is not in this tree")]
+    fn double_remove_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree; the second remove breaks the contract on purpose,
+        // and the tree refuses it before touching any link.
+        unsafe {
+            for node in &n[..3] {
+                t.insert(node);
+            }
+            t.remove(&n[0]);
+            t.remove(&n[0]);
+        }
+    }
+
+    #[test]
+    fn double_remove_leaves_the_tree_alone() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: as above; the panic is caught before the nodes go out of scope.
+        unsafe {
+            for node in &n[..3] {
+                t.insert(node);
+            }
+            t.remove(&n[0]);
+        }
+        let again = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+            // SAFETY: refused before any link is written (the point of the test).
+            unsafe { t.remove(&n[0]) };
+        }));
+        assert!(again.is_err());
+        assert_eq!(keys(t.iter()), [20, 70]);
+        check(&t, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: unlinking an element that is not in this tree")]
+    fn remove_of_a_fresh_element_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        let fresh = Node::new(1234);
+        // SAFETY: the nodes outlive the tree; removing `fresh` breaks the contract on purpose.
+        unsafe {
+            for node in &n {
+                t.insert(node);
+            }
+            t.remove(&fresh);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: unlinking an element its parent does not hold")]
+    fn remove_under_a_parent_that_does_not_hold_it_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        let stray = Node::new(1234);
+        // SAFETY: the nodes outlive the tree; `stray` is given a parent by hand that does not
+        // hold it, which breaks `set_parent`'s contract on purpose.
+        unsafe {
+            for node in &n[..3] {
+                t.insert(node);
+            }
+            RbtHead::<Plain>::set_parent(&stray, t.root());
+            t.remove(&stray);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "links of the poisoned entry")]
+    fn following_a_poisoned_entry_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree and start unlinked.
+        unsafe {
+            for node in &n[..3] {
+                t.insert(node);
+            }
+        }
+        // Poisoning a linked element breaks `RBT_POISON`'s use; walking from it must not
+        // follow the poison.
+        RbtHead::<Plain>::poison(&n[0], 0xdead_beef);
+        let _ = RbtHead::<Plain>::next(&n[0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: red root")]
+    fn a_missing_grandparent_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree; the root is recoloured red by hand, which breaks
+        // the invariants on purpose, so the next fixup finds a red parent with no parent.
+        unsafe {
+            t.insert(&n[0]);
+            n[0].rbt.rbt_color.set(RB_RED);
+            t.insert(&n[1]);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "rb tree corrupt: colour word neither RB_BLACK nor RB_RED")]
+    fn an_unknown_colour_word_panics() {
+        let n = nodes();
+        let t = RbtHead::<Plain>::new();
+        // SAFETY: the nodes outlive the tree; the colour word is overwritten by hand on purpose.
+        unsafe {
+            t.insert(&n[0]);
+            t.insert(&n[1]);
+            n[0].rbt.rbt_color.set(7);
+            t.insert(&n[2]);
+        }
+    }
+
+    #[test]
+    fn zero_poison_marks_nothing() {
+        let n = Node::new(3);
+        RbtHead::<Plain>::poison(&n, 0);
+        assert!(RbtHead::<Plain>::check(&n, 0));
+        assert_eq!(n.rbt.rbt_poisoned.get(), 0);
+        assert!(RbtHead::<Plain>::next(&n).is_none());
+        RbtHead::<Plain>::poison(&n, 0xdead_beef);
+        assert_ne!(n.rbt.rbt_poisoned.get(), 0);
     }
 }
 /* </TESTS> */

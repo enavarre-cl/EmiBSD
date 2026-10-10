@@ -5054,7 +5054,8 @@ status = "inherited"
 [[module]]
 rust = "sys/net/pfvar.rs"
 lz = ["sys/net/pfvar.rs"]
-status = "inherited"
+status = "adapted"
+adapted_by = ["sys/sys/tree.rs"]
 
 [[module]]
 rust = "sys/net/pfvar_priv.rs"
