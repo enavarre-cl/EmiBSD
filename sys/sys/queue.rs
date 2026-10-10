@@ -51,6 +51,7 @@
 //! Intrusive lists and queues: `<sys/queue.h>`, see `queue(3)`.
 //!
 //! Upstream: sys/sys/queue.h @ 3ce1f3f79392
+//! LZ: sys/sys/queue.rs@3c62ede68802
 //!
 //! Six families, as in C: singly-linked lists ([`SlistHead`]), lists ([`ListHead`]), simple
 //! queues ([`SimpleqHead`]), XOR simple queues ([`XsimpleqHead`]), tail queues ([`TailqHead`])
@@ -66,31 +67,76 @@
 //! head in C (`LIST_REMOVE`, `LIST_INSERT_BEFORE`, `SLIST_NEXT`) are associated functions,
 //! `ListHead::<A>::remove(elm)`.
 //!
-//! Links are `Cell`s, so a list is modified through `&Elem` and `&Head`, like the C that mutates
-//! through pointers under a lock. The lock discipline stays the caller's, as in C: readers are
-//! safe functions whose references live as long as the borrow they come from; every mutator is
-//! `unsafe` and states what the caller guarantees. The one invariant behind all of them: an
-//! element linked into a list stays valid and in place until it is unlinked.
+//! Links are interior-mutable, so a list is modified through `&Elem` and `&Head`, like the C
+//! that mutates through pointers under a lock. The lock discipline stays the caller's, as in C:
+//! readers are safe functions whose references live as long as the borrow they come from; every
+//! mutator is `unsafe` and states what the caller guarantees. The contract behind all of them:
+//! an element linked into a list stays valid and in place until it is unlinked, a non-empty
+//! list or tail queue head stays in place (its first element's back link names it; the other
+//! heads are named by nothing), and an element unlinked and then freed is not the pending
+//! position of a live iterator (the `_FOREACH_SAFE` rule: only the element just yielded may go).
 //!
 //! ## Deviations
 //! - `_FOREACH` and `_FOREACH_SAFE` are one iterator: it reads the next element before yielding
 //!   the current one, so the current element may be unlinked while iterating (the `_SAFE` form).
 //! - `*_HEAD_INITIALIZER` cannot take the head's own address in a `const`; an empty head stores
-//!   a null "last" link that means "the head's first cell", so an empty head can be moved. Once
+//!   a null "last" link that means "the head's first link", so an empty head can be moved. Once
 //!   an element is inserted the head is pinned, as in C.
 //! - `TAILQ_PREV`, `TAILQ_LAST` and `STAILQ_LAST` recover the element from a link through the
 //!   adapter's field offset (`container_of`) instead of C's type-punning cast of the link as a
 //!   head; `prev` therefore takes the head.
 //! - `XSIMPLEQ_INIT` takes the cookie as an argument until `arc4random(9)` exists (milestone M5);
 //!   a head made by `new` has cookie 0 and works like a plain simple queue.
-//! - `_Q_INVALIDATE` is active under feature `diagnostic` (OpenBSD's `option DIAGNOSTIC`).
+//! - `_Q_INVALIDATE` poisons the links of a removed element under feature `diagnostic`
+//!   (OpenBSD's `option DIAGNOSTIC`), and a poisoned link that is read again fails a
+//!   `kassert!` where the C would fault on `(void *)-1`. Without `diagnostic` the same
+//!   removals clear the links instead of leaving them stale (see "Redesign").
+//! - The readers are safe functions, as in LZ, so they cannot ask that the element they are
+//!   given be linked: `next`/`prev` of an element removed by an operation that does not
+//!   invalidate (`*_REMOVE_HEAD`, `*_REMOVE_AFTER`, `STAILQ_REMOVE`) still read its old
+//!   successor, as the C does, valid only while that successor stays linked. Making that a type
+//!   needs a signature change (the user's decision; N2 kept the source API).
+//!
+//! ## Redesign
+//! - The links are typed: LZ's `Cell<*const T>` (`struct type *`) and
+//!   `Cell<*const Cell<*const T>>` (`struct type **`) are one private type, `Link<P>`, a
+//!   `Cell<Option<NonNull<P>>>` whose `None` is the C's `NULL` (`docs/IDIOMS.md`, "a typed
+//!   intrusive link"). The fields stay private and only this module writes them, so the
+//!   type's invariant (a `Some` link of a head or of a linked element names a live object)
+//!   holds by construction from the mutators' contracts, and the dereference lives in one
+//!   method, `Link::target`, instead of an `unsafe` block at every read.
+//! - A "previous" or "last" link that names a next link inside an element (`le_prev`,
+//!   `tqe_prev`, `sqh_last`, `tqh_last`, `stqh_last`) is made by `link_of` with the provenance
+//!   of the whole element, not of the link's field, so `container_of` (`TAILQ_LAST`,
+//!   `TAILQ_PREV`, `STAILQ_LAST`) steps back to the element through a pointer allowed to reach
+//!   it. `container_of` itself is safe address arithmetic (`wrapping_byte_sub`); only the
+//!   dereference of its result is `unsafe`, at the three readers.
+//! - The XOR queue encodes with `expose_provenance` and decodes with
+//!   `with_exposed_provenance`, Rust's spelling of the C's pointer/integer round trip.
+//! - The `_FOREACH_SAFE` iterators share one cursor (`Cursor`) and a step (`Step`): the next
+//!   link, the XOR'd next link, or `tqe_prev`; the cursor holds the pending position as a raw
+//!   `NonNull` and dereferences it in one place.
+//! - What the C turns into a `NULL` dereference (removing from an empty queue, removing after
+//!   the last element, `SLIST_REMOVE` of an element that is not there, removing an element that
+//!   is in no list) is a `kassert!` under `diagnostic` and a no-op otherwise: an `Option`
+//!   cannot be dereferenced.
+//! - `LIST_REMOVE`, `LIST_REPLACE`, `SLIST_REMOVE`, `TAILQ_REMOVE` and `TAILQ_REPLACE` clear the
+//!   removed element's links (`None`) when `diagnostic` is off, where LZ and the C leave them
+//!   stale: a stale link would name an element that may be freed, and the readers are safe.
+//!   OpenBSD's GENERIC kernels run with `DIAGNOSTIC`, which poisons them, so no correct caller
+//!   reads them.
+//! - The entries no longer need their next link first: `container_of` uses the adapter's
+//!   offset plus the link's offset in its entry (`NextEntry::NEXT`). They stay `#[repr(C)]`,
+//!   the C's layout, for the structures that embed them.
 
 use core::cell::Cell;
 use core::marker::PhantomData;
-use core::ptr;
+use core::mem::offset_of;
+use core::num::NonZero;
+use core::ptr::{self, NonNull};
 
-/// `_Q_INVALID`: the poison written into a removed element's links under feature `diagnostic`.
-#[cfg(feature = "diagnostic")]
+/// `_Q_INVALID`: the address written into a removed element's links under feature
+/// `diagnostic` (the C's `(void *)-1`).
 const Q_INVALID: usize = usize::MAX;
 
 /// Generates a zero-sized [`Adapter`] type: `queue_adapter!(pub ProcList: Proc, p_list =>
@@ -115,6 +161,112 @@ macro_rules! queue_adapter {
     };
 }
 
+/// A typed link: the C's `struct type *` (a first or next link, `P = T`) or `struct type **`
+/// (a previous or last link, `P = Link<T>`). `None` is `NULL`.
+///
+/// Invariant: a link of a head, or of an element linked into a list, is `None` or names a live
+/// `P` (an element linked into the same list, or a next link inside one or inside a head that
+/// stays in place while its list is not empty), or, under `diagnostic`, the `_Q_INVALID`
+/// poison. Only this module writes links, and only through the mutators, whose callers
+/// guarantee that a linked element stays valid and in place until it is unlinked.
+#[repr(transparent)]
+struct Link<P>(Cell<Option<NonNull<P>>>);
+
+impl<P> Link<P> {
+    /// A `NULL` link.
+    const fn new() -> Self {
+        Self(Cell::new(None))
+    }
+
+    /// The link's value. Under `diagnostic`, reading the poison of a removed element is the
+    /// C's fault on `(void *)-1`, a failed assertion here.
+    fn get(&self) -> Option<NonNull<P>> {
+        let v = self.0.get();
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(v.is_none_or(|p| p.addr().get() != Q_INVALID));
+        v
+    }
+
+    /// The raw value, poison included (`le_prev != NULL`, `tqe_prev != NULL`).
+    fn peek(&self) -> Option<NonNull<P>> {
+        self.0.get()
+    }
+
+    fn set(&self, v: Option<NonNull<P>>) {
+        self.0.set(v);
+    }
+
+    /// Points the link at `target`, with the provenance of the reference.
+    fn set_ref(&self, target: &P) {
+        self.0.set(Some(NonNull::from(target)));
+    }
+
+    fn is_null(&self) -> bool {
+        self.0.get().is_none()
+    }
+
+    /// Whether the link names `target` (`==` on addresses).
+    fn names(&self, target: &P) -> bool {
+        self.0.get() == Some(NonNull::from(target))
+    }
+
+    /// The object the link names. The lifetime is the caller's to bound: the public readers
+    /// tie it to the borrow of the head or element they were given.
+    fn target<'a>(&self) -> Option<&'a P> {
+        let p = self.0.get()?;
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(p.addr().get() != Q_INVALID);
+        // SAFETY: by the type's invariant a `Some` link of a head or of a linked element names
+        // a live `P` (the mutators' callers keep linked elements valid and in place until they
+        // are unlinked, and the heads the links point back at in place while not empty); every
+        // call site in this module reads a head's link or a linked element's, and the public
+        // readers hand the reference out only for as long as the borrow they were given. The
+        // poison is never dereferenced: the assertion above stops it under `diagnostic`, the
+        // only configuration that writes it. `P` is only read through `&` (its links are
+        // `Cell`s).
+        Some(unsafe { p.as_ref() })
+    }
+}
+
+/// The position of a `_FOREACH_SAFE` loop: the element the next call yields, read from the
+/// links before the previous one was handed out, so that one may be unlinked.
+struct Cursor<'a, T, S> {
+    cur: Option<NonNull<T>>,
+    step: S,
+    _list: PhantomData<&'a T>,
+}
+
+impl<'a, T, S: Step<T>> Cursor<'a, T, S> {
+    fn new(first: Option<NonNull<T>>, step: S) -> Self {
+        Self {
+            cur: first,
+            step,
+            _list: PhantomData,
+        }
+    }
+
+    fn advance(&mut self) -> Option<&'a T> {
+        let cur = self.cur?;
+        // SAFETY: `cur` was read from a link of the head or of the element yielded last, while
+        // that element was still linked (the `Link` invariant), so it named a linked element.
+        // The callers' contract (module docs) lets them unlink only the element just yielded,
+        // never the pending one, so it is still linked, valid and in place; the reference lives
+        // as long as the borrow of the head the iterator came from.
+        let elem = unsafe { cur.as_ref() };
+        self.cur = self.step.step(elem);
+        Some(elem)
+    }
+}
+
+/// The step of a cursor through an entry's next link.
+struct NextStep<A>(PhantomData<A>);
+
+impl<A> NextStep<A> {
+    const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
 /*
  * Singly-linked List definitions.
  */
@@ -122,14 +274,14 @@ macro_rules! queue_adapter {
 /// `SLIST_ENTRY(type)`: the link an element embeds to be in a singly-linked list.
 #[repr(C)]
 pub struct SlistEntry<T> {
-    sle_next: Cell<*const T>,
+    sle_next: Link<T>,
 }
 
 impl<T> SlistEntry<T> {
     /// An entry that is in no list.
     pub const fn new() -> Self {
         Self {
-            sle_next: Cell::new(ptr::null()),
+            sle_next: Link::new(),
         }
     }
 }
@@ -144,45 +296,40 @@ impl<T> Default for SlistEntry<T> {
 /// names. Elements are added at the head or after another element; removing an arbitrary
 /// element costs O(n); traversal is forward only.
 pub struct SlistHead<A: Adapter> {
-    slh_first: Cell<*const A::Elem>,
+    slh_first: Link<A::Elem>,
 }
 
 impl<A: SlistAdapter> SlistHead<A> {
     /// `SLIST_HEAD_INITIALIZER`: an empty list.
     pub const fn new() -> Self {
         Self {
-            slh_first: Cell::new(ptr::null()),
+            slh_first: Link::new(),
         }
     }
 
     /// `SLIST_INIT`: empties the list without touching the elements.
     pub fn init(&self) {
-        self.slh_first.set(ptr::null());
+        self.slh_first.set(None);
     }
 
     /// `SLIST_FIRST`; `None` is `SLIST_END`.
     pub fn first(&self) -> Option<&A::Elem> {
-        // SAFETY: a linked element is valid until unlinked (the mutators' contract).
-        unsafe { self.slh_first.get().as_ref() }
+        self.slh_first.target()
     }
 
     /// `SLIST_EMPTY`.
     pub fn is_empty(&self) -> bool {
-        self.slh_first.get().is_null()
+        self.slh_first.is_null()
     }
 
     /// `SLIST_NEXT`: the element after `elem`.
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
-        // SAFETY: as for `first`.
-        unsafe { A::entry(elem).sle_next.get().as_ref() }
+        A::entry(elem).sle_next.target()
     }
 
     /// `SLIST_FOREACH` and `SLIST_FOREACH_SAFE`.
     pub fn iter(&self) -> SlistIter<'_, A> {
-        SlistIter {
-            cur: self.slh_first.get(),
-            _head: PhantomData,
-        }
+        SlistIter(Cursor::new(self.slh_first.get(), NextStep::new()))
     }
 
     /// `SLIST_INSERT_HEAD`.
@@ -192,7 +339,7 @@ impl<A: SlistAdapter> SlistHead<A> {
     /// `elem` is in no list of `A` and stays valid and in place until it is unlinked.
     pub unsafe fn insert_head(&self, elem: &A::Elem) {
         A::entry(elem).sle_next.set(self.slh_first.get());
-        self.slh_first.set(elem);
+        self.slh_first.set_ref(elem);
     }
 
     /// `SLIST_INSERT_AFTER`: links `elem` after `slistelm`.
@@ -202,56 +349,63 @@ impl<A: SlistAdapter> SlistHead<A> {
     /// `slistelm` is linked; `elem` is in no list of `A` and stays valid and in place until it
     /// is unlinked.
     pub unsafe fn insert_after(slistelm: &A::Elem, elem: &A::Elem) {
-        let after = A::entry(slistelm);
-        A::entry(elem).sle_next.set(after.sle_next.get());
-        after.sle_next.set(elem);
+        let after = &A::entry(slistelm).sle_next;
+        A::entry(elem).sle_next.set(after.get());
+        after.set_ref(elem);
     }
 
-    /// `SLIST_REMOVE_HEAD`: unlinks the first element.
+    /// `SLIST_REMOVE_HEAD`: unlinks the first element. Its link still names its successor.
     ///
     /// # Safety
     ///
-    /// The list is not empty.
+    /// The list is not empty (an empty list is left as it is, and fails a `kassert!` under
+    /// `diagnostic`).
     pub unsafe fn remove_head(&self) {
-        // SAFETY: the caller guarantees a first element exists; it is valid while linked.
-        let first = unsafe { &*self.slh_first.get() };
-        self.slh_first.set(A::entry(first).sle_next.get());
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(!self.is_empty());
+        if let Some(first) = self.slh_first.target() {
+            self.slh_first.set(A::entry(first).sle_next.get());
+        }
     }
 
-    /// `SLIST_REMOVE_AFTER`: unlinks the element after `elem`.
+    /// `SLIST_REMOVE_AFTER`: unlinks the element after `elem`. Its link still names its
+    /// successor.
     ///
     /// # Safety
     ///
-    /// `elem` is linked and has a successor.
+    /// `elem` is linked and has a successor (otherwise nothing changes, and a `kassert!` fails
+    /// under `diagnostic`).
     pub unsafe fn remove_after(elem: &A::Elem) {
-        let entry = A::entry(elem);
-        // SAFETY: the caller guarantees a successor exists; it is valid while linked.
-        let next = unsafe { &*entry.sle_next.get() };
-        entry.sle_next.set(A::entry(next).sle_next.get());
+        let link = &A::entry(elem).sle_next;
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(!link.is_null());
+        if let Some(next) = link.target() {
+            link.set(A::entry(next).sle_next.get());
+        }
     }
 
-    /// `SLIST_REMOVE`: unlinks `elem`, walking the list to find its predecessor (O(n)).
+    /// `SLIST_REMOVE`: unlinks `elem`, walking the list to find its predecessor (O(n)), and
+    /// invalidates its link.
     ///
     /// # Safety
     ///
-    /// `elem` is in this list.
+    /// `elem` is in this list (otherwise the list is left as it is, and a `kassert!` fails
+    /// under `diagnostic`).
     pub unsafe fn remove(&self, elem: &A::Elem) {
-        let target: *const A::Elem = elem;
-        if self.slh_first.get() == target {
-            // SAFETY: the list holds `elem`, so it is not empty.
-            unsafe { self.remove_head() };
-        } else {
-            // SAFETY: `elem` is in the list and is not first, so the walk from the first element
-            // reaches its predecessor through valid, linked elements.
-            unsafe {
-                let mut cur = &*self.slh_first.get();
-                while A::entry(cur).sle_next.get() != target {
-                    cur = &*A::entry(cur).sle_next.get();
+        let next = A::entry(elem).sle_next.get();
+        let mut link = &self.slh_first;
+        loop {
+            if link.names(elem) {
+                link.set(next);
+                break;
+            }
+            match link.target() {
+                Some(cur) => link = &A::entry(cur).sle_next,
+                None => {
+                    #[cfg(feature = "diagnostic")]
+                    crate::kassert!(false);
+                    return;
                 }
-                let before = A::entry(cur);
-                before
-                    .sle_next
-                    .set(A::entry(&*before.sle_next.get()).sle_next.get());
             }
         }
         invalidate(&A::entry(elem).sle_next);
@@ -265,20 +419,13 @@ impl<A: SlistAdapter> Default for SlistHead<A> {
 }
 
 /// Forward iterator over a [`SlistHead`]; see the module docs for its `_SAFE` behaviour.
-pub struct SlistIter<'a, A: Adapter> {
-    cur: *const A::Elem,
-    _head: PhantomData<&'a SlistHead<A>>,
-}
+pub struct SlistIter<'a, A: Adapter>(Cursor<'a, A::Elem, NextStep<A>>);
 
 impl<'a, A: SlistAdapter> Iterator for SlistIter<'a, A> {
     type Item = &'a A::Elem;
 
     fn next(&mut self) -> Option<&'a A::Elem> {
-        // SAFETY: a linked element is valid until unlinked; the following element is read now
-        // so the caller may unlink the one yielded.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = A::entry(cur).sle_next.get();
-        Some(cur)
+        self.0.advance()
     }
 }
 
@@ -286,20 +433,20 @@ impl<'a, A: SlistAdapter> Iterator for SlistIter<'a, A> {
  * List definitions.
  */
 
-/// `LIST_ENTRY(type)`: the link an element embeds to be in a list. `le_prev` is the address of
-/// the previous element's `le_next` (or of the head's `lh_first`), which makes unlinking O(1).
+/// `LIST_ENTRY(type)`: the link an element embeds to be in a list. `le_prev` names the previous
+/// element's `le_next` (or the head's `lh_first`), which makes unlinking O(1).
 #[repr(C)]
 pub struct ListEntry<T> {
-    le_next: Cell<*const T>,
-    le_prev: Cell<*const Cell<*const T>>,
+    le_next: Link<T>,
+    le_prev: Link<Link<T>>,
 }
 
 impl<T> ListEntry<T> {
     /// An entry that is in no list.
     pub const fn new() -> Self {
         Self {
-            le_next: Cell::new(ptr::null()),
-            le_prev: Cell::new(ptr::null()),
+            le_next: Link::new(),
+            le_prev: Link::new(),
         }
     }
 
@@ -307,7 +454,7 @@ impl<T> ListEntry<T> {
     /// clears the link after every removal ([`clear_prev`](Self::clear_prev)), as uhci(4)
     /// does with its active xfers (`uhci_active_intr_list`).
     pub fn is_linked(&self) -> bool {
-        !self.le_prev.get().is_null()
+        self.le_prev.peek().is_some()
     }
 
     /// `elm->field.le_prev = NULL` after a `LIST_REMOVE`.
@@ -316,7 +463,7 @@ impl<T> ListEntry<T> {
     ///
     /// The element is in no list (it was just removed from its list).
     pub unsafe fn clear_prev(&self) {
-        self.le_prev.set(ptr::null());
+        self.le_prev.set(None);
     }
 }
 
@@ -329,45 +476,40 @@ impl<T> Default for ListEntry<T> {
 /// `LIST_HEAD(name, type)`: a doubly-linked list of `A::Elem` with O(1) unlinking. Elements are
 /// added at the head or before or after another element; traversal is forward only.
 pub struct ListHead<A: Adapter> {
-    lh_first: Cell<*const A::Elem>,
+    lh_first: Link<A::Elem>,
 }
 
 impl<A: ListAdapter> ListHead<A> {
     /// `LIST_HEAD_INITIALIZER`: an empty list.
     pub const fn new() -> Self {
         Self {
-            lh_first: Cell::new(ptr::null()),
+            lh_first: Link::new(),
         }
     }
 
     /// `LIST_INIT`: empties the list without touching the elements.
     pub fn init(&self) {
-        self.lh_first.set(ptr::null());
+        self.lh_first.set(None);
     }
 
     /// `LIST_FIRST`; `None` is `LIST_END`.
     pub fn first(&self) -> Option<&A::Elem> {
-        // SAFETY: a linked element is valid until unlinked (the mutators' contract).
-        unsafe { self.lh_first.get().as_ref() }
+        self.lh_first.target()
     }
 
     /// `LIST_EMPTY`.
     pub fn is_empty(&self) -> bool {
-        self.lh_first.get().is_null()
+        self.lh_first.is_null()
     }
 
     /// `LIST_NEXT`: the element after `elem`.
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
-        // SAFETY: as for `first`.
-        unsafe { A::entry(elem).le_next.get().as_ref() }
+        A::entry(elem).le_next.target()
     }
 
     /// `LIST_FOREACH` and `LIST_FOREACH_SAFE`.
     pub fn iter(&self) -> ListIter<'_, A> {
-        ListIter {
-            cur: self.lh_first.get(),
-            _head: PhantomData,
-        }
+        ListIter(Cursor::new(self.lh_first.get(), NextStep::new()))
     }
 
     /// `LIST_INSERT_HEAD`.
@@ -378,14 +520,12 @@ impl<A: ListAdapter> ListHead<A> {
     /// stays in place while the list is not empty.
     pub unsafe fn insert_head(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        let first = self.lh_first.get();
-        entry.le_next.set(first);
-        // SAFETY: a linked element is valid until unlinked.
-        if let Some(first) = unsafe { first.as_ref() } {
-            A::entry(first).le_prev.set(&entry.le_next);
+        entry.le_next.set(self.lh_first.get());
+        if let Some(first) = self.lh_first.target() {
+            A::entry(first).le_prev.set(Some(link_of::<A>(elem)));
         }
-        self.lh_first.set(elem);
-        entry.le_prev.set(&self.lh_first);
+        self.lh_first.set_ref(elem);
+        entry.le_prev.set_ref(&self.lh_first);
     }
 
     /// `LIST_INSERT_AFTER`: links `elem` after `listelm`.
@@ -397,14 +537,12 @@ impl<A: ListAdapter> ListHead<A> {
     pub unsafe fn insert_after(listelm: &A::Elem, elem: &A::Elem) {
         let after = A::entry(listelm);
         let entry = A::entry(elem);
-        let next = after.le_next.get();
-        entry.le_next.set(next);
-        // SAFETY: a linked element is valid until unlinked.
-        if let Some(next) = unsafe { next.as_ref() } {
-            A::entry(next).le_prev.set(&entry.le_next);
+        entry.le_next.set(after.le_next.get());
+        if let Some(next) = after.le_next.target() {
+            A::entry(next).le_prev.set(Some(link_of::<A>(elem)));
         }
-        after.le_next.set(elem);
-        entry.le_prev.set(&after.le_next);
+        after.le_next.set_ref(elem);
+        entry.le_prev.set(Some(link_of::<A>(listelm)));
     }
 
     /// `LIST_INSERT_BEFORE`: links `elem` before `listelm`.
@@ -416,34 +554,39 @@ impl<A: ListAdapter> ListHead<A> {
     pub unsafe fn insert_before(listelm: &A::Elem, elem: &A::Elem) {
         let before = A::entry(listelm);
         let entry = A::entry(elem);
+        let Some(prev) = before.le_prev.target() else {
+            #[cfg(feature = "diagnostic")]
+            crate::kassert!(false);
+            return;
+        };
         entry.le_prev.set(before.le_prev.get());
-        entry.le_next.set(listelm);
-        // SAFETY: a linked element's `le_prev` points at a live cell: the previous element's
-        // `le_next` or the pinned head's `lh_first`.
-        unsafe { (*before.le_prev.get()).set(elem) };
-        before.le_prev.set(&entry.le_next);
+        entry.le_next.set_ref(listelm);
+        prev.set_ref(elem);
+        before.le_prev.set(Some(link_of::<A>(elem)));
     }
 
-    /// `LIST_REMOVE`: unlinks `elem` in O(1).
+    /// `LIST_REMOVE`: unlinks `elem` in O(1) and invalidates its links.
     ///
     /// # Safety
     ///
-    /// `elem` is in a list of `A`.
+    /// `elem` is in a list of `A` (an element in no list is left as it is, and fails a
+    /// `kassert!` under `diagnostic`).
     pub unsafe fn remove(elem: &A::Elem) {
         let entry = A::entry(elem);
-        // SAFETY: a linked element is valid until unlinked, and its `le_prev` points at a live
-        // cell (see `insert_before`).
-        unsafe {
-            if let Some(next) = entry.le_next.get().as_ref() {
-                A::entry(next).le_prev.set(entry.le_prev.get());
-            }
-            (*entry.le_prev.get()).set(entry.le_next.get());
+        let Some(prev) = entry.le_prev.target() else {
+            #[cfg(feature = "diagnostic")]
+            crate::kassert!(false);
+            return;
+        };
+        if let Some(next) = entry.le_next.target() {
+            A::entry(next).le_prev.set(entry.le_prev.get());
         }
+        prev.set(entry.le_next.get());
         invalidate(&entry.le_prev);
         invalidate(&entry.le_next);
     }
 
-    /// `LIST_REPLACE`: puts `elem2` where `elem` is and unlinks `elem`.
+    /// `LIST_REPLACE`: puts `elem2` where `elem` is and unlinks `elem`, invalidating its links.
     ///
     /// # Safety
     ///
@@ -452,15 +595,17 @@ impl<A: ListAdapter> ListHead<A> {
     pub unsafe fn replace(elem: &A::Elem, elem2: &A::Elem) {
         let old = A::entry(elem);
         let new = A::entry(elem2);
+        let Some(prev) = old.le_prev.target() else {
+            #[cfg(feature = "diagnostic")]
+            crate::kassert!(false);
+            return;
+        };
         new.le_next.set(old.le_next.get());
-        // SAFETY: as for `remove`.
-        unsafe {
-            if let Some(next) = new.le_next.get().as_ref() {
-                A::entry(next).le_prev.set(&new.le_next);
-            }
-            new.le_prev.set(old.le_prev.get());
-            (*new.le_prev.get()).set(elem2);
+        if let Some(next) = new.le_next.target() {
+            A::entry(next).le_prev.set(Some(link_of::<A>(elem2)));
         }
+        new.le_prev.set(old.le_prev.get());
+        prev.set_ref(elem2);
         invalidate(&old.le_prev);
         invalidate(&old.le_next);
     }
@@ -473,19 +618,13 @@ impl<A: ListAdapter> Default for ListHead<A> {
 }
 
 /// Forward iterator over a [`ListHead`]; see the module docs for its `_SAFE` behaviour.
-pub struct ListIter<'a, A: Adapter> {
-    cur: *const A::Elem,
-    _head: PhantomData<&'a ListHead<A>>,
-}
+pub struct ListIter<'a, A: Adapter>(Cursor<'a, A::Elem, NextStep<A>>);
 
 impl<'a, A: ListAdapter> Iterator for ListIter<'a, A> {
     type Item = &'a A::Elem;
 
     fn next(&mut self) -> Option<&'a A::Elem> {
-        // SAFETY: as for `SlistIter`.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = A::entry(cur).le_next.get();
-        Some(cur)
+        self.0.advance()
     }
 }
 
@@ -496,14 +635,14 @@ impl<'a, A: ListAdapter> Iterator for ListIter<'a, A> {
 /// `SIMPLEQ_ENTRY(type)`: the link an element embeds to be in a simple queue.
 #[repr(C)]
 pub struct SimpleqEntry<T> {
-    sqe_next: Cell<*const T>,
+    sqe_next: Link<T>,
 }
 
 impl<T> SimpleqEntry<T> {
     /// An entry that is in no queue.
     pub const fn new() -> Self {
         Self {
-            sqe_next: Cell::new(ptr::null()),
+            sqe_next: Link::new(),
         }
     }
 }
@@ -518,61 +657,49 @@ impl<T> Default for SimpleqEntry<T> {
 /// are added at either end or after another element and removed from the head or after another
 /// element; traversal is forward only.
 pub struct SimpleqHead<A: Adapter> {
-    sqh_first: Cell<*const A::Elem>,
-    /// Address of the last element's `sqe_next`; null stands for `&sqh_first` (empty queue).
-    sqh_last: Cell<*const Cell<*const A::Elem>>,
+    sqh_first: Link<A::Elem>,
+    /// The last element's `sqe_next`; `None` stands for `&sqh_first` (empty queue).
+    sqh_last: Link<Link<A::Elem>>,
 }
 
 impl<A: SimpleqAdapter> SimpleqHead<A> {
     /// `SIMPLEQ_HEAD_INITIALIZER`: an empty queue.
     pub const fn new() -> Self {
         Self {
-            sqh_first: Cell::new(ptr::null()),
-            sqh_last: Cell::new(ptr::null()),
+            sqh_first: Link::new(),
+            sqh_last: Link::new(),
         }
     }
 
     /// `SIMPLEQ_INIT`: empties the queue without touching the elements.
     pub fn init(&self) {
-        self.sqh_first.set(ptr::null());
-        self.sqh_last.set(ptr::null());
+        self.sqh_first.set(None);
+        self.sqh_last.set(None);
     }
 
     /// `SIMPLEQ_FIRST`; `None` is `SIMPLEQ_END`.
     pub fn first(&self) -> Option<&A::Elem> {
-        // SAFETY: a linked element is valid until unlinked (the mutators' contract).
-        unsafe { self.sqh_first.get().as_ref() }
+        self.sqh_first.target()
     }
 
     /// `SIMPLEQ_EMPTY`.
     pub fn is_empty(&self) -> bool {
-        self.sqh_first.get().is_null()
+        self.sqh_first.is_null()
     }
 
     /// `SIMPLEQ_NEXT`: the element after `elem`.
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
-        // SAFETY: as for `first`.
-        unsafe { A::entry(elem).sqe_next.get().as_ref() }
+        A::entry(elem).sqe_next.target()
     }
 
     /// `SIMPLEQ_FOREACH` and `SIMPLEQ_FOREACH_SAFE`.
     pub fn iter(&self) -> SimpleqIter<'_, A> {
-        SimpleqIter {
-            cur: self.sqh_first.get(),
-            _head: PhantomData,
-        }
+        SimpleqIter(Cursor::new(self.sqh_first.get(), NextStep::new()))
     }
 
-    /// The cell `sqh_last` designates: the last element's `sqe_next`, or `sqh_first`.
-    fn last_link(&self) -> &Cell<*const A::Elem> {
-        let last = self.sqh_last.get();
-        if last.is_null() {
-            &self.sqh_first
-        } else {
-            // SAFETY: a non-null `sqh_last` points at the `sqe_next` of a linked element, valid
-            // until unlinked.
-            unsafe { &*last }
-        }
+    /// The link `sqh_last` designates: the last element's `sqe_next`, or `sqh_first`.
+    fn last_link(&self) -> &Link<A::Elem> {
+        self.sqh_last.target().unwrap_or(&self.sqh_first)
     }
 
     /// `SIMPLEQ_INSERT_HEAD`.
@@ -582,12 +709,11 @@ impl<A: SimpleqAdapter> SimpleqHead<A> {
     /// `elem` is in no queue of `A` and stays valid and in place until it is unlinked.
     pub unsafe fn insert_head(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        let first = self.sqh_first.get();
-        entry.sqe_next.set(first);
-        if first.is_null() {
-            self.sqh_last.set(&entry.sqe_next);
+        entry.sqe_next.set(self.sqh_first.get());
+        if entry.sqe_next.is_null() {
+            self.sqh_last.set(Some(link_of::<A>(elem)));
         }
-        self.sqh_first.set(elem);
+        self.sqh_first.set_ref(elem);
     }
 
     /// `SIMPLEQ_INSERT_TAIL`.
@@ -596,10 +722,9 @@ impl<A: SimpleqAdapter> SimpleqHead<A> {
     ///
     /// As for [`insert_head`](Self::insert_head).
     pub unsafe fn insert_tail(&self, elem: &A::Elem) {
-        let entry = A::entry(elem);
-        entry.sqe_next.set(ptr::null());
-        self.last_link().set(elem);
-        self.sqh_last.set(&entry.sqe_next);
+        A::entry(elem).sqe_next.set(None);
+        self.last_link().set_ref(elem);
+        self.sqh_last.set(Some(link_of::<A>(elem)));
     }
 
     /// `SIMPLEQ_INSERT_AFTER`: links `elem` after `listelm`.
@@ -609,44 +734,48 @@ impl<A: SimpleqAdapter> SimpleqHead<A> {
     /// `listelm` is in this queue; `elem` is in no queue of `A` and stays valid and in place
     /// until it is unlinked.
     pub unsafe fn insert_after(&self, listelm: &A::Elem, elem: &A::Elem) {
-        let after = A::entry(listelm);
+        let after = &A::entry(listelm).sqe_next;
         let entry = A::entry(elem);
-        let next = after.sqe_next.get();
-        entry.sqe_next.set(next);
-        if next.is_null() {
-            self.sqh_last.set(&entry.sqe_next);
+        entry.sqe_next.set(after.get());
+        if entry.sqe_next.is_null() {
+            self.sqh_last.set(Some(link_of::<A>(elem)));
         }
-        after.sqe_next.set(elem);
+        after.set_ref(elem);
     }
 
-    /// `SIMPLEQ_REMOVE_HEAD`: unlinks the first element.
+    /// `SIMPLEQ_REMOVE_HEAD`: unlinks the first element. Its link still names its successor.
     ///
     /// # Safety
     ///
-    /// The queue is not empty.
+    /// The queue is not empty (an empty queue is left as it is, and fails a `kassert!` under
+    /// `diagnostic`).
     pub unsafe fn remove_head(&self) {
-        // SAFETY: the caller guarantees a first element exists; it is valid while linked.
-        let first = unsafe { &*self.sqh_first.get() };
-        let next = A::entry(first).sqe_next.get();
-        self.sqh_first.set(next);
-        if next.is_null() {
-            self.sqh_last.set(ptr::null());
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(!self.is_empty());
+        if let Some(first) = self.sqh_first.target() {
+            self.sqh_first.set(A::entry(first).sqe_next.get());
+            if self.sqh_first.is_null() {
+                self.sqh_last.set(None);
+            }
         }
     }
 
-    /// `SIMPLEQ_REMOVE_AFTER`: unlinks the element after `elem`.
+    /// `SIMPLEQ_REMOVE_AFTER`: unlinks the element after `elem`. Its link still names its
+    /// successor.
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue and has a successor.
+    /// `elem` is in this queue and has a successor (otherwise nothing changes, and a `kassert!`
+    /// fails under `diagnostic`).
     pub unsafe fn remove_after(&self, elem: &A::Elem) {
-        let entry = A::entry(elem);
-        // SAFETY: the caller guarantees a successor exists; it is valid while linked.
-        let next = unsafe { &*entry.sqe_next.get() };
-        let after_next = A::entry(next).sqe_next.get();
-        entry.sqe_next.set(after_next);
-        if after_next.is_null() {
-            self.sqh_last.set(&entry.sqe_next);
+        let link = &A::entry(elem).sqe_next;
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(!link.is_null());
+        if let Some(next) = link.target() {
+            link.set(A::entry(next).sqe_next.get());
+            if link.is_null() {
+                self.sqh_last.set(Some(link_of::<A>(elem)));
+            }
         }
     }
 
@@ -671,19 +800,13 @@ impl<A: SimpleqAdapter> Default for SimpleqHead<A> {
 }
 
 /// Forward iterator over a [`SimpleqHead`]; see the module docs for its `_SAFE` behaviour.
-pub struct SimpleqIter<'a, A: Adapter> {
-    cur: *const A::Elem,
-    _head: PhantomData<&'a SimpleqHead<A>>,
-}
+pub struct SimpleqIter<'a, A: Adapter>(Cursor<'a, A::Elem, NextStep<A>>);
 
 impl<'a, A: SimpleqAdapter> Iterator for SimpleqIter<'a, A> {
     type Item = &'a A::Elem;
 
     fn next(&mut self) -> Option<&'a A::Elem> {
-        // SAFETY: as for `SlistIter`.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = A::entry(cur).sqe_next.get();
-        Some(cur)
+        self.0.advance()
     }
 }
 
@@ -746,53 +869,55 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
         self.sqx_last.set(self.xor(ptr::null::<Cell<usize>>()));
     }
 
-    /// `XSIMPLEQ_XOR`: encodes or decodes a pointer with the cookie.
+    /// `XSIMPLEQ_XOR`: encodes or decodes a pointer with the cookie. Encoding exposes the
+    /// pointer's provenance, so that [`decode`](Self::decode) may rebuild a usable pointer.
     pub fn xor<P>(&self, p: *const P) -> usize {
-        self.sqx_cookie.get() ^ (p as usize)
+        self.sqx_cookie.get() ^ p.expose_provenance()
     }
 
-    fn decode<P>(&self, v: usize) -> *const P {
-        (self.sqx_cookie.get() ^ v) as *const P
+    /// The encoded null: the end of the queue.
+    fn end(&self) -> usize {
+        self.xor(ptr::null::<A::Elem>())
+    }
+
+    /// The object an encoded link of this queue names, `None` for the encoded null.
+    fn decode<'a, P>(&self, v: usize) -> Option<&'a P> {
+        let p = NonNull::new(ptr::with_exposed_provenance_mut::<P>(
+            self.sqx_cookie.get() ^ v,
+        ))?;
+        // SAFETY: every encoded value this module stores in the head or in a linked element is
+        // `xor` of a reference to a live object (an element linked into this queue, or the
+        // `sqx_next` inside one), whose provenance `xor` exposed; the callers keep linked
+        // elements valid and in place until they are unlinked, and the call sites decode only
+        // the head's links and linked elements' with the cookie that encoded them.
+        // `with_exposed_provenance_mut` picks up that exposed provenance, and the reference
+        // only reads (the links are `Cell`s).
+        Some(unsafe { p.as_ref() })
     }
 
     /// `XSIMPLEQ_FIRST`; `None` is `XSIMPLEQ_END`.
     pub fn first(&self) -> Option<&A::Elem> {
-        // SAFETY: a linked element is valid until unlinked (the mutators' contract).
-        unsafe { self.decode::<A::Elem>(self.sqx_first.get()).as_ref() }
+        self.decode(self.sqx_first.get())
     }
 
     /// `XSIMPLEQ_EMPTY`.
     pub fn is_empty(&self) -> bool {
-        self.decode::<A::Elem>(self.sqx_first.get()).is_null()
+        self.sqx_first.get() == self.end()
     }
 
     /// `XSIMPLEQ_NEXT`: the element after `elem`.
     pub fn next<'a>(&self, elem: &'a A::Elem) -> Option<&'a A::Elem> {
-        // SAFETY: as for `first`.
-        unsafe {
-            self.decode::<A::Elem>(A::entry(elem).sqx_next.get())
-                .as_ref()
-        }
+        self.decode(A::entry(elem).sqx_next.get())
     }
 
     /// `XSIMPLEQ_FOREACH` and `XSIMPLEQ_FOREACH_SAFE`.
     pub fn iter(&self) -> XsimpleqIter<'_, A> {
-        XsimpleqIter {
-            head: self,
-            cur: self.decode(self.sqx_first.get()),
-        }
+        XsimpleqIter(Cursor::new(self.first().map(NonNull::from), self))
     }
 
-    /// The cell `sqx_last` designates: the last element's `sqx_next`, or `sqx_first`.
+    /// The link `sqx_last` designates: the last element's `sqx_next`, or `sqx_first`.
     fn last_link(&self) -> &Cell<usize> {
-        let last = self.decode::<Cell<usize>>(self.sqx_last.get());
-        if last.is_null() {
-            &self.sqx_first
-        } else {
-            // SAFETY: a non-null decoded `sqx_last` points at the `sqx_next` of a linked
-            // element, valid until unlinked.
-            unsafe { &*last }
-        }
+        self.decode(self.sqx_last.get()).unwrap_or(&self.sqx_first)
     }
 
     /// `XSIMPLEQ_INSERT_HEAD`.
@@ -804,7 +929,7 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
         let entry = A::entry(elem);
         let first = self.sqx_first.get();
         entry.sqx_next.set(first);
-        if first == self.xor(ptr::null::<A::Elem>()) {
+        if first == self.end() {
             self.sqx_last.set(self.xor(&entry.sqx_next));
         }
         self.sqx_first.set(self.xor(elem));
@@ -817,7 +942,7 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
     /// As for [`insert_head`](Self::insert_head).
     pub unsafe fn insert_tail(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        entry.sqx_next.set(self.xor(ptr::null::<A::Elem>()));
+        entry.sqx_next.set(self.end());
         self.last_link().set(self.xor(elem));
         self.sqx_last.set(self.xor(&entry.sqx_next));
     }
@@ -833,7 +958,7 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
         let entry = A::entry(elem);
         let next = after.sqx_next.get();
         entry.sqx_next.set(next);
-        if next == self.xor(ptr::null::<A::Elem>()) {
+        if next == self.end() {
             self.sqx_last.set(self.xor(&entry.sqx_next));
         }
         after.sqx_next.set(self.xor(elem));
@@ -843,14 +968,17 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
     ///
     /// # Safety
     ///
-    /// The queue is not empty.
+    /// The queue is not empty (an empty queue is left as it is, and fails a `kassert!` under
+    /// `diagnostic`).
     pub unsafe fn remove_head(&self) {
-        // SAFETY: the caller guarantees a first element exists; it is valid while linked.
-        let first = unsafe { &*self.decode::<A::Elem>(self.sqx_first.get()) };
-        let next = A::entry(first).sqx_next.get();
-        self.sqx_first.set(next);
-        if next == self.xor(ptr::null::<A::Elem>()) {
-            self.sqx_last.set(self.xor(ptr::null::<Cell<usize>>()));
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(!self.is_empty());
+        if let Some(first) = self.first() {
+            let next = A::entry(first).sqx_next.get();
+            self.sqx_first.set(next);
+            if next == self.end() {
+                self.sqx_last.set(self.xor(ptr::null::<Cell<usize>>()));
+            }
         }
     }
 
@@ -858,15 +986,18 @@ impl<A: XsimpleqAdapter> XsimpleqHead<A> {
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue and has a successor.
+    /// `elem` is in this queue and has a successor (otherwise nothing changes, and a `kassert!`
+    /// fails under `diagnostic`).
     pub unsafe fn remove_after(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        // SAFETY: the caller guarantees a successor exists; it is valid while linked.
-        let next = unsafe { &*self.decode::<A::Elem>(entry.sqx_next.get()) };
-        let after_next = A::entry(next).sqx_next.get();
-        entry.sqx_next.set(after_next);
-        if after_next == self.xor(ptr::null::<A::Elem>()) {
-            self.sqx_last.set(self.xor(&entry.sqx_next));
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(entry.sqx_next.get() != self.end());
+        if let Some(next) = self.decode::<A::Elem>(entry.sqx_next.get()) {
+            let after_next = A::entry(next).sqx_next.get();
+            entry.sqx_next.set(after_next);
+            if after_next == self.end() {
+                self.sqx_last.set(self.xor(&entry.sqx_next));
+            }
         }
     }
 }
@@ -878,19 +1009,13 @@ impl<A: XsimpleqAdapter> Default for XsimpleqHead<A> {
 }
 
 /// Forward iterator over an [`XsimpleqHead`]; see the module docs for its `_SAFE` behaviour.
-pub struct XsimpleqIter<'a, A: Adapter> {
-    head: &'a XsimpleqHead<A>,
-    cur: *const A::Elem,
-}
+pub struct XsimpleqIter<'a, A: Adapter>(Cursor<'a, A::Elem, &'a XsimpleqHead<A>>);
 
 impl<'a, A: XsimpleqAdapter> Iterator for XsimpleqIter<'a, A> {
     type Item = &'a A::Elem;
 
     fn next(&mut self) -> Option<&'a A::Elem> {
-        // SAFETY: as for `SlistIter`.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = self.head.decode(A::entry(cur).sqx_next.get());
-        Some(cur)
+        self.0.advance()
     }
 }
 
@@ -898,20 +1023,20 @@ impl<'a, A: XsimpleqAdapter> Iterator for XsimpleqIter<'a, A> {
  * Tail queue definitions.
  */
 
-/// `TAILQ_ENTRY(type)`: the link an element embeds to be in a tail queue. `tqe_prev` is the
-/// address of the previous element's `tqe_next` (or of the head's `tqh_first`).
+/// `TAILQ_ENTRY(type)`: the link an element embeds to be in a tail queue. `tqe_prev` names the
+/// previous element's `tqe_next` (or the head's `tqh_first`).
 #[repr(C)]
 pub struct TailqEntry<T> {
-    tqe_next: Cell<*const T>,
-    tqe_prev: Cell<*const Cell<*const T>>,
+    tqe_next: Link<T>,
+    tqe_prev: Link<Link<T>>,
 }
 
 impl<T> TailqEntry<T> {
     /// An entry that is in no queue.
     pub const fn new() -> Self {
         Self {
-            tqe_next: Cell::new(ptr::null()),
-            tqe_prev: Cell::new(ptr::null()),
+            tqe_next: Link::new(),
+            tqe_prev: Link::new(),
         }
     }
 }
@@ -921,7 +1046,7 @@ impl<T> TailqEntry<T> {
     /// [`set_prev_self`](Self::set_prev_self)). Meaningful only for code that clears the link
     /// after every removal ([`clear_prev`](Self::clear_prev)), as pf does with its rules.
     pub fn is_linked(&self) -> bool {
-        !self.tqe_prev.get().is_null()
+        self.tqe_prev.peek().is_some()
     }
 
     /// `elm->field.tqe_prev = NULL` after a `TAILQ_REMOVE`.
@@ -930,7 +1055,7 @@ impl<T> TailqEntry<T> {
     ///
     /// The element is in no queue (it was just removed from its queue).
     pub unsafe fn clear_prev(&self) {
-        self.tqe_prev.set(ptr::null());
+        self.tqe_prev.set(None);
     }
 
     /// `elm->field.tqe_prev = &elm->field.tqe_next`: marks an element that is in no queue
@@ -942,7 +1067,7 @@ impl<T> TailqEntry<T> {
     /// The element is in no queue and is never inserted into or removed from one; it stays
     /// in place (a static).
     pub unsafe fn set_prev_self(&self) {
-        self.tqe_prev.set(&self.tqe_next);
+        self.tqe_prev.set_ref(&self.tqe_next);
     }
 }
 
@@ -955,97 +1080,93 @@ impl<T> Default for TailqEntry<T> {
 /// `TAILQ_HEAD(name, type)`: a doubly-linked queue of `A::Elem` with a tail pointer: O(1)
 /// insertion at either end or next to any element, O(1) unlinking, traversal both ways.
 pub struct TailqHead<A: Adapter> {
-    tqh_first: Cell<*const A::Elem>,
-    /// Address of the last element's `tqe_next`; null stands for `&tqh_first` (empty queue).
-    tqh_last: Cell<*const Cell<*const A::Elem>>,
+    tqh_first: Link<A::Elem>,
+    /// The last element's `tqe_next`; `None` stands for `&tqh_first` (empty queue).
+    tqh_last: Link<Link<A::Elem>>,
 }
 
 impl<A: TailqAdapter> TailqHead<A> {
     /// `TAILQ_HEAD_INITIALIZER`: an empty queue.
     pub const fn new() -> Self {
         Self {
-            tqh_first: Cell::new(ptr::null()),
-            tqh_last: Cell::new(ptr::null()),
+            tqh_first: Link::new(),
+            tqh_last: Link::new(),
         }
     }
 
     /// `TAILQ_INIT`: empties the queue without touching the elements.
     pub fn init(&self) {
-        self.tqh_first.set(ptr::null());
-        self.tqh_last.set(ptr::null());
+        self.tqh_first.set(None);
+        self.tqh_last.set(None);
     }
 
     /// `TAILQ_FIRST`; `None` is `TAILQ_END`.
     pub fn first(&self) -> Option<&A::Elem> {
-        // SAFETY: a linked element is valid until unlinked (the mutators' contract).
-        unsafe { self.tqh_first.get().as_ref() }
+        self.tqh_first.target()
     }
 
     /// `TAILQ_LAST`.
     pub fn last(&self) -> Option<&A::Elem> {
-        let last = self.tqh_last.get();
-        if last.is_null() {
-            return None;
-        }
-        // SAFETY: a non-null `tqh_last` is the `tqe_next` cell of a linked element, valid until
-        // unlinked; `container_of` steps back to that element.
-        unsafe { container_of::<A>(last).as_ref() }
+        let elem = container_of::<A>(self.tqh_last.get()?)?;
+        // SAFETY: a `Some` `tqh_last` is made by `link_of` from the last element of this queue
+        // (`insert_*`, `remove`, `replace`, `concat` keep it so), so it is that element's
+        // `tqe_next` with the provenance of the whole element; `container_of` steps back by the
+        // entry's offset to the element, which is linked and therefore live. The reference
+        // lives as long as the borrow of the head.
+        Some(unsafe { elem.as_ref() })
     }
 
     /// `TAILQ_EMPTY`.
     pub fn is_empty(&self) -> bool {
-        self.tqh_first.get().is_null()
+        self.tqh_first.is_null()
     }
 
     /// `TAILQ_NEXT`: the element after `elem`.
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
-        // SAFETY: as for `first`.
-        unsafe { A::entry(elem).tqe_next.get().as_ref() }
+        A::entry(elem).tqe_next.target()
     }
 
     /// `TAILQ_PREV`: the element before `elem`, which must be in this queue.
     pub fn prev<'a>(&self, elem: &'a A::Elem) -> Option<&'a A::Elem> {
-        let prev = A::entry(elem).tqe_prev.get();
-        if ptr::eq(prev, &self.tqh_first) {
+        let prev = A::entry(elem).tqe_prev.get()?;
+        if prev == NonNull::from(&self.tqh_first) {
             return None;
         }
-        // SAFETY: a linked element's `tqe_prev` that is not the head's cell is the `tqe_next`
-        // cell of the previous linked element; `container_of` steps back to it.
-        unsafe { container_of::<A>(prev).as_ref() }
+        let elem = container_of::<A>(prev)?;
+        // SAFETY: a linked element's `tqe_prev` names the head's `tqh_first` (excluded above)
+        // or, made by `link_of`, the `tqe_next` of the previous element with that element's
+        // provenance; `container_of` steps back by the entry's offset to it, and it is linked,
+        // so live. An element in no queue has `None` (never linked, or cleared by `remove`).
+        Some(unsafe { elem.as_ref() })
     }
 
     /// `TAILQ_FOREACH` and `TAILQ_FOREACH_SAFE`.
     pub fn iter(&self) -> TailqIter<'_, A> {
-        TailqIter {
-            cur: self.tqh_first.get(),
-            _head: PhantomData,
-        }
+        TailqIter(Cursor::new(self.tqh_first.get(), NextStep::new()))
     }
 
     /// `TAILQ_FOREACH_REVERSE` and `TAILQ_FOREACH_REVERSE_SAFE`.
     pub fn iter_reverse(&self) -> TailqIterReverse<'_, A> {
-        TailqIterReverse {
-            head: self,
-            cur: self.last().map_or(ptr::null(), |e| e),
-        }
+        TailqIterReverse(Cursor::new(self.last().map(NonNull::from), self))
     }
 
-    /// The cell `tqh_last` designates: the last element's `tqe_next`, or `tqh_first`.
-    fn last_link(&self) -> &Cell<*const A::Elem> {
-        let last = self.tqh_last.get();
-        if last.is_null() {
-            &self.tqh_first
-        } else {
-            // SAFETY: a non-null `tqh_last` points at the `tqe_next` of a linked element, valid
-            // until unlinked.
-            unsafe { &*last }
-        }
+    /// The link `tqh_last` designates: the last element's `tqe_next`, or `tqh_first`.
+    fn last_link(&self) -> &Link<A::Elem> {
+        self.tqh_last.target().unwrap_or(&self.tqh_first)
     }
 
-    /// Stores `link` as `tqh_last`, folding the head's own cell back into the null sentinel.
-    fn set_last(&self, link: *const Cell<*const A::Elem>) {
-        if ptr::eq(link, &self.tqh_first) {
-            self.tqh_last.set(ptr::null());
+    /// `tqh_last` as a value to store in an element's `tqe_prev`: the last element's
+    /// `tqe_next` with that element's provenance, or the head's `tqh_first`.
+    fn last_ptr(&self) -> NonNull<Link<A::Elem>> {
+        self.tqh_last
+            .get()
+            .unwrap_or_else(|| NonNull::from(&self.tqh_first))
+    }
+
+    /// Stores `link` as `tqh_last`, folding the head's own link back into the `None` sentinel.
+    fn set_last(&self, link: Option<NonNull<Link<A::Elem>>>) {
+        if link == Some(NonNull::from(&self.tqh_first)) {
+            self.tqh_last.set(None);
         } else {
             self.tqh_last.set(link);
         }
@@ -1059,15 +1180,13 @@ impl<A: TailqAdapter> TailqHead<A> {
     /// stays in place while the queue is not empty.
     pub unsafe fn insert_head(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        let first = self.tqh_first.get();
-        entry.tqe_next.set(first);
-        // SAFETY: a linked element is valid until unlinked.
-        match unsafe { first.as_ref() } {
-            Some(first) => A::entry(first).tqe_prev.set(&entry.tqe_next),
-            None => self.tqh_last.set(&entry.tqe_next),
+        entry.tqe_next.set(self.tqh_first.get());
+        match self.tqh_first.target() {
+            Some(first) => A::entry(first).tqe_prev.set(Some(link_of::<A>(elem))),
+            None => self.tqh_last.set(Some(link_of::<A>(elem))),
         }
-        self.tqh_first.set(elem);
-        entry.tqe_prev.set(&self.tqh_first);
+        self.tqh_first.set_ref(elem);
+        entry.tqe_prev.set_ref(&self.tqh_first);
     }
 
     /// `TAILQ_INSERT_TAIL`.
@@ -1077,11 +1196,10 @@ impl<A: TailqAdapter> TailqHead<A> {
     /// As for [`insert_head`](Self::insert_head).
     pub unsafe fn insert_tail(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        entry.tqe_next.set(ptr::null());
-        let last = self.last_link();
-        entry.tqe_prev.set(last);
-        last.set(elem);
-        self.tqh_last.set(&entry.tqe_next);
+        entry.tqe_next.set(None);
+        entry.tqe_prev.set(Some(self.last_ptr()));
+        self.last_link().set_ref(elem);
+        self.tqh_last.set(Some(link_of::<A>(elem)));
     }
 
     /// `TAILQ_INSERT_AFTER`: links `elem` after `listelm`.
@@ -1093,15 +1211,13 @@ impl<A: TailqAdapter> TailqHead<A> {
     pub unsafe fn insert_after(&self, listelm: &A::Elem, elem: &A::Elem) {
         let after = A::entry(listelm);
         let entry = A::entry(elem);
-        let next = after.tqe_next.get();
-        entry.tqe_next.set(next);
-        // SAFETY: a linked element is valid until unlinked.
-        match unsafe { next.as_ref() } {
-            Some(next) => A::entry(next).tqe_prev.set(&entry.tqe_next),
-            None => self.tqh_last.set(&entry.tqe_next),
+        entry.tqe_next.set(after.tqe_next.get());
+        match after.tqe_next.target() {
+            Some(next) => A::entry(next).tqe_prev.set(Some(link_of::<A>(elem))),
+            None => self.tqh_last.set(Some(link_of::<A>(elem))),
         }
-        after.tqe_next.set(elem);
-        entry.tqe_prev.set(&after.tqe_next);
+        after.tqe_next.set_ref(elem);
+        entry.tqe_prev.set(Some(link_of::<A>(listelm)));
     }
 
     /// `TAILQ_INSERT_BEFORE`: links `elem` before `listelm`.
@@ -1113,35 +1229,40 @@ impl<A: TailqAdapter> TailqHead<A> {
     pub unsafe fn insert_before(listelm: &A::Elem, elem: &A::Elem) {
         let before = A::entry(listelm);
         let entry = A::entry(elem);
+        let Some(prev) = before.tqe_prev.target() else {
+            #[cfg(feature = "diagnostic")]
+            crate::kassert!(false);
+            return;
+        };
         entry.tqe_prev.set(before.tqe_prev.get());
-        entry.tqe_next.set(listelm);
-        // SAFETY: a linked element's `tqe_prev` points at a live cell: the previous element's
-        // `tqe_next` or the pinned head's `tqh_first`.
-        unsafe { (*before.tqe_prev.get()).set(elem) };
-        before.tqe_prev.set(&entry.tqe_next);
+        entry.tqe_next.set_ref(listelm);
+        prev.set_ref(elem);
+        before.tqe_prev.set(Some(link_of::<A>(elem)));
     }
 
-    /// `TAILQ_REMOVE`: unlinks `elem` in O(1).
+    /// `TAILQ_REMOVE`: unlinks `elem` in O(1) and invalidates its links.
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue.
+    /// `elem` is in this queue (an element in no queue is left as it is, and fails a
+    /// `kassert!` under `diagnostic`).
     pub unsafe fn remove(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        // SAFETY: a linked element is valid until unlinked, and its `tqe_prev` points at a live
-        // cell (see `insert_before`).
-        unsafe {
-            match entry.tqe_next.get().as_ref() {
-                Some(next) => A::entry(next).tqe_prev.set(entry.tqe_prev.get()),
-                None => self.set_last(entry.tqe_prev.get()),
-            }
-            (*entry.tqe_prev.get()).set(entry.tqe_next.get());
+        let Some(prev) = entry.tqe_prev.target() else {
+            #[cfg(feature = "diagnostic")]
+            crate::kassert!(false);
+            return;
+        };
+        match entry.tqe_next.target() {
+            Some(next) => A::entry(next).tqe_prev.set(entry.tqe_prev.get()),
+            None => self.set_last(entry.tqe_prev.get()),
         }
+        prev.set(entry.tqe_next.get());
         invalidate(&entry.tqe_prev);
         invalidate(&entry.tqe_next);
     }
 
-    /// `TAILQ_REPLACE`: puts `elem2` where `elem` is and unlinks `elem`.
+    /// `TAILQ_REPLACE`: puts `elem2` where `elem` is and unlinks `elem`, invalidating its links.
     ///
     /// # Safety
     ///
@@ -1150,16 +1271,18 @@ impl<A: TailqAdapter> TailqHead<A> {
     pub unsafe fn replace(&self, elem: &A::Elem, elem2: &A::Elem) {
         let old = A::entry(elem);
         let new = A::entry(elem2);
+        let Some(prev) = old.tqe_prev.target() else {
+            #[cfg(feature = "diagnostic")]
+            crate::kassert!(false);
+            return;
+        };
         new.tqe_next.set(old.tqe_next.get());
-        // SAFETY: as for `remove`.
-        unsafe {
-            match new.tqe_next.get().as_ref() {
-                Some(next) => A::entry(next).tqe_prev.set(&new.tqe_next),
-                None => self.tqh_last.set(&new.tqe_next),
-            }
-            new.tqe_prev.set(old.tqe_prev.get());
-            (*new.tqe_prev.get()).set(elem2);
+        match new.tqe_next.target() {
+            Some(next) => A::entry(next).tqe_prev.set(Some(link_of::<A>(elem2))),
+            None => self.tqh_last.set(Some(link_of::<A>(elem2))),
         }
+        new.tqe_prev.set(old.tqe_prev.get());
+        prev.set_ref(elem2);
         invalidate(&old.tqe_prev);
         invalidate(&old.tqe_next);
     }
@@ -1170,10 +1293,9 @@ impl<A: TailqAdapter> TailqHead<A> {
     ///
     /// Both heads stay in place while their queues are not empty.
     pub unsafe fn concat(&self, head2: &Self) {
-        if let Some(first2) = head2.first() {
-            let last = self.last_link();
-            last.set(first2);
-            A::entry(first2).tqe_prev.set(last);
+        if let Some(first2) = head2.tqh_first.target() {
+            A::entry(first2).tqe_prev.set(Some(self.last_ptr()));
+            self.last_link().set_ref(first2);
             self.tqh_last.set(head2.tqh_last.get());
             head2.init();
         }
@@ -1187,36 +1309,24 @@ impl<A: TailqAdapter> Default for TailqHead<A> {
 }
 
 /// Forward iterator over a [`TailqHead`]; see the module docs for its `_SAFE` behaviour.
-pub struct TailqIter<'a, A: Adapter> {
-    cur: *const A::Elem,
-    _head: PhantomData<&'a TailqHead<A>>,
-}
+pub struct TailqIter<'a, A: Adapter>(Cursor<'a, A::Elem, NextStep<A>>);
 
 impl<'a, A: TailqAdapter> Iterator for TailqIter<'a, A> {
     type Item = &'a A::Elem;
 
     fn next(&mut self) -> Option<&'a A::Elem> {
-        // SAFETY: as for `SlistIter`.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = A::entry(cur).tqe_next.get();
-        Some(cur)
+        self.0.advance()
     }
 }
 
 /// Reverse iterator over a [`TailqHead`]; see the module docs for its `_SAFE` behaviour.
-pub struct TailqIterReverse<'a, A: Adapter> {
-    head: &'a TailqHead<A>,
-    cur: *const A::Elem,
-}
+pub struct TailqIterReverse<'a, A: Adapter>(Cursor<'a, A::Elem, &'a TailqHead<A>>);
 
 impl<'a, A: TailqAdapter> Iterator for TailqIterReverse<'a, A> {
     type Item = &'a A::Elem;
 
     fn next(&mut self) -> Option<&'a A::Elem> {
-        // SAFETY: as for `SlistIter`, walking `tqe_prev` instead.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = self.head.prev(cur).map_or(ptr::null(), |e| e);
-        Some(cur)
+        self.0.advance()
     }
 }
 
@@ -1227,14 +1337,14 @@ impl<'a, A: TailqAdapter> Iterator for TailqIterReverse<'a, A> {
 /// `STAILQ_ENTRY(type)`: the link an element embeds to be in a singly-linked tail queue.
 #[repr(C)]
 pub struct StailqEntry<T> {
-    stqe_next: Cell<*const T>,
+    stqe_next: Link<T>,
 }
 
 impl<T> StailqEntry<T> {
     /// An entry that is in no queue.
     pub const fn new() -> Self {
         Self {
-            stqe_next: Cell::new(ptr::null()),
+            stqe_next: Link::new(),
         }
     }
 }
@@ -1248,72 +1358,59 @@ impl<T> Default for StailqEntry<T> {
 /// `STAILQ_HEAD(name, type)`: a singly-linked queue with a tail pointer, like a [`SimpleqHead`]
 /// plus O(n) removal of an arbitrary element and O(1) access to the last one.
 pub struct StailqHead<A: Adapter> {
-    stqh_first: Cell<*const A::Elem>,
-    /// Address of the last element's `stqe_next`; null stands for `&stqh_first` (empty queue).
-    stqh_last: Cell<*const Cell<*const A::Elem>>,
+    stqh_first: Link<A::Elem>,
+    /// The last element's `stqe_next`; `None` stands for `&stqh_first` (empty queue).
+    stqh_last: Link<Link<A::Elem>>,
 }
 
 impl<A: StailqAdapter> StailqHead<A> {
     /// `STAILQ_HEAD_INITIALIZER`: an empty queue.
     pub const fn new() -> Self {
         Self {
-            stqh_first: Cell::new(ptr::null()),
-            stqh_last: Cell::new(ptr::null()),
+            stqh_first: Link::new(),
+            stqh_last: Link::new(),
         }
     }
 
     /// `STAILQ_INIT`: empties the queue without touching the elements.
     pub fn init(&self) {
-        self.stqh_first.set(ptr::null());
-        self.stqh_last.set(ptr::null());
+        self.stqh_first.set(None);
+        self.stqh_last.set(None);
     }
 
     /// `STAILQ_FIRST`; `None` is `STAILQ_END`.
     pub fn first(&self) -> Option<&A::Elem> {
-        // SAFETY: a linked element is valid until unlinked (the mutators' contract).
-        unsafe { self.stqh_first.get().as_ref() }
+        self.stqh_first.target()
     }
 
     /// `STAILQ_LAST`.
     pub fn last(&self) -> Option<&A::Elem> {
-        let last = self.stqh_last.get();
-        if last.is_null() {
-            return None;
-        }
-        // SAFETY: a non-null `stqh_last` is the `stqe_next` cell of a linked element, valid
-        // until unlinked; `container_of` steps back to that element.
-        unsafe { container_of::<A>(last).as_ref() }
+        let elem = container_of::<A>(self.stqh_last.get()?)?;
+        // SAFETY: a `Some` `stqh_last` is made by `link_of` from the last element of this
+        // queue, so it is that element's `stqe_next` with the provenance of the whole element;
+        // `container_of` steps back by the entry's offset to the element, which is linked and
+        // therefore live. The reference lives as long as the borrow of the head.
+        Some(unsafe { elem.as_ref() })
     }
 
     /// `STAILQ_EMPTY`.
     pub fn is_empty(&self) -> bool {
-        self.stqh_first.get().is_null()
+        self.stqh_first.is_null()
     }
 
     /// `STAILQ_NEXT`: the element after `elem`.
     pub fn next(elem: &A::Elem) -> Option<&A::Elem> {
-        // SAFETY: as for `first`.
-        unsafe { A::entry(elem).stqe_next.get().as_ref() }
+        A::entry(elem).stqe_next.target()
     }
 
     /// `STAILQ_FOREACH` and `STAILQ_FOREACH_SAFE`.
     pub fn iter(&self) -> StailqIter<'_, A> {
-        StailqIter {
-            cur: self.stqh_first.get(),
-            _head: PhantomData,
-        }
+        StailqIter(Cursor::new(self.stqh_first.get(), NextStep::new()))
     }
 
-    /// The cell `stqh_last` designates: the last element's `stqe_next`, or `stqh_first`.
-    fn last_link(&self) -> &Cell<*const A::Elem> {
-        let last = self.stqh_last.get();
-        if last.is_null() {
-            &self.stqh_first
-        } else {
-            // SAFETY: a non-null `stqh_last` points at the `stqe_next` of a linked element,
-            // valid until unlinked.
-            unsafe { &*last }
-        }
+    /// The link `stqh_last` designates: the last element's `stqe_next`, or `stqh_first`.
+    fn last_link(&self) -> &Link<A::Elem> {
+        self.stqh_last.target().unwrap_or(&self.stqh_first)
     }
 
     /// `STAILQ_INSERT_HEAD`.
@@ -1323,12 +1420,11 @@ impl<A: StailqAdapter> StailqHead<A> {
     /// `elem` is in no queue of `A` and stays valid and in place until it is unlinked.
     pub unsafe fn insert_head(&self, elem: &A::Elem) {
         let entry = A::entry(elem);
-        let first = self.stqh_first.get();
-        entry.stqe_next.set(first);
-        if first.is_null() {
-            self.stqh_last.set(&entry.stqe_next);
+        entry.stqe_next.set(self.stqh_first.get());
+        if entry.stqe_next.is_null() {
+            self.stqh_last.set(Some(link_of::<A>(elem)));
         }
-        self.stqh_first.set(elem);
+        self.stqh_first.set_ref(elem);
     }
 
     /// `STAILQ_INSERT_TAIL`.
@@ -1337,10 +1433,9 @@ impl<A: StailqAdapter> StailqHead<A> {
     ///
     /// As for [`insert_head`](Self::insert_head).
     pub unsafe fn insert_tail(&self, elem: &A::Elem) {
-        let entry = A::entry(elem);
-        entry.stqe_next.set(ptr::null());
-        self.last_link().set(elem);
-        self.stqh_last.set(&entry.stqe_next);
+        A::entry(elem).stqe_next.set(None);
+        self.last_link().set_ref(elem);
+        self.stqh_last.set(Some(link_of::<A>(elem)));
     }
 
     /// `STAILQ_INSERT_AFTER`: links `elem` after `listelm`.
@@ -1350,66 +1445,81 @@ impl<A: StailqAdapter> StailqHead<A> {
     /// `listelm` is in this queue; `elem` is in no queue of `A` and stays valid and in place
     /// until it is unlinked.
     pub unsafe fn insert_after(&self, listelm: &A::Elem, elem: &A::Elem) {
-        let after = A::entry(listelm);
+        let after = &A::entry(listelm).stqe_next;
         let entry = A::entry(elem);
-        let next = after.stqe_next.get();
-        entry.stqe_next.set(next);
-        if next.is_null() {
-            self.stqh_last.set(&entry.stqe_next);
+        entry.stqe_next.set(after.get());
+        if entry.stqe_next.is_null() {
+            self.stqh_last.set(Some(link_of::<A>(elem)));
         }
-        after.stqe_next.set(elem);
+        after.set_ref(elem);
     }
 
-    /// `STAILQ_REMOVE_HEAD`: unlinks the first element.
+    /// `STAILQ_REMOVE_HEAD`: unlinks the first element. Its link still names its successor.
     ///
     /// # Safety
     ///
-    /// The queue is not empty.
+    /// The queue is not empty (an empty queue is left as it is, and fails a `kassert!` under
+    /// `diagnostic`).
     pub unsafe fn remove_head(&self) {
-        // SAFETY: the caller guarantees a first element exists; it is valid while linked.
-        let first = unsafe { &*self.stqh_first.get() };
-        let next = A::entry(first).stqe_next.get();
-        self.stqh_first.set(next);
-        if next.is_null() {
-            self.stqh_last.set(ptr::null());
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(!self.is_empty());
+        if let Some(first) = self.stqh_first.target() {
+            self.stqh_first.set(A::entry(first).stqe_next.get());
+            if self.stqh_first.is_null() {
+                self.stqh_last.set(None);
+            }
         }
     }
 
-    /// `STAILQ_REMOVE_AFTER`: unlinks the element after `elem`.
+    /// `STAILQ_REMOVE_AFTER`: unlinks the element after `elem`. Its link still names its
+    /// successor.
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue and has a successor.
+    /// `elem` is in this queue and has a successor (otherwise nothing changes, and a `kassert!`
+    /// fails under `diagnostic`).
     pub unsafe fn remove_after(&self, elem: &A::Elem) {
-        let entry = A::entry(elem);
-        // SAFETY: the caller guarantees a successor exists; it is valid while linked.
-        let next = unsafe { &*entry.stqe_next.get() };
-        let after_next = A::entry(next).stqe_next.get();
-        entry.stqe_next.set(after_next);
-        if after_next.is_null() {
-            self.stqh_last.set(&entry.stqe_next);
+        let link = &A::entry(elem).stqe_next;
+        #[cfg(feature = "diagnostic")]
+        crate::kassert!(!link.is_null());
+        if let Some(next) = link.target() {
+            link.set(A::entry(next).stqe_next.get());
+            if link.is_null() {
+                self.stqh_last.set(Some(link_of::<A>(elem)));
+            }
         }
     }
 
-    /// `STAILQ_REMOVE`: unlinks `elem`, walking the queue to find its predecessor (O(n)).
+    /// `STAILQ_REMOVE`: unlinks `elem`, walking the queue to find its predecessor (O(n)). As in
+    /// C, its link is left as it is.
     ///
     /// # Safety
     ///
-    /// `elem` is in this queue.
+    /// `elem` is in this queue (otherwise the queue is left as it is, and a `kassert!` fails
+    /// under `diagnostic`).
     pub unsafe fn remove(&self, elem: &A::Elem) {
-        let target: *const A::Elem = elem;
-        if self.stqh_first.get() == target {
-            // SAFETY: the queue holds `elem`, so it is not empty.
-            unsafe { self.remove_head() };
-        } else {
-            // SAFETY: `elem` is in the queue and is not first, so the walk from the first
-            // element reaches its predecessor through valid, linked elements.
-            unsafe {
-                let mut cur = &*self.stqh_first.get();
-                while A::entry(cur).stqe_next.get() != target {
-                    cur = &*A::entry(cur).stqe_next.get();
+        let next = A::entry(elem).stqe_next.get();
+        // The element whose `stqe_next` names `elem`, `None` for the head's `stqh_first`.
+        let mut before: Option<&A::Elem> = None;
+        let mut link = &self.stqh_first;
+        loop {
+            if link.names(elem) {
+                link.set(next);
+                if next.is_none() {
+                    self.stqh_last.set(before.map(link_of::<A>));
                 }
-                self.remove_after(cur);
+                return;
+            }
+            match link.target() {
+                Some(cur) => {
+                    before = Some(cur);
+                    link = &A::entry(cur).stqe_next;
+                }
+                None => {
+                    #[cfg(feature = "diagnostic")]
+                    crate::kassert!(false);
+                    return;
+                }
             }
         }
     }
@@ -1435,19 +1545,13 @@ impl<A: StailqAdapter> Default for StailqHead<A> {
 }
 
 /// Forward iterator over a [`StailqHead`]; see the module docs for its `_SAFE` behaviour.
-pub struct StailqIter<'a, A: Adapter> {
-    cur: *const A::Elem,
-    _head: PhantomData<&'a StailqHead<A>>,
-}
+pub struct StailqIter<'a, A: Adapter>(Cursor<'a, A::Elem, NextStep<A>>);
 
 impl<'a, A: StailqAdapter> Iterator for StailqIter<'a, A> {
     type Item = &'a A::Elem;
 
     fn next(&mut self) -> Option<&'a A::Elem> {
-        // SAFETY: as for `SlistIter`.
-        let cur = unsafe { self.cur.as_ref()? };
-        self.cur = A::entry(cur).stqe_next.get();
-        Some(cur)
+        self.0.advance()
     }
 }
 
@@ -1493,38 +1597,107 @@ impl<A: Adapter<Entry = TailqEntry<<A as Adapter>::Elem>>> TailqAdapter for A {}
 pub trait StailqAdapter: Adapter<Entry = StailqEntry<<Self as Adapter>::Elem>> {}
 impl<A: Adapter<Entry = StailqEntry<<A as Adapter>::Elem>>> StailqAdapter for A {}
 
-/// `_Q_INVALIDATE`: poisons a link of a removed element under feature `diagnostic`, so a stale
-/// use faults instead of walking a list; a no-op otherwise.
-#[cfg(feature = "diagnostic")]
-fn invalidate<P>(link: &Cell<*const P>) {
-    link.set(Q_INVALID as *const P);
+/// An entry with a next link (every family but the XOR queue, whose links are encoded).
+trait NextEntry<T> {
+    /// `offsetof(entry, xx_next)`.
+    const NEXT: usize;
+    /// The entry's next link.
+    fn next_link(&self) -> &Link<T>;
 }
 
-/// `_Q_INVALIDATE`, compiled out without feature `diagnostic`.
-#[cfg(not(feature = "diagnostic"))]
-fn invalidate<P>(_link: &Cell<*const P>) {}
-
-/// The element whose entry starts at `link`.
-///
-/// # Safety
-///
-/// `link` points at the first (`*_next`) cell of an `A::Entry` embedded at `A::OFFSET` in a
-/// live `A::Elem`; every entry type is `#[repr(C)]` with that cell first.
-unsafe fn container_of<A: Adapter>(link: *const Cell<*const A::Elem>) -> *const A::Elem {
-    // SAFETY: stepping back by the field offset stays inside the element's allocation.
-    unsafe { link.cast::<u8>().sub(A::OFFSET).cast::<A::Elem>() }
+impl<T> NextEntry<T> for SlistEntry<T> {
+    const NEXT: usize = offset_of!(Self, sle_next);
+    fn next_link(&self) -> &Link<T> {
+        &self.sle_next
+    }
 }
 
-// The `*_next` cell is the first field of every entry, which `container_of` relies on.
-const _: () = {
-    use core::mem::offset_of;
-    assert!(offset_of!(SlistEntry<u8>, sle_next) == 0);
-    assert!(offset_of!(ListEntry<u8>, le_next) == 0);
-    assert!(offset_of!(SimpleqEntry<u8>, sqe_next) == 0);
-    assert!(offset_of!(XsimpleqEntry<u8>, sqx_next) == 0);
-    assert!(offset_of!(TailqEntry<u8>, tqe_next) == 0);
-    assert!(offset_of!(StailqEntry<u8>, stqe_next) == 0);
-};
+impl<T> NextEntry<T> for ListEntry<T> {
+    const NEXT: usize = offset_of!(Self, le_next);
+    fn next_link(&self) -> &Link<T> {
+        &self.le_next
+    }
+}
+
+impl<T> NextEntry<T> for SimpleqEntry<T> {
+    const NEXT: usize = offset_of!(Self, sqe_next);
+    fn next_link(&self) -> &Link<T> {
+        &self.sqe_next
+    }
+}
+
+impl<T> NextEntry<T> for TailqEntry<T> {
+    const NEXT: usize = offset_of!(Self, tqe_next);
+    fn next_link(&self) -> &Link<T> {
+        &self.tqe_next
+    }
+}
+
+impl<T> NextEntry<T> for StailqEntry<T> {
+    const NEXT: usize = offset_of!(Self, stqe_next);
+    fn next_link(&self) -> &Link<T> {
+        &self.stqe_next
+    }
+}
+
+/// How a [`Cursor`] moves one element on.
+trait Step<T> {
+    /// The element after `elem` in the walk's direction.
+    fn step(&self, elem: &T) -> Option<NonNull<T>>;
+}
+
+impl<A: Adapter> Step<A::Elem> for NextStep<A>
+where
+    A::Entry: NextEntry<A::Elem>,
+{
+    fn step(&self, elem: &A::Elem) -> Option<NonNull<A::Elem>> {
+        A::entry(elem).next_link().get()
+    }
+}
+
+impl<A: XsimpleqAdapter> Step<A::Elem> for &XsimpleqHead<A> {
+    fn step(&self, elem: &A::Elem) -> Option<NonNull<A::Elem>> {
+        self.next(elem).map(NonNull::from)
+    }
+}
+
+impl<A: TailqAdapter> Step<A::Elem> for &TailqHead<A> {
+    fn step(&self, elem: &A::Elem) -> Option<NonNull<A::Elem>> {
+        self.prev(elem).map(NonNull::from)
+    }
+}
+
+/// `_Q_INVALIDATE`: under feature `diagnostic`, poisons a link of a removed element so that a
+/// stale use fails an assertion instead of walking a list; otherwise clears it.
+fn invalidate<P>(link: &Link<P>) {
+    #[cfg(feature = "diagnostic")]
+    link.set(Some(NonNull::without_provenance(NonZero::<usize>::MAX)));
+    #[cfg(not(feature = "diagnostic"))]
+    link.set(None);
+}
+
+/// The next link inside `elem`'s entry, carrying the provenance of the whole element rather than
+/// of the link's field, so that [`container_of`] may step back from it to the element.
+fn link_of<A: Adapter>(elem: &A::Elem) -> NonNull<Link<A::Elem>>
+where
+    A::Entry: NextEntry<A::Elem>,
+{
+    let field = NonNull::from(A::entry(elem).next_link());
+    NonNull::from(elem).with_addr(field.addr()).cast()
+}
+
+/// The element whose next link is `link`: the inverse of [`link_of`]. Address arithmetic only;
+/// the caller dereferences the result where the link is known to be inside a live element.
+fn container_of<A: Adapter>(link: NonNull<Link<A::Elem>>) -> Option<NonNull<A::Elem>>
+where
+    A::Entry: NextEntry<A::Elem>,
+{
+    let back = A::OFFSET + <A::Entry as NextEntry<A::Elem>>::NEXT;
+    NonNull::new(link.as_ptr().wrapping_byte_sub(back).cast::<A::Elem>())
+}
+
+// `_Q_INVALID` is the C's `(void *)-1`, the value `invalidate` writes.
+const _: () = assert!(NonZero::<usize>::MAX.get() == Q_INVALID);
 /* </CODE> */
 
 /* <TESTS> */
@@ -1580,31 +1753,74 @@ mod tests {
         n.map(|n| n.id)
     }
 
+    /// A small deterministic generator (xorshift64) for the model tests.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+    }
+
     #[test]
-    fn adapter_offset_matches_the_field() {
+    fn link_of_and_container_of_are_inverse() {
         let n = Node::new(7);
         assert_eq!(Sl::OFFSET, core::mem::offset_of!(Node, sl));
         assert_eq!(Tq::OFFSET, core::mem::offset_of!(Node, tq));
         assert!(ptr::eq(Tq::entry(&n), &n.tq));
-        // container_of inverts entry()
-        let link: *const Cell<*const Node> = &n.tq.tqe_next;
-        // SAFETY: `link` is the first cell of `n.tq`, the entry `Tq` names, inside `n`.
-        let back = unsafe { container_of::<Tq>(link) };
-        assert!(ptr::eq(back, &n));
+        let link = link_of::<Tq>(&n);
+        assert!(ptr::eq(link.as_ptr(), &n.tq.tqe_next));
+        assert_eq!(container_of::<Tq>(link), Some(NonNull::from(&n)));
+        let link = link_of::<St>(&n);
+        assert!(ptr::eq(link.as_ptr(), &n.st.stqe_next));
+        assert_eq!(container_of::<St>(link), Some(NonNull::from(&n)));
+        // the next link need not be first in its entry: the offsets are added
+        assert_eq!(<ListEntry<Node> as NextEntry<Node>>::NEXT, 0);
+        assert_eq!(
+            <TailqEntry<Node> as NextEntry<Node>>::NEXT,
+            core::mem::offset_of!(TailqEntry<Node>, tqe_next)
+        );
+    }
+
+    #[test]
+    fn links_are_pointer_sized() {
+        assert_eq!(size_of::<Link<Node>>(), size_of::<*const Node>());
+        assert_eq!(size_of::<TailqEntry<Node>>(), 2 * size_of::<*const Node>());
+        assert_eq!(size_of::<TailqHead<Tq>>(), 2 * size_of::<*const Node>());
+        assert_eq!(size_of::<SlistEntry<Node>>(), size_of::<*const Node>());
+    }
+
+    #[test]
+    fn empty_heads() {
+        let sl = SlistHead::<Sl>::new();
+        let li = ListHead::<Li>::new();
+        let sq = SimpleqHead::<Sq>::new();
+        let xq = XsimpleqHead::<Xq>::new();
+        let tq = TailqHead::<Tq>::new();
+        let st = StailqHead::<St>::new();
+        assert!(sl.is_empty() && li.is_empty() && sq.is_empty());
+        assert!(xq.is_empty() && tq.is_empty() && st.is_empty());
+        assert!(sl.first().is_none() && li.first().is_none() && sq.first().is_none());
+        assert!(xq.first().is_none() && tq.first().is_none() && st.first().is_none());
+        assert!(tq.last().is_none() && st.last().is_none());
+        assert_eq!(sl.iter().count() + li.iter().count() + sq.iter().count(), 0);
+        assert_eq!(xq.iter().count() + tq.iter().count() + st.iter().count(), 0);
+        assert_eq!(tq.iter_reverse().count(), 0);
     }
 
     #[test]
     fn slist() {
         let n = nodes::<4>();
         let h = SlistHead::<Sl>::new();
-        assert!(h.is_empty());
-        assert_eq!(id(h.first()), None);
         // SAFETY: the nodes outlive the head and are linked into one slist each.
         unsafe {
             h.insert_head(&n[2]);
             h.insert_head(&n[0]);
             SlistHead::<Sl>::insert_after(&n[0], &n[1]);
-            SlistHead::<Sl>::insert_after(&n[2], &n[3]);
+            SlistHead::<Sl>::insert_after(&n[2], &n[3]); // after the last
         }
         assert_eq!(ids(h.iter()), [1, 2, 3, 4]);
         assert_eq!(id(h.first()), Some(1));
@@ -1614,15 +1830,43 @@ mod tests {
         unsafe {
             h.remove(&n[2]); // middle, O(n) path
             assert_eq!(ids(h.iter()), [1, 2, 4]);
-            h.remove(&n[0]); // first, remove_head path
-            assert_eq!(ids(h.iter()), [2, 4]);
-            SlistHead::<Sl>::remove_after(&n[1]);
+            h.remove(&n[3]); // last
+            assert_eq!(ids(h.iter()), [1, 2]);
+            h.remove(&n[0]); // first, the head's link
             assert_eq!(ids(h.iter()), [2]);
+            h.insert_head(&n[0]);
+            SlistHead::<Sl>::remove_after(&n[0]);
+            assert_eq!(ids(h.iter()), [1]);
             h.remove_head();
         }
         assert!(h.is_empty());
         h.init();
         assert!(h.is_empty());
+    }
+
+    #[test]
+    fn slist_single_and_remove_while_iterating() {
+        let n = nodes::<5>();
+        let h = SlistHead::<Sl>::new();
+        // SAFETY: the nodes outlive the head and start unlinked.
+        unsafe {
+            h.insert_head(&n[0]);
+            h.remove(&n[0]);
+        }
+        assert!(h.is_empty());
+        // SAFETY: as above.
+        unsafe {
+            for node in n.iter().rev() {
+                h.insert_head(node);
+            }
+        }
+        for node in h.iter() {
+            if node.id != 3 {
+                // SAFETY: `node` is in the list; the iterator already read its successor.
+                unsafe { h.remove(node) };
+            }
+        }
+        assert_eq!(ids(h.iter()), [3]);
     }
 
     #[test]
@@ -1648,12 +1892,25 @@ mod tests {
         assert_eq!(ids(h.iter()), [1, 4]);
         let fresh = Node::new(9);
         // SAFETY: `n[3]` is linked, `fresh` is not and outlives the head.
-        unsafe { ListHead::<Li>::replace(&n[3], &fresh) };
+        unsafe { ListHead::<Li>::replace(&n[3], &fresh) }; // the last
         assert_eq!(ids(h.iter()), [1, 9]);
+        // SAFETY: `n[0]` is linked and first; `n[3]` was replaced, so it is in no list.
+        unsafe { ListHead::<Li>::replace(&n[0], &n[3]) }; // the first: lh_first follows
+        assert_eq!(ids(h.iter()), [4, 9]);
+        // SAFETY: as above; `n[0]` is in no list again.
+        unsafe { ListHead::<Li>::insert_after(&n[3], &n[0]) };
+        assert_eq!(ids(h.iter()), [4, 1, 9]);
         // SAFETY: as above.
         unsafe {
             ListHead::<Li>::remove(&fresh);
+            ListHead::<Li>::remove(&n[3]);
             ListHead::<Li>::remove(&n[0]);
+        }
+        assert!(h.is_empty());
+        // SAFETY: empty again; the single element's prev is the head's link.
+        unsafe {
+            h.insert_head(&n[1]);
+            ListHead::<Li>::remove(&n[1]);
         }
         assert!(h.is_empty());
     }
@@ -1695,11 +1952,17 @@ mod tests {
             }
         }
         assert_eq!(ids(h.iter()), [1, 3, 5]);
+        for node in h.iter() {
+            // SAFETY: as above, every element in turn.
+            unsafe { ListHead::<Li>::remove(node) };
+        }
+        assert!(h.is_empty());
     }
 
     #[test]
     fn simpleq() {
         let n = nodes::<4>();
+        let extra = Node::new(5);
         let h = SimpleqHead::<Sq>::new();
         // SAFETY: the nodes outlive the head; each operation's precondition holds.
         unsafe {
@@ -1718,14 +1981,24 @@ mod tests {
             assert_eq!(ids(h.iter()), [2, 3]);
             h.insert_tail(&n[3]);
             assert_eq!(ids(h.iter()), [2, 3, 4]);
-            h.remove_head();
-            h.remove_head();
-            h.remove_head();
+            h.insert_after(&n[3], &n[0]); // after the last: sqh_last must follow
+            h.insert_tail(&extra);
+            assert_eq!(ids(h.iter()), [2, 3, 4, 1, 5]);
+            for _ in 0..5 {
+                h.remove_head();
+            }
         }
         assert!(h.is_empty());
         // SAFETY: the queue is empty again, so the tail insert goes through the sentinel.
         unsafe { h.insert_tail(&n[0]) };
         assert_eq!(ids(h.iter()), [1]);
+        // SAFETY: the only element; removing it brings the sentinel back.
+        unsafe {
+            h.remove_head();
+            h.insert_head(&n[1]); // head into an empty queue sets sqh_last
+            h.insert_tail(&n[2]);
+        }
+        assert_eq!(ids(h.iter()), [2, 3]);
     }
 
     #[test]
@@ -1734,12 +2007,21 @@ mod tests {
         let b = nodes::<2>();
         let ha = SimpleqHead::<Sq>::new();
         let hb = SimpleqHead::<Sq>::new();
+        // SAFETY: both empty: nothing moves.
+        unsafe { ha.concat(&hb) };
+        assert!(ha.is_empty() && hb.is_empty());
         // SAFETY: the nodes outlive the heads and start unlinked.
         unsafe {
-            ha.insert_tail(&a[0]);
-            ha.insert_tail(&a[1]);
             hb.insert_tail(&b[0]);
-            hb.insert_tail(&b[1]);
+            ha.concat(&hb); // into an empty queue
+        }
+        assert_eq!(ids(ha.iter()), [1]);
+        assert!(hb.is_empty());
+        // SAFETY: as above.
+        unsafe {
+            ha.insert_tail(&b[1]); // the tail moved with the elements
+            hb.insert_tail(&a[0]);
+            hb.insert_tail(&a[1]);
             ha.concat(&hb);
         }
         assert_eq!(ids(ha.iter()), [1, 2, 1, 2]);
@@ -1755,9 +2037,25 @@ mod tests {
     }
 
     #[test]
+    fn simpleq_remove_head_keeps_the_successor_link() {
+        // C: `SIMPLEQ_REMOVE_HEAD` does not touch the removed element.
+        let n = nodes::<2>();
+        let h = SimpleqHead::<Sq>::new();
+        // SAFETY: the nodes outlive the head and start unlinked.
+        unsafe {
+            h.insert_tail(&n[0]);
+            h.insert_tail(&n[1]);
+            h.remove_head();
+        }
+        assert_eq!(id(SimpleqHead::<Sq>::next(&n[0])), Some(2));
+        assert_eq!(ids(h.iter()), [2]);
+    }
+
+    #[test]
     fn xsimpleq_with_and_without_cookie() {
         for cookie in [0usize, 0xdead_beef_cafe_f00d, usize::MAX] {
             let n = nodes::<4>();
+            let extra = Node::new(5);
             let h = XsimpleqHead::<Xq>::new();
             h.init(cookie);
             assert!(h.is_empty());
@@ -1783,14 +2081,26 @@ mod tests {
                 assert_eq!(ids(h.iter()), [2, 3]);
                 h.insert_tail(&n[3]);
                 assert_eq!(ids(h.iter()), [2, 3, 4]);
-                h.remove_head();
-                h.remove_head();
-                h.remove_head();
+                h.insert_after(&n[3], &n[0]); // after the last: sqx_last must follow
+                h.insert_tail(&extra);
+                assert_eq!(ids(h.iter()), [2, 3, 4, 1, 5]);
+            }
+            for _ in h.iter() {
+                // SAFETY: the queue is not empty while the loop runs; the iterator already
+                // read the next element, and only the first (the one yielded) goes.
+                unsafe { h.remove_head() };
             }
             assert!(h.is_empty());
             // SAFETY: empty again; the tail insert goes through the sentinel.
             unsafe { h.insert_tail(&n[0]) };
             assert_eq!(ids(h.iter()), [1]);
+            // SAFETY: the only element; then a head insert into the empty queue.
+            unsafe {
+                h.remove_head();
+                h.insert_head(&n[1]);
+                h.insert_tail(&n[2]);
+            }
+            assert_eq!(ids(h.iter()), [2, 3]);
         }
     }
 
@@ -1831,10 +2141,25 @@ mod tests {
         unsafe { h.replace(&n[3], &fresh) };
         assert_eq!(ids(h.iter()), [2, 9]);
         assert_eq!(id(h.last()), Some(9));
+        // SAFETY: `n[1]` is the first element, `n[3]` was replaced so it is in no queue.
+        unsafe { h.replace(&n[1], &n[3]) };
+        assert_eq!(ids(h.iter()), [4, 9]);
+        assert_eq!(ids(h.iter_reverse()), [9, 4]);
+        assert_eq!(id(h.prev(&fresh)), Some(4));
+        // SAFETY: `n[3]` is first; `n[0]` is in no queue. Before the first touches tqh_first.
+        unsafe { TailqHead::<Tq>::insert_before(&n[3], &n[0]) };
+        assert_eq!(ids(h.iter()), [1, 4, 9]);
+        assert_eq!(id(h.prev(&n[3])), Some(1));
+        // SAFETY: after the last moves tqh_last.
+        unsafe { h.insert_after(&fresh, &n[1]) };
+        assert_eq!(id(h.last()), Some(2));
+        assert_eq!(ids(h.iter_reverse()), [2, 9, 4, 1]);
         // SAFETY: as above.
         unsafe {
             h.remove(&fresh);
             h.remove(&n[1]);
+            h.remove(&n[0]);
+            h.remove(&n[3]);
         }
         assert!(h.is_empty());
         assert_eq!(id(h.last()), None);
@@ -1844,6 +2169,14 @@ mod tests {
             h.insert_tail(&n[1]);
         }
         assert_eq!(ids(h.iter_reverse()), [2, 1]);
+        // SAFETY: a single element is first and last; removing it restores the sentinel.
+        unsafe {
+            h.remove(&n[0]);
+            h.remove(&n[1]);
+            h.insert_head(&n[2]);
+        }
+        assert_eq!(id(h.last()), Some(3));
+        assert_eq!(id(h.first()), Some(3));
     }
 
     #[test]
@@ -1852,8 +2185,10 @@ mod tests {
         let b = nodes::<2>();
         let ha = TailqHead::<Tq>::new();
         let hb = TailqHead::<Tq>::new();
-        // SAFETY: the nodes outlive the heads and start unlinked.
+        // SAFETY: the nodes outlive the heads and start unlinked; both empty first.
         unsafe {
+            ha.concat(&hb);
+            assert!(ha.is_empty() && hb.is_empty());
             for node in &a {
                 ha.insert_tail(node);
             }
@@ -1864,8 +2199,9 @@ mod tests {
         }
         assert_eq!(ids(ha.iter()), [1, 2, 3, 1, 2]);
         assert_eq!(ids(ha.iter_reverse()), [2, 1, 3, 2, 1]);
-        assert!(hb.is_empty());
+        assert!(hb.is_empty() && hb.last().is_none());
         assert!(ptr::eq(ha.last().map_or(ptr::null(), |e| e), &b[1]));
+        assert!(ptr::eq(ha.prev(&b[0]).map_or(ptr::null(), |e| e), &a[2]));
         for node in ha.iter_reverse() {
             if node.id == 1 {
                 // SAFETY: `node` is in `ha`; the iterator already read its predecessor.
@@ -1873,6 +2209,27 @@ mod tests {
             }
         }
         assert_eq!(ids(ha.iter()), [2, 3, 2]);
+        // Into an empty queue: the moved first element's prev becomes the new head's link.
+        // SAFETY: as above.
+        unsafe { hb.concat(&ha) };
+        assert!(ha.is_empty());
+        assert_eq!(ids(hb.iter_reverse()), [2, 3, 2]);
+        assert_eq!(id(hb.prev(&a[1])), None);
+        // SAFETY: the tail moved with the elements.
+        unsafe { hb.insert_tail(&a[0]) };
+        assert_eq!(ids(hb.iter()), [2, 3, 2, 1]);
+    }
+
+    #[test]
+    fn tailq_set_prev_self() {
+        let n = Node::new(1);
+        assert!(!n.tq.is_linked());
+        // SAFETY: `n` is in no queue and is never inserted; it outlives the test.
+        unsafe { n.tq.set_prev_self() };
+        assert!(n.tq.is_linked());
+        // SAFETY: as above.
+        unsafe { n.tq.clear_prev() };
+        assert!(!n.tq.is_linked());
     }
 
     #[test]
@@ -1898,20 +2255,38 @@ mod tests {
             assert_eq!(id(h.last()), Some(2));
             h.remove(&n[0]); // first
             assert_eq!(ids(h.iter()), [2]);
-            h.remove_head();
+            assert_eq!(id(h.last()), Some(2));
+            h.remove(&n[1]); // the only one: the sentinel comes back
         }
         assert!(h.is_empty());
         assert_eq!(id(h.last()), None);
-        let hb = StailqHead::<St>::new();
-        // SAFETY: as above; `n[2]` and `n[3]` are unlinked again.
+        // SAFETY: as above; all four are unlinked again.
         unsafe {
+            h.insert_tail(&n[0]);
+            h.insert_after(&n[0], &n[1]); // after the last
+            assert_eq!(id(h.last()), Some(2));
+            h.remove_after(&n[0]); // the last
+            assert_eq!(id(h.last()), Some(1));
+            h.remove_head();
+        }
+        assert!(h.is_empty() && h.last().is_none());
+        let hb = StailqHead::<St>::new();
+        // SAFETY: as above.
+        unsafe {
+            h.concat(&hb); // both empty
             hb.insert_tail(&n[2]);
             hb.insert_tail(&n[3]);
-            h.concat(&hb);
+            h.concat(&hb); // into an empty queue
             h.insert_tail(&n[0]);
         }
         assert_eq!(ids(h.iter()), [3, 4, 1]);
-        assert!(hb.is_empty());
+        assert_eq!(id(h.last()), Some(1));
+        assert!(hb.is_empty() && hb.last().is_none());
+        for node in h.iter() {
+            // SAFETY: `node` is in the queue; the iterator already read its successor.
+            unsafe { h.remove(node) };
+        }
+        assert!(h.is_empty() && h.last().is_none());
     }
 
     #[test]
@@ -1936,13 +2311,304 @@ mod tests {
 
     #[test]
     fn empty_heads_can_be_moved_and_const_initialised() {
-        // A `static` head needs a lock around it (`Cell` is not `Sync`); a `const` is fine.
-        const LIST: ListHead<Li> = ListHead::new();
-        const ENTRY: TailqEntry<Node> = TailqEntry::new();
+        // A `static` head needs a lock around it (`Cell` is not `Sync`); a const context is fine.
+        let list: ListHead<Li> = const { ListHead::new() };
+        let entry: TailqEntry<Node> = const { TailqEntry::new() };
         let moved = [SimpleqHead::<Sq>::new(), SimpleqHead::<Sq>::default()];
-        assert!(LIST.is_empty());
+        assert!(list.is_empty());
         assert!(moved.iter().all(SimpleqHead::is_empty));
-        assert!(ENTRY.tqe_next.get().is_null());
+        assert!(entry.tqe_next.peek().is_none());
+        // An emptied head is movable again: the sentinel, not its own address, marks the end.
+        let n = Node::new(1);
+        let h = TailqHead::<Tq>::new();
+        // SAFETY: `n` outlives the head; removed before the head moves.
+        unsafe {
+            h.insert_tail(&n);
+            h.remove(&n);
+        }
+        let moved = h;
+        // SAFETY: as above.
+        unsafe { moved.insert_tail(&n) };
+        assert_eq!(ids(moved.iter_reverse()), [1]);
+    }
+
+    #[cfg(not(feature = "diagnostic"))]
+    #[test]
+    fn removed_links_are_cleared() {
+        let n = nodes::<3>();
+        let tq = TailqHead::<Tq>::new();
+        let li = ListHead::<Li>::new();
+        let sl = SlistHead::<Sl>::new();
+        // SAFETY: the nodes outlive the heads and start unlinked.
+        unsafe {
+            for node in &n {
+                tq.insert_tail(node);
+                li.insert_head(node);
+                sl.insert_head(node);
+            }
+            tq.remove(&n[1]);
+            ListHead::<Li>::remove(&n[1]);
+            sl.remove(&n[1]);
+        }
+        assert_eq!(id(TailqHead::<Tq>::next(&n[1])), None);
+        assert_eq!(id(tq.prev(&n[1])), None);
+        assert!(!n[1].tq.is_linked() && !n[1].li.is_linked());
+        assert_eq!(id(ListHead::<Li>::next(&n[1])), None);
+        assert_eq!(id(SlistHead::<Sl>::next(&n[1])), None);
+        let fresh = Node::new(9);
+        // SAFETY: `n[0]` is linked in both, `fresh` is in neither and outlives the heads.
+        unsafe {
+            tq.replace(&n[0], &fresh);
+            ListHead::<Li>::replace(&n[0], &n[1]);
+        }
+        assert!(!n[0].tq.is_linked() && !n[0].li.is_linked());
+        assert_eq!(ids(tq.iter()), [9, 3]);
+        assert_eq!(ids(li.iter()), [3, 2]);
+    }
+
+    #[cfg(not(feature = "diagnostic"))]
+    #[test]
+    fn broken_preconditions_change_nothing() {
+        // What the C turns into a NULL dereference is a no-op without `diagnostic`.
+        let n = nodes::<2>();
+        let sl = SlistHead::<Sl>::new();
+        let sq = SimpleqHead::<Sq>::new();
+        let st = StailqHead::<St>::new();
+        let xq = XsimpleqHead::<Xq>::new();
+        let tq = TailqHead::<Tq>::new();
+        // SAFETY: violating these preconditions is defined (and tested) behaviour now; the
+        // nodes outlive the heads.
+        unsafe {
+            sl.remove_head();
+            sq.remove_head();
+            st.remove_head();
+            xq.remove_head();
+            sl.insert_head(&n[0]);
+            sl.remove(&n[1]); // not there
+            SlistHead::<Sl>::remove_after(&n[0]); // no successor
+            sq.insert_tail(&n[0]);
+            sq.remove_after(&n[0]);
+            st.insert_tail(&n[0]);
+            st.remove_after(&n[0]);
+            st.remove(&n[1]);
+            xq.insert_tail(&n[0]);
+            xq.remove_after(&n[0]);
+            ListHead::<Li>::remove(&n[1]); // in no list
+            tq.remove(&n[1]);
+        }
+        assert_eq!(ids(sl.iter()), [1]);
+        assert_eq!(ids(sq.iter()), [1]);
+        assert_eq!(ids(st.iter()), [1]);
+        assert_eq!(id(st.last()), Some(1));
+        assert_eq!(ids(xq.iter()), [1]);
+        assert!(tq.is_empty());
+        assert_eq!(id(tq.prev(&n[1])), None); // never linked
+    }
+
+    /// A model of a doubly-linked queue: the ids in order.
+    fn check_tailq(h: &TailqHead<Tq>, model: &[usize], n: &[Node]) {
+        let want: Vec<u32> = model.iter().map(|&i| n[i].id).collect();
+        assert_eq!(ids(h.iter()), want);
+        let mut rev = want.clone();
+        rev.reverse();
+        assert_eq!(ids(h.iter_reverse()), rev);
+        assert_eq!(id(h.first()), want.first().copied());
+        assert_eq!(id(h.last()), want.last().copied());
+        assert_eq!(h.is_empty(), want.is_empty());
+        for (k, &i) in model.iter().enumerate() {
+            let prev = k.checked_sub(1).map(|p| n[model[p]].id);
+            let next = model.get(k + 1).map(|&x| n[x].id);
+            assert_eq!(id(h.prev(&n[i])), prev);
+            assert_eq!(id(TailqHead::<Tq>::next(&n[i])), next);
+        }
+    }
+
+    #[test]
+    fn tailq_and_list_against_a_model() {
+        const N: usize = 12;
+        let n = nodes::<N>();
+        let tq = TailqHead::<Tq>::new();
+        let li = ListHead::<Li>::new();
+        let mut mt: Vec<usize> = Vec::new();
+        let mut ml: Vec<usize> = Vec::new();
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..4000 {
+            let i = rng.below(N);
+            // tail queue
+            let at = mt.iter().position(|&x| x == i);
+            match (at, rng.below(6)) {
+                (None, 0) => {
+                    // SAFETY: `n[i]` is in no tail queue; the nodes outlive the heads.
+                    unsafe { tq.insert_head(&n[i]) };
+                    mt.insert(0, i);
+                }
+                (None, 1 | 2) if !mt.is_empty() => {
+                    let k = rng.below(mt.len());
+                    // SAFETY: `n[mt[k]]` is in `tq`, `n[i]` is in no tail queue.
+                    unsafe { tq.insert_after(&n[mt[k]], &n[i]) };
+                    mt.insert(k + 1, i);
+                }
+                (None, 3) if !mt.is_empty() => {
+                    let k = rng.below(mt.len());
+                    // SAFETY: as above.
+                    unsafe { TailqHead::<Tq>::insert_before(&n[mt[k]], &n[i]) };
+                    mt.insert(k, i);
+                }
+                (None, _) => {
+                    // SAFETY: as above.
+                    unsafe { tq.insert_tail(&n[i]) };
+                    mt.push(i);
+                }
+                (Some(k), 0) => {
+                    let j = (0..N).find(|j| !mt.contains(j));
+                    if let Some(j) = j {
+                        // SAFETY: `n[i]` is in `tq`, `n[j]` is in no tail queue.
+                        unsafe { tq.replace(&n[i], &n[j]) };
+                        mt[k] = j;
+                    }
+                }
+                (Some(k), _) => {
+                    // SAFETY: `n[i]` is in `tq`.
+                    unsafe { tq.remove(&n[i]) };
+                    mt.remove(k);
+                }
+            }
+            check_tailq(&tq, &mt, &n);
+            // list
+            let at = ml.iter().position(|&x| x == i);
+            match (at, rng.below(5)) {
+                (None, 1 | 2) if !ml.is_empty() => {
+                    let k = rng.below(ml.len());
+                    // SAFETY: `n[ml[k]]` is in `li`, `n[i]` is in no list.
+                    unsafe { ListHead::<Li>::insert_after(&n[ml[k]], &n[i]) };
+                    ml.insert(k + 1, i);
+                }
+                (None, 3) if !ml.is_empty() => {
+                    let k = rng.below(ml.len());
+                    // SAFETY: as above.
+                    unsafe { ListHead::<Li>::insert_before(&n[ml[k]], &n[i]) };
+                    ml.insert(k, i);
+                }
+                (None, _) => {
+                    // SAFETY: as above.
+                    unsafe { li.insert_head(&n[i]) };
+                    ml.insert(0, i);
+                }
+                (Some(k), 0) => {
+                    if let Some(j) = (0..N).find(|j| !ml.contains(j)) {
+                        // SAFETY: `n[i]` is in `li`, `n[j]` is in no list.
+                        unsafe { ListHead::<Li>::replace(&n[i], &n[j]) };
+                        ml[k] = j;
+                    }
+                }
+                (Some(k), _) => {
+                    // SAFETY: `n[i]` is in `li`.
+                    unsafe { ListHead::<Li>::remove(&n[i]) };
+                    ml.remove(k);
+                }
+            }
+            let want: Vec<u32> = ml.iter().map(|&x| n[x].id).collect();
+            assert_eq!(ids(li.iter()), want);
+        }
+    }
+
+    #[test]
+    fn singly_linked_queues_against_a_model() {
+        const N: usize = 10;
+        let n = nodes::<N>();
+        let sq = SimpleqHead::<Sq>::new();
+        let st = StailqHead::<St>::new();
+        let sl = SlistHead::<Sl>::new();
+        let xq = XsimpleqHead::<Xq>::new();
+        xq.init(0x5a5a_a5a5_0ff0_f00f);
+        // the same model drives the four: they support the same operations here
+        let mut m: Vec<usize> = Vec::new();
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        for _ in 0..4000 {
+            let i = rng.below(N);
+            let at = m.iter().position(|&x| x == i);
+            match (at, rng.below(5)) {
+                (None, 0) => {
+                    // SAFETY: `n[i]` is in no queue of any of the four; the nodes outlive them.
+                    unsafe {
+                        sq.insert_head(&n[i]);
+                        st.insert_head(&n[i]);
+                        sl.insert_head(&n[i]);
+                        xq.insert_head(&n[i]);
+                    }
+                    m.insert(0, i);
+                }
+                (None, 1 | 2) if !m.is_empty() => {
+                    let k = rng.below(m.len());
+                    let after = &n[m[k]];
+                    // SAFETY: `after` is in each queue, `n[i]` in none.
+                    unsafe {
+                        sq.insert_after(after, &n[i]);
+                        st.insert_after(after, &n[i]);
+                        SlistHead::<Sl>::insert_after(after, &n[i]);
+                        xq.insert_after(after, &n[i]);
+                    }
+                    m.insert(k + 1, i);
+                }
+                (None, _) => {
+                    // SAFETY: as above; the slist has no tail, so it inserts after its last.
+                    unsafe {
+                        sq.insert_tail(&n[i]);
+                        st.insert_tail(&n[i]);
+                        match m.last() {
+                            Some(&l) => SlistHead::<Sl>::insert_after(&n[l], &n[i]),
+                            None => sl.insert_head(&n[i]),
+                        }
+                        xq.insert_tail(&n[i]);
+                    }
+                    m.push(i);
+                }
+                (Some(0), 0 | 1) => {
+                    // SAFETY: the queues are not empty.
+                    unsafe {
+                        sq.remove_head();
+                        st.remove_head();
+                        sl.remove_head();
+                        xq.remove_head();
+                    }
+                    m.remove(0);
+                }
+                (Some(k), 2) if k > 0 => {
+                    let before = &n[m[k - 1]];
+                    // SAFETY: `before` is in each queue and `n[i]` follows it.
+                    unsafe {
+                        sq.remove_after(before);
+                        st.remove_after(before);
+                        SlistHead::<Sl>::remove_after(before);
+                        xq.remove_after(before);
+                    }
+                    m.remove(k);
+                }
+                (Some(k), _) => {
+                    // SAFETY: `n[i]` is in each queue. The simple queues have no arbitrary
+                    // remove: they remove after the predecessor, or the head.
+                    unsafe {
+                        st.remove(&n[i]);
+                        sl.remove(&n[i]);
+                        if k == 0 {
+                            sq.remove_head();
+                            xq.remove_head();
+                        } else {
+                            sq.remove_after(&n[m[k - 1]]);
+                            xq.remove_after(&n[m[k - 1]]);
+                        }
+                    }
+                    m.remove(k);
+                }
+            }
+            let want: Vec<u32> = m.iter().map(|&x| n[x].id).collect();
+            assert_eq!(ids(sq.iter()), want);
+            assert_eq!(ids(st.iter()), want);
+            assert_eq!(ids(sl.iter()), want);
+            assert_eq!(ids(xq.iter()), want);
+            assert_eq!(id(st.last()), want.last().copied());
+            assert_eq!(id(sq.first()), want.first().copied());
+        }
     }
 
     #[cfg(feature = "diagnostic")]
@@ -1956,8 +2622,15 @@ mod tests {
             h.insert_tail(&n[1]);
             h.remove(&n[0]);
         }
-        assert_eq!(n[0].tq.tqe_next.get() as usize, Q_INVALID);
-        assert_eq!(n[0].tq.tqe_prev.get() as usize, Q_INVALID);
+        let addr = |l: &Link<_>| l.peek().map(|p: NonNull<_>| p.addr().get());
+        assert_eq!(addr(&n[0].tq.tqe_next), Some(Q_INVALID));
+        assert_eq!(
+            n[0].tq.tqe_prev.peek().map(|p| p.addr().get()),
+            Some(Q_INVALID)
+        );
+        // `le_prev != NULL` still holds for a poisoned link, as in C
+        assert!(n[0].tq.is_linked());
+        assert_eq!(ids(h.iter()), [2]);
     }
 }
 /* </TESTS> */
