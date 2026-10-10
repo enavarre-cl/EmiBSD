@@ -315,3 +315,26 @@ modules = []
 status = "applied"
 emibsd = "ed69c13606a3"
 method = "cherry-pick"
+
+[[commit]]
+lz = "e0a4a28bc1c9"
+subject = "dev: port pckbc(4) and pckbd(4), the PS/2 keyboard"
+modules = ["sys/arch/amd64/amd64/machdep.rs", "sys/dev/ic/i8042reg.rs", "sys/dev/ic/pckbc.rs", "sys/dev/ic/pckbcvar.rs", "sys/dev/isa/isareg.rs", "sys/dev/isa/pckbc_isa.rs", "sys/dev/pckbc/pckbd.rs", "sys/dev/pckbc/pckbdreg.rs", "sys/dev/pckbc/pckbdvar.rs", "sys/dev/pckbc/wskbdmap_mfii.rs"]
+status = "applied"
+emibsd = "e4673001babf"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "6c1941c14ba2"
+subject = "build: add smoke-pckbc, the PS/2 keyboard on amd64"
+modules = []
+status = "applied"
+emibsd = "1955105d9342"
+method = "cherry-pick-conflicts"
+
+[[commit]]
+lz = "bb6431b66deb"
+subject = "Merge pckbc(4) and pckbd(4) (M16d agent A, early: pcppi needs pckbd_hookup_bell)"
+modules = []
+status = "not-applicable"
+reason = "merge commit of the pckbc branch into the M16d branch; its resolution (the amd64 ioconf.rs numbering, sys/dev/isa/mod.rs, the justfile's smokes list, none of them a [[module]]) arrived with the hand-resolved applies of e0a4a28b and 6c1941c1, so the tree equals LZ at this merge"
